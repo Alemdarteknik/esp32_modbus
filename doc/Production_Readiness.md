@@ -22,6 +22,8 @@ Status: hardening in progress; not certified or endurance-tested. No firmware bu
 
 ## Implemented hardening
 
+- Fleet additions: full-MAC MQTT client IDs, randomized startup and per-initialization reconnect intervals, a separate bounded result queue, outbox room reserved for results, independent live-publish interval, and an optional authenticated-TLS requirement. See [Fleet deployment and replacement](Fleet_Deployment.md) for defaults, manual identity restoration and remaining server responsibilities. These additions have not been load-tested.
+
 - USB-RS485 connection, polling and queued MQTT-command execution share one dedicated `inverter_bus` FreeRTOS task. It uses automatic core affinity, priority 4 and an 8192-byte stack by default, configured in `project_config.hpp`. The main task stays alive to preserve configuration/runtime lifetimes. MQTT publication remains a separate task.
 - Modbus stack minimum-free bytes are logged at INFO level every 30 seconds while the adapter is connected. Enable INFO output for this diagnostic. Task creation failure is logged and leaves inverter communication stopped; it does not reset credentials. This change does not shorten the 850 ms bus gap, verify register meanings, or guarantee polling deadlines under timeout/command load.
 
@@ -29,7 +31,7 @@ Status: hardening in progress; not certified or endurance-tested. No firmware bu
 - Power-register pairs are read independently; failed setup reads retry with a delay.
 - Poller state uses heap rather than the small main-task stack.
 - Live JSON uses one bounded-size output allocation; the tree is freed before enqueue copies the payload.
-- MQTT has a bounded 64 KiB outbox and asynchronous sends. Explicit network timeout is 10 seconds and reconnect delay is 5 seconds.
+- MQTT has a bounded 64 KiB outbox and asynchronous sends. Explicit network timeout is 10 seconds. The reconnect delay defaults to 5 seconds plus 0–30 seconds of jitter selected at client initialization.
 - Retained commands and commands over 2048 bytes are rejected. Never retain commands at the broker.
 - Live readings become stale after 120 seconds; slow counters after 900 seconds. The former 10-second cutoff was shorter than the observed roughly 35-second polling sweep with an 850 ms transaction gap. These are configurable ceilings, not guaranteed refresh intervals. Staleness is evaluated on the next input message; absence of all telemetry must be detected using health data/server receive times.
 - Last-known register values remain visible with `age_ms` and `stale`; stale inputs are excluded from calculations. Once a primary power register has been received, its expiry does not silently select another measurement source. A reboot clears this history. Calculations still use sequential samples, not an atomic measurement: cache age does not include transport delay. Multiword decoding requires matching receipt timestamps for both words.

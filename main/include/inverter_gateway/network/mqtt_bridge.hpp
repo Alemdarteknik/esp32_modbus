@@ -76,6 +76,8 @@ private:
     esp_mqtt_client_handle_t client_ = nullptr;
     std::atomic_bool connected_{false};
     QueueHandle_t publish_queue_ = nullptr;
+    QueueHandle_t result_queue_ = nullptr;
+    char hardware_client_id_[32]{};
     TaskHandle_t publisher_task_ = nullptr;
     char availability_topic_[192]{};
     std::array<std::uint64_t, 32> recent_command_ids_{};

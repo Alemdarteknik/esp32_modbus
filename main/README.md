@@ -209,4 +209,6 @@ The complete register catalog does not make every register writable. MQTT can re
 No build or flash is performed by the source-generation workflow.
 # Dedicated inverter task
 
+For fleet settings, MQTT result prioritization and the replacement commissioning procedure, see [Fleet deployment](../doc/Fleet_Deployment.md). Existing topic identities are preserved; a replacement ESP restores the saved installation ID manually. Enable the documented TLS/authentication policy before fleet deployment.
+
 Inverter USB connection, Modbus reads and MQTT-origin command execution run in the single `inverter_bus` FreeRTOS task. MQTT serialization/publication remains separate. Automatic core scheduling is retained; no tasks are newly pinned. Configure `inverter_task_stack_bytes` (8192), `inverter_task_priority` (4), and `inverter_task_diagnostics_ms` (30000) in `project_config.hpp`. Stack-headroom reports use INFO logging. MQTT payloads and Modbus timing are unchanged. No additional inverter-write entry point is introduced.

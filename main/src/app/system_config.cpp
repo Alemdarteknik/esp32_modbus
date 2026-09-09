@@ -5,6 +5,7 @@
 #include <cmath>
 
 #include "esp_mac.h"
+#include "inverter_gateway/app/project_config.hpp"
 #include "nvs.h"
 
 namespace inverter_gateway::app {
@@ -173,6 +174,12 @@ ConfigValidation validate_config(const SystemConfig &config)
     }
     if (!valid_site_id(config.site_id)) return ConfigValidation::site_id_required;
     if (role_uses_mqtt(config.profile.device_role)) {
+        if (mqtt_require_secure_credentials &&
+            ((std::strncmp(config.mqtt_uri, "mqtts://", 8) != 0 &&
+              std::strncmp(config.mqtt_uri, "wss://", 6) != 0) ||
+             !has_text(config.mqtt_username, sizeof(config.mqtt_username)) ||
+             !has_text(config.mqtt_password, sizeof(config.mqtt_password))))
+            return ConfigValidation::mqtt_required;
         if (!has_text(config.wifi_ssid, sizeof(config.wifi_ssid))) {
             return ConfigValidation::wifi_required;
         }

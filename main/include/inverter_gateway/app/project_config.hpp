@@ -52,6 +52,12 @@ inline constexpr double output_rated_apparent_kva = 0.0;
 inline constexpr std::uint32_t slow_value_max_age_ms = 900000;
 inline constexpr std::uint32_t health_publish_interval_ms = 30000;
 inline constexpr std::uint32_t mqtt_reconnect_interval_ms = 5000;
+inline constexpr std::uint32_t mqtt_startup_jitter_ms = 15000;
+inline constexpr std::uint32_t mqtt_reconnect_jitter_ms = 30000;
+inline constexpr std::uint32_t mqtt_live_publish_interval_ms = 5000;
+inline constexpr bool mqtt_require_secure_credentials = false; // Enable for authenticated TLS fleet deployments.
+static_assert(mqtt_live_publish_interval_ms > 0 && mqtt_reconnect_interval_ms > 0);
+static_assert(mqtt_startup_jitter_ms < 60000 && mqtt_reconnect_jitter_ms < 60000);
 inline constexpr std::uint32_t mqtt_network_timeout_ms = 10000;
 inline constexpr std::size_t mqtt_command_max_bytes = 2048;
 inline constexpr std::uint32_t critical_poll_interval_ms = 1000;

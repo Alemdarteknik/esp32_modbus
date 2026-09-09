@@ -20,6 +20,8 @@
 #include "esp_heap_caps.h"
 #include "esp_timer.h"
 #include "esp_system.h"
+#include "esp_mac.h"
+#include "esp_random.h"
 #include "inverter_gateway/app/project_config.hpp"
 #include "inverter_gateway/app/rgb_debug.hpp"
 #include "inverter_gateway/inverter/inverter_command.hpp"
@@ -80,9 +82,13 @@ int enqueue_payload(esp_mqtt_client_handle_t client, const char *topic,
 {
     if (client == nullptr || payload == nullptr) return -1;
     const std::size_t bytes = std::strlen(payload) + std::strlen(topic) + 16U;
+    const std::size_t topic_length = std::strlen(topic);
+    const bool command_result = topic_length >= 7 && std::strcmp(topic + topic_length - 7, "/result") == 0;
+    // Leave room for command acknowledgements when telemetry is backed up.
+    const std::size_t budget = command_result ? mqtt_outbox_limit_bytes : mqtt_outbox_limit_bytes - 8192U;
     const int queued = esp_mqtt_client_get_outbox_size(client);
-    if (queued < 0 || bytes > mqtt_outbox_limit_bytes ||
-        static_cast<std::size_t>(queued) > mqtt_outbox_limit_bytes - bytes) {
+    if (queued < 0 || bytes > budget ||
+        static_cast<std::size_t>(queued) > budget - bytes) {
         app::rgb_debug_publish_error();
         ++mqtt_enqueue_failures;
         ESP_LOGW(tag, "MQTT outbox full; skipped %s (%u bytes queued)",
@@ -372,6 +378,17 @@ MqttBridge::MqttBridge(const app::SystemConfig &config, RuntimeMessageSink &sink
 esp_err_t MqttBridge::start()
 {
     if (client_ != nullptr) return ESP_OK;
+    if (app::mqtt_require_secure_credentials &&
+        (!uses_tls(config_.mqtt_uri) || !config_.mqtt_username[0] || !config_.mqtt_password[0])) {
+        ESP_LOGE(tag, "Fleet policy requires TLS and MQTT credentials");
+        return ESP_ERR_INVALID_ARG;
+    }
+    std::uint8_t mac[6]{};
+    const auto mac_result = esp_read_mac(mac, ESP_MAC_WIFI_STA);
+    if (mac_result != ESP_OK) return mac_result;
+    std::snprintf(hardware_client_id_, sizeof(hardware_client_id_), "ESP-%02X%02X%02X%02X%02X%02X",
+        static_cast<unsigned>(mac[0]), static_cast<unsigned>(mac[1]), static_cast<unsigned>(mac[2]),
+        static_cast<unsigned>(mac[3]), static_cast<unsigned>(mac[4]), static_cast<unsigned>(mac[5]));
     ESP_LOGW(tag, "Starting MQTT connection to %s (authentication %s)",
              config_.mqtt_uri,
              config_.mqtt_username[0] != '\0' ? "enabled" : "disabled");
@@ -379,6 +396,8 @@ esp_err_t MqttBridge::start()
     if (publish_queue_ == nullptr) return ESP_ERR_NO_MEM;
     esp_mqtt_client_config_t mqtt_config{};
     mqtt_config.broker.address.uri = config_.mqtt_uri;
+    mqtt_config.credentials.client_id = hardware_client_id_;
+    mqtt_config.session.disable_clean_session = false;
     if (uses_tls(config_.mqtt_uri)) {
         mqtt_config.broker.verification.crt_bundle_attach = esp_crt_bundle_attach;
         ESP_LOGI(tag, "TLS server verification enabled with the ESP certificate bundle");
@@ -406,7 +425,8 @@ esp_err_t MqttBridge::start()
     mqtt_config.buffer.size = 8192;
     mqtt_config.buffer.out_size = 8192;
     mqtt_config.outbox.limit = mqtt_outbox_limit_bytes;
-    mqtt_config.network.reconnect_timeout_ms = app::mqtt_reconnect_interval_ms;
+    mqtt_config.network.reconnect_timeout_ms = app::mqtt_reconnect_interval_ms +
+        esp_random() % (app::mqtt_reconnect_jitter_ms + 1U);
     mqtt_config.network.timeout_ms = app::mqtt_network_timeout_ms;
     mqtt_config.session.keepalive = 60;
     client_ = esp_mqtt_client_init(&mqtt_config);
@@ -417,7 +437,10 @@ esp_err_t MqttBridge::start()
     }
     esp_err_t result = esp_mqtt_client_register_event(
         client_, static_cast<esp_mqtt_event_id_t>(ESP_EVENT_ANY_ID), event_callback, this);
-    if (result == ESP_OK) result = esp_mqtt_client_start(client_);
+    if (result == ESP_OK) {
+        result_queue_ = xQueueCreate(8, sizeof(OutboundMessage));
+        if (result_queue_ == nullptr) result = ESP_ERR_NO_MEM;
+    }
     if (result == ESP_OK &&
         xTaskCreate(publisher_task, "mqtt_publish", 6144, this, 4,
                     &publisher_task_) != pdPASS) result = ESP_ERR_NO_MEM;
@@ -443,6 +466,10 @@ void MqttBridge::stop()
     if (publish_queue_ != nullptr) {
         vQueueDelete(publish_queue_);
         publish_queue_ = nullptr;
+    }
+    if (result_queue_ != nullptr) {
+        vQueueDelete(result_queue_);
+        result_queue_ = nullptr;
     }
 }
 
@@ -984,7 +1011,7 @@ void MqttBridge::publish_live(const TelemetryMessage &message)
     // not suppress otherwise valid telemetry; report its age explicitly.
     const bool live_publish_tick =
         count != 0 && (cache.last_publish_ms == 0 ||
-        cache.timestamp_ms - cache.last_publish_ms >= app::fast_poll_interval_ms);
+        cache.timestamp_ms - cache.last_publish_ms >= app::mqtt_live_publish_interval_ms);
     if (!live_publish_tick) return;
     // Limit failed allocation attempts too; avoid rebuilding a large tree on
     // every incoming Modbus block while memory is constrained.
@@ -1690,11 +1717,11 @@ void MqttBridge::publish_alert_changes(const TelemetryMessage &message)
 
 void MqttBridge::publish_command_result(const RoutedCommandResult &message)
 {
-    if (publish_queue_ == nullptr) return;
+    if (result_queue_ == nullptr) return;
     OutboundMessage outbound{};
     outbound.type = OutboundType::command_result;
     outbound.command_result = message;
-    if (xQueueSend(publish_queue_, &outbound, 0) != pdTRUE) {
+    if (xQueueSend(result_queue_, &outbound, 0) != pdTRUE) {
         ESP_LOGW(tag, "MQTT publish queue full; command result dropped");
     }
 }
@@ -1868,6 +1895,12 @@ void MqttBridge::publish_health()
 void MqttBridge::publisher_task(void *argument)
 {
     auto *self = static_cast<MqttBridge *>(argument);
+    if (self == nullptr) { vTaskDelete(nullptr); return; }
+    vTaskDelay(pdMS_TO_TICKS(esp_random() % (app::mqtt_startup_jitter_ms + 1U)));
+    while (esp_mqtt_client_start(self->client_) != ESP_OK) {
+        ESP_LOGE(tag, "MQTT startup failed; retrying");
+        vTaskDelay(pdMS_TO_TICKS(app::mqtt_reconnect_interval_ms));
+    }
     OutboundMessage message{};
     std::uint32_t last_health = 0;
     while (self != nullptr) {
@@ -1878,7 +1911,11 @@ void MqttBridge::publisher_task(void *argument)
         }
         // Do not wait indefinitely on one old sample while the queue fills.
         // Drain telemetry during outages; a new input sample refreshes live.
-        if (xQueueReceive(self->publish_queue_, &message, pdMS_TO_TICKS(1000)) != pdTRUE) continue;
+        if (self->connected_ && xQueueReceive(self->result_queue_, &message, 0) == pdTRUE) {
+            self->publish_command_result_now(message.command_result);
+            continue;
+        }
+        if (xQueueReceive(self->publish_queue_, &message, pdMS_TO_TICKS(100)) != pdTRUE) continue;
         if (!self->connected_ && message.type == OutboundType::telemetry) {
             ++telemetry_queue_drops;
             continue;
