@@ -2,6 +2,7 @@
 
 #include <cstring>
 #include <cstdio>
+#include <cmath>
 
 #include "esp_mac.h"
 #include "nvs.h"
@@ -82,6 +83,8 @@ bool site_id_is_hardware_default(const SystemConfig &config)
 
 ConfigValidation validate_config(const SystemConfig &config)
 {
+    if (!std::isfinite(config.output_rated_power_kw) || config.output_rated_power_kw < 0.0F ||
+        config.output_rated_power_kw > 1000.0F) return ConfigValidation::invalid_counts;
     if (config.magic != SystemConfig::magic_value ||
         config.schema_version != SystemConfig::current_schema_version ||
         config.profile.schema_version != DeviceProfile::current_schema_version) {
@@ -285,6 +288,13 @@ esp_err_t ConfigStore::load(SystemConfig &config) const
     result = nvs_get_blob(handle, nvs_key, &candidate, &size);
     nvs_close(handle);
     if (result != ESP_OK) return result;
+    // Version 4 appends the rating; preserve all version 3 credentials and peers.
+    if (candidate.magic == SystemConfig::magic_value && candidate.schema_version == 3 &&
+        size == offsetof(SystemConfig, output_rated_power_kw)) {
+        candidate.output_rated_power_kw = 0.0F;
+        candidate.schema_version = SystemConfig::current_schema_version;
+        size = sizeof(candidate);
+    }
     if (size != sizeof(candidate) || validate_config(candidate) == ConfigValidation::bad_header) {
         return ESP_ERR_INVALID_VERSION;
     }

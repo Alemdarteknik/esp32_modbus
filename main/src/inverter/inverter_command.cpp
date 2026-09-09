@@ -13,6 +13,13 @@ const char *operation_name(LocalOperation operation)
     case LocalOperation::set_overload_to_bypass_enabled:
         return "set_overload_to_bypass_enabled";
     case LocalOperation::set_battery_type: return "set_battery_type";
+    case LocalOperation::set_eco_mode_enabled: return "set_eco_mode_enabled";
+    case LocalOperation::set_overtemperature_restart_enabled: return "set_overtemperature_restart_enabled";
+    case LocalOperation::set_input_change_reminder_enabled: return "set_input_change_reminder_enabled";
+    case LocalOperation::set_output_split_phase_enabled: return "set_output_split_phase_enabled";
+    case LocalOperation::set_generator_auto_input_enabled: return "set_generator_auto_input_enabled";
+    case LocalOperation::set_dual_channel_load_enabled: return "set_dual_channel_load_enabled";
+    case LocalOperation::set_grid_feedback_enabled: return "set_grid_feedback_enabled";
     default: return "unknown";
     }
 }

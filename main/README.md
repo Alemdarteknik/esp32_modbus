@@ -6,6 +6,8 @@ The gateway framework, networking, MQTT API, topology management, and Modbus RTU
 
 ## Implemented runtime
 
+Production status and endurance-test procedure: [Production readiness](../doc/Production_Readiness.md). The firmware has reliability improvements but has not yet passed the release gates. Gateway `/health` telemetry reports memory, stack and queue state every 30 seconds.
+
 - First-installation Wi-Fi AP and English web configuration page
 - Two-stage validation before leaving AP mode
 - Persistent NVS role, topology, connected-PV count, battery/BMS/generator presence, Wi-Fi, MQTT, Modbus, phase, and peer configuration
@@ -16,6 +18,7 @@ The gateway framework, networking, MQTT API, topology management, and Modbus RTU
 - Guarded FC06/FC10 Modbus writes with compare-before-write and read-back confirmation
 - Class-based polling for identity, setup, critical, fast, normal, and slow data
 - Complete generated catalog for 265 holding and 422 input registers
+- Configurable WS2812 RGB debug LED for setup, connectivity, data freshness and publishing errors
 
 The old `DiagnosticScanner` remains available as a diagnostic module, but `app_main` now uses `ProductionPoller`.
 
@@ -31,6 +34,7 @@ main/
       device_profile.hpp                    Roles and installation topologies
       project_config.hpp                    Central firmware defaults
       monitor_output.hpp                    Stored serial-monitor preference
+      rgb_debug.hpp                         RGB status LED interface
       system_config.hpp                     Validated persistent configuration
     inverter/
       register_catalog.hpp                  Complete register metadata/classes
@@ -73,6 +77,38 @@ After setup, MQTT-capable devices continue serving the configuration page at `ht
 Advanced settings also contains **Show detailed ESP serial-monitor output**. The choice is saved separately in NVS and controls information logs, Modbus TX/RX frames, and successful CRC messages. Warnings and errors always remain visible. Firmware defaults—including this setting, polling times, setup AP name/password, Modbus timing, BOOT-button timing, and coordinator-link settings—are centralized in `include/inverter_gateway/app/project_config.hpp`. ESP-IDF menuconfig can additionally force serial-monitor output on with `CONFIG_INVERTER_GATEWAY_MONITOR_OUTPUT_DEFAULT`.
 
 Hold the ESP32-S3 BOOT button (GPIO0 by default) for three seconds either during startup or while the device is operating normally. Outside setup mode, the device saves a setup-mode request and restarts into its access point without erasing the existing configuration.
+
+## RGB debug LED
+
+Configure the LED in [`include/inverter_gateway/app/project_config.hpp`](include/inverter_gateway/app/project_config.hpp):
+
+```cpp
+inline constexpr bool rgb_debug_enabled = true;
+inline constexpr gpio_num_t rgb_debug_gpio = GPIO_NUM_48;
+inline constexpr std::uint8_t rgb_debug_brightness = 16; // 0..255
+inline constexpr bool rgb_debug_grb_order = true;
+inline constexpr std::uint32_t rgb_debug_tick_ms = 250;
+inline constexpr std::uint32_t rgb_debug_data_timeout_ms = 15000;
+```
+
+The driver supports one WS2812 addressable RGB pixel using ESP-IDF RMT. GPIO 48 is a configurable assumption: check your board schematic, since N16R8 specifies memory capacity rather than LED wiring. Use GRB or RGB byte order to match the LED. Discrete three-channel RGB LEDs and RGBW strips are not supported. Avoid GPIOs already used by USB, BOOT or the coordinator UART.
+
+| Colour | Pattern | Meaning |
+|---|---|---|
+| Blue | Solid | Setup AP is active, including AP+station mode |
+| Yellow | Blinking | Waiting for Wi-Fi station IP on an MQTT-capable role |
+| Magenta | Blinking | Wi-Fi is ready but MQTT is disconnected or failed to start |
+| Cyan | Blinking | ESP-NOW member has no discovered coordinator, or required coordinator UART link is disconnected |
+| Red | Blinking | Waiting for inverter telemetry, or no relevant telemetry received for 15 seconds |
+| Orange | Blinking | Otherwise ready, but a JSON allocation, MQTT enqueue or telemetry queue submission failed within the last 15 seconds |
+| Green | Solid | Required connections are ready and relevant inverter telemetry is recent |
+| White | Solid | Driver fallback when no status provider is supplied; normal firmware supplies one |
+
+The first applicable condition wins, from Blue through Orange, then Green. Default blinking is 500 ms on and 500 ms off. On an inverter-attached ESP, data freshness refers to its local inverter. On a separate Internet Gateway, it refers to any downstream inverter. Green does not guarantee every parallel member is online, every register is valid, or MQTT delivery was acknowledged. These are gateway debug states, not inverter warning/fault codes.
+
+The LED task starts after network-service initialization and works independently of serial-monitor printing. A LAN-only configuration webpage does not force blue. Set `rgb_debug_enabled = false` to avoid allocating the LED task and RMT channel; brightness `0` also turns the light off. Driver failure is logged without stopping the gateway. LED indication never writes to the inverter.
+
+Implementation: [`src/app/rgb_debug.cpp`](src/app/rgb_debug.cpp). The same colour reference is in [`MQTT_Register_Command_API.md`](../doc/MQTT_Register_Command_API.md#rgb-debug-led).
 
 ## MQTT interface
 
@@ -171,3 +207,6 @@ ESP-NOW application encryption is not enabled yet. MQTT may use credentials, but
 The complete register catalog does not make every register writable. MQTT can read documented readable input/holding registers and can request catalog-marked writable holding registers. Read-only, reserved, unknown and `blocked_unvalidated` entries stay blocked; guarded classes require confirmation, fresh state, compare-before-write, interlocks where applicable, and read-back verification. Write-only service actions cannot be read back and are reported as `sent_unverifiable`.
 
 No build or flash is performed by the source-generation workflow.
+# Dedicated inverter task
+
+Inverter USB connection, Modbus reads and MQTT-origin command execution run in the single `inverter_bus` FreeRTOS task. MQTT serialization/publication remains separate. Automatic core scheduling is retained; no tasks are newly pinned. Configure `inverter_task_stack_bytes` (8192), `inverter_task_priority` (4), and `inverter_task_diagnostics_ms` (30000) in `project_config.hpp`. Stack-headroom reports use INFO logging. MQTT payloads and Modbus timing are unchanged. No additional inverter-write entry point is introduced.

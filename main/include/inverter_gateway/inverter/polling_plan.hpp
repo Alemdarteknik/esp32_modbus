@@ -7,6 +7,8 @@
 
 namespace inverter_gateway::inverter {
 
+inline constexpr std::size_t poll_plan_capacity = 128;
+
 enum class PollCadence : std::uint8_t {
     boot_once,
     setup_once,

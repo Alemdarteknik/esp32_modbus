@@ -13,6 +13,16 @@ namespace inverter_gateway::app {
 // Serial monitor
 inline constexpr bool serial_monitor_output_default = false;
 
+// One addressable WS2812 RGB LED (not a three-pin discrete RGB LED).
+// Verify the PCB pin: N16R8 identifies memory, not the LED wiring.
+inline constexpr bool rgb_debug_enabled = true;
+inline constexpr gpio_num_t rgb_debug_gpio = GPIO_NUM_48;
+inline constexpr std::uint8_t rgb_debug_brightness = 16; // 0..255
+inline constexpr bool rgb_debug_grb_order = true;
+inline constexpr std::uint32_t rgb_debug_tick_ms = 250;
+inline constexpr std::uint32_t rgb_debug_data_timeout_ms = 15000;
+static_assert(rgb_debug_tick_ms > 0 && rgb_debug_data_timeout_ms > 0);
+
 // Inverter Modbus and USB-RS485
 inline constexpr std::uint32_t inverter_baud = 9600;
 inline constexpr std::uint8_t default_modbus_slave_address = 1;
@@ -24,8 +34,26 @@ inline constexpr std::uint32_t usb_open_timeout_ms = 1000;
 inline constexpr std::uint32_t usb_reconnect_delay_ms = 250;
 inline constexpr std::uint32_t usb_configure_retry_ms = 500;
 inline constexpr std::uint32_t inverter_loop_delay_ms = 50;
+// ESP-IDF task stack sizes are bytes. Leave affinity to the SMP scheduler.
+inline constexpr std::uint32_t inverter_task_stack_bytes = 8192;
+inline constexpr unsigned inverter_task_priority = 4;
+inline constexpr std::uint32_t inverter_task_diagnostics_ms = 30000;
 
 // Production polling
+// Full sweeps exceed 10 s with the 850 ms bus gap and interleaved status reads.
+// This is a freshness ceiling, not a guarantee of simultaneous measurements.
+inline constexpr std::uint32_t live_value_max_age_ms = 120000;
+// Calculation inputs must be recent AND close together in source time.
+inline constexpr std::uint32_t power_calculation_max_age_ms = 15000;
+inline constexpr std::uint32_t power_calculation_max_skew_ms = 5000;
+// Set only from the inverter nameplate. Zero means unknown; never infer from model ID.
+// Rated active output power (kW) is selected and persisted through the setup webpage.
+inline constexpr double output_rated_apparent_kva = 0.0;
+inline constexpr std::uint32_t slow_value_max_age_ms = 900000;
+inline constexpr std::uint32_t health_publish_interval_ms = 30000;
+inline constexpr std::uint32_t mqtt_reconnect_interval_ms = 5000;
+inline constexpr std::uint32_t mqtt_network_timeout_ms = 10000;
+inline constexpr std::size_t mqtt_command_max_bytes = 2048;
 inline constexpr std::uint32_t critical_poll_interval_ms = 1000;
 inline constexpr std::uint32_t fast_poll_interval_ms = 5000;
 inline constexpr std::uint32_t normal_poll_interval_ms = 30000;

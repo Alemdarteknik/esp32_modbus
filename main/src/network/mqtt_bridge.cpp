@@ -8,6 +8,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <string>
+#include <new>
+#include <initializer_list>
 
 #include <sys/socket.h>
 
@@ -15,6 +17,11 @@
 #include "esp_crt_bundle.h"
 #include "esp_log.h"
 #include "esp_netif.h"
+#include "esp_heap_caps.h"
+#include "esp_timer.h"
+#include "esp_system.h"
+#include "inverter_gateway/app/project_config.hpp"
+#include "inverter_gateway/app/rgb_debug.hpp"
 #include "inverter_gateway/inverter/inverter_command.hpp"
 #include "inverter_gateway/inverter/register_catalog.hpp"
 #include "inverter_gateway/inverter/register_value.hpp"
@@ -23,6 +30,73 @@ namespace inverter_gateway::network {
 namespace {
 
 constexpr char tag[] = "mqtt_bridge";
+constexpr std::size_t mqtt_outbox_limit_bytes = 64U * 1024U;
+std::atomic<std::uint32_t> mqtt_enqueue_failures{0};
+std::atomic<std::uint32_t> telemetry_queue_drops{0};
+
+// Only for literal keys and strings owned by the static register catalog.
+// Borrowing immutable metadata avoids duplicating it for every live reading.
+bool add_catalog_string(cJSON *object, const char *key, const char *value)
+{
+    cJSON *item = cJSON_CreateStringReference(value != nullptr ? value : "");
+    if (item == nullptr) return false;
+    if (!cJSON_AddItemToObjectCS(object, key, item)) {
+        cJSON_Delete(item);
+        return false;
+    }
+    return true;
+}
+
+// Bound the unformatted JSON size before allocating. cJSON's default printer
+// grows by doubling, temporarily requiring both old and new output buffers.
+std::size_t json_string_capacity(const char *value)
+{
+    std::size_t size = 2;
+    if (value == nullptr) return size;
+    for (const unsigned char *p = reinterpret_cast<const unsigned char *>(value); *p; ++p) {
+        size += *p < 32 ? 6 : (*p == '"' || *p == '\\' ? 2 : 1);
+    }
+    return size;
+}
+
+std::size_t json_capacity(const cJSON *item)
+{
+    if (cJSON_IsString(item)) return json_string_capacity(item->valuestring);
+    if (cJSON_IsRaw(item)) return item->valuestring ? std::strlen(item->valuestring) : 4;
+    if (cJSON_IsNumber(item)) return 64;
+    if (cJSON_IsArray(item) || cJSON_IsObject(item)) {
+        std::size_t size = 2;
+        for (const cJSON *child = item->child; child != nullptr; child = child->next) {
+            size += json_capacity(child) + 1;
+            if (cJSON_IsObject(item)) size += json_string_capacity(child->string) + 1;
+        }
+        return size;
+    }
+    return 5;
+}
+
+int enqueue_payload(esp_mqtt_client_handle_t client, const char *topic,
+                    const char *payload, int qos, int retain)
+{
+    if (client == nullptr || payload == nullptr) return -1;
+    const std::size_t bytes = std::strlen(payload) + std::strlen(topic) + 16U;
+    const int queued = esp_mqtt_client_get_outbox_size(client);
+    if (queued < 0 || bytes > mqtt_outbox_limit_bytes ||
+        static_cast<std::size_t>(queued) > mqtt_outbox_limit_bytes - bytes) {
+        app::rgb_debug_publish_error();
+        ++mqtt_enqueue_failures;
+        ESP_LOGW(tag, "MQTT outbox full; skipped %s (%u bytes queued)",
+                 topic, static_cast<unsigned>(queued < 0 ? 0 : queued));
+        return -2;
+    }
+    const int result = esp_mqtt_client_enqueue(client, topic, payload, 0, qos, retain, true);
+    if (result < 0) {
+        ++mqtt_enqueue_failures;
+        app::rgb_debug_publish_error();
+        ESP_LOGW(tag, "MQTT enqueue failed (%d): %s", result, topic);
+    }
+    return result;
+}
 bool uses_tls(const char *uri)
 {
     return uri != nullptr &&
@@ -48,6 +122,13 @@ bool parse_operation(const char *name, inverter::LocalOperation &operation)
         inverter::LocalOperation::set_overload_restart_enabled,
         inverter::LocalOperation::set_overload_to_bypass_enabled,
         inverter::LocalOperation::set_battery_type,
+        inverter::LocalOperation::set_eco_mode_enabled,
+        inverter::LocalOperation::set_overtemperature_restart_enabled,
+        inverter::LocalOperation::set_input_change_reminder_enabled,
+        inverter::LocalOperation::set_output_split_phase_enabled,
+        inverter::LocalOperation::set_generator_auto_input_enabled,
+        inverter::LocalOperation::set_dual_channel_load_enabled,
+        inverter::LocalOperation::set_grid_feedback_enabled,
     };
     for (const auto candidate : operations) {
         if (std::strcmp(name, inverter::operation_name(candidate)) == 0) {
@@ -324,6 +405,10 @@ esp_err_t MqttBridge::start()
     mqtt_config.session.last_will.retain = 1;
     mqtt_config.buffer.size = 8192;
     mqtt_config.buffer.out_size = 8192;
+    mqtt_config.outbox.limit = mqtt_outbox_limit_bytes;
+    mqtt_config.network.reconnect_timeout_ms = app::mqtt_reconnect_interval_ms;
+    mqtt_config.network.timeout_ms = app::mqtt_network_timeout_ms;
+    mqtt_config.session.keepalive = 60;
     client_ = esp_mqtt_client_init(&mqtt_config);
     if (client_ == nullptr) {
         vQueueDelete(publish_queue_);
@@ -382,6 +467,7 @@ void MqttBridge::handle_event(esp_mqtt_event_handle_t event)
         break;
     }
     case MQTT_EVENT_DISCONNECTED:
+        ++reconnect_count_;
         connected_ = false;
         ESP_LOGW(tag, "MQTT disconnected from %s", config_.mqtt_uri);
         break;
@@ -398,6 +484,10 @@ void MqttBridge::handle_event(esp_mqtt_event_handle_t event)
         }
         break;
     case MQTT_EVENT_DATA:
+        if (event->retain || event->total_data_len > static_cast<int>(app::mqtt_command_max_bytes)) {
+            ESP_LOGW(tag, "Rejected retained or oversized MQTT command");
+            break;
+        }
         if (event->current_data_offset == 0 && event->data_len == event->total_data_len) {
             handle_command(event->topic, event->topic_len, event->data, event->data_len);
         } else {
@@ -648,11 +738,11 @@ const char *live_section(const inverter::RegisterDescriptor &descriptor)
     switch (descriptor.domain) {
     case inverter::RegisterDomain::pv: return "pv";
     case inverter::RegisterDomain::grid: return "grid";
-    case inverter::RegisterDomain::eps: return "output";
+    case inverter::RegisterDomain::eps: return "load";
     case inverter::RegisterDomain::load:
         return std::strstr(descriptor.name, "grid") != nullptr ||
                std::strstr(descriptor.name, "Grid") != nullptr
-                   ? "grid" : "output";
+                   ? "grid" : "load";
     case inverter::RegisterDomain::battery: return "battery";
     case inverter::RegisterDomain::bms: return "bms";
     case inverter::RegisterDomain::generator: return "generator";
@@ -668,7 +758,7 @@ const char *live_section(const inverter::RegisterDescriptor &descriptor)
         }
         if (std::strstr(descriptor.name, "grid") != nullptr ||
             std::strstr(descriptor.name, "Grid") != nullptr) return "grid";
-        return "output";
+        return "load";
     default: return "other";
     }
 }
@@ -814,12 +904,15 @@ const char *alert_severity(const inverter::RegisterDescriptor &descriptor)
 
 void MqttBridge::publish_telemetry(const TelemetryMessage &message)
 {
+    last_telemetry_ms_ = static_cast<std::uint32_t>(esp_timer_get_time() / 1000);
     if (publish_queue_ == nullptr) return;
     OutboundMessage outbound{};
     outbound.type = OutboundType::telemetry;
     outbound.telemetry = message;
     if (xQueueSend(publish_queue_, &outbound, 0) != pdTRUE) {
+        app::rgb_debug_publish_error();
         ESP_LOGW(tag, "MQTT publish queue full; telemetry dropped");
+        ++telemetry_queue_drops;
     }
 }
 
@@ -836,6 +929,27 @@ void MqttBridge::publish_live(const TelemetryMessage &message)
 {
     if (message.source_member_id >= maximum_members) return;
     LiveCache &cache = live_cache_[message.source_member_id];
+    const auto received_now = static_cast<std::uint32_t>(esp_timer_get_time() / 1000);
+    if (message.timestamp_ms < cache.timestamp_ms) {
+        // The remote ESP restarted: old high/low words and settings cannot
+        // be combined with the new session's readings.
+        cache.seen.fill(false);
+        cache.last_power.fill({});
+        cache.source_priority_seen = false;
+        cache.rated_power_seen = false;
+        cache.last_publish_ms = 0;
+        cache.last_core_status_ms = 0;
+        alert_seen_[message.source_member_id].fill(false);
+    }
+    if (!cache.received_ms || !cache.sampled_ms) {
+        cache.received_ms.reset(new (std::nothrow) std::uint32_t[input_point_count]{});
+        cache.sampled_ms.reset(new (std::nothrow) std::uint32_t[input_point_count]{});
+        if (!cache.received_ms || !cache.sampled_ms) {
+            app::rgb_debug_publish_error();
+            ESP_LOGW(tag, "No memory for live freshness tracking");
+            return;
+        }
+    }
     const std::uint16_t count = std::min<std::uint16_t>(
         message.register_count,
         static_cast<std::uint16_t>(message.registers.size()));
@@ -845,6 +959,17 @@ void MqttBridge::publish_live(const TelemetryMessage &message)
         if (address >= input_point_count) continue;
         cache.values[address] = message.registers[index];
         cache.seen[address] = true;
+        cache.received_ms[address] = received_now;
+        cache.sampled_ms[address] = static_cast<std::uint32_t>(message.timestamp_ms);
+    }
+    // Keep last-known readings for display; only fresh readings feed calculations.
+    auto fresh = cache.seen;
+    for (std::uint16_t address = 0; address < input_point_count; ++address) {
+        if (!fresh[address]) continue;
+        const auto *descriptor = inverter::find_register(inverter::RegisterSpace::input, address);
+        const auto limit = descriptor && descriptor->read_class == inverter::RegisterReadClass::slow_counter
+            ? app::slow_value_max_age_ms : app::live_value_max_age_ms;
+        fresh[address] = received_now - cache.received_ms[address] <= limit;
     }
     cache.enabled_features = message.enabled_features;
     cache.connected_pv_inputs = message.connected_pv_inputs;
@@ -852,16 +977,32 @@ void MqttBridge::publish_live(const TelemetryMessage &message)
     cache.sequence = message.sequence;
     cache.timestamp_ms = message.timestamp_ms;
 
-    // The core status block is supported by every inverter profile and is the
-    // heartbeat for a live update.  Do not wait for the optional 284-356
-    // power block: older/smaller inverter maps can reject that range, which
-    // previously prevented the live topic from ever being published.
+    if (message.first_register == 0 && count != 0) {
+        cache.last_core_status_ms = message.timestamp_ms;
+    }
+    // Any successful input read may refresh live. A failed status read must
+    // not suppress otherwise valid telemetry; report its age explicitly.
     const bool live_publish_tick =
-        message.first_register == 0 && count != 0 &&
-        cache.timestamp_ms != cache.last_publish_ms;
+        count != 0 && (cache.last_publish_ms == 0 ||
+        cache.timestamp_ms - cache.last_publish_ms >= app::fast_poll_interval_ms);
     if (!live_publish_tick) return;
+    // Limit failed allocation attempts too; avoid rebuilding a large tree on
+    // every incoming Modbus block while memory is constrained.
+    cache.last_publish_ms = cache.timestamp_ms;
 
     cJSON *root = cJSON_CreateObject();
+    if (root == nullptr) {
+        app::rgb_debug_publish_error();
+        ESP_LOGW(tag, "Could not allocate live JSON object");
+        return;
+    }
+    cJSON_AddBoolToObject(root, "core_status_fresh",
+        cache.last_core_status_ms != 0 &&
+        cache.timestamp_ms - cache.last_core_status_ms <= app::inverter_state_freshness_ms);
+    if (cache.last_core_status_ms != 0) {
+        cJSON_AddNumberToObject(root, "core_status_age_ms",
+                               cache.timestamp_ms - cache.last_core_status_ms);
+    } else cJSON_AddNullToObject(root, "core_status_age_ms");
     cJSON_AddNumberToObject(root, "member_id", message.source_member_id);
     cJSON_AddNumberToObject(root, "sequence", cache.sequence);
     cJSON_AddNumberToObject(root, "uptime_ms", static_cast<double>(cache.timestamp_ms));
@@ -872,8 +1013,10 @@ void MqttBridge::publish_live(const TelemetryMessage &message)
                                                cache.phase_assignment));
     cJSON_AddBoolToObject(root, "battery_installed",
                           (cache.enabled_features & inverter::feature_battery) != 0);
-    cJSON_AddBoolToObject(root, "bms_connected",
+    cJSON_AddBoolToObject(root, "bms_configured",
                           (cache.enabled_features & inverter::feature_bms) != 0);
+    cJSON_AddNullToObject(root, "bms_connected"); // No verified communication-state mapping yet.
+    cJSON_AddStringToObject(root, "installation_flags_source", "configuration");
     cJSON_AddBoolToObject(root, "generator_installed",
                           (cache.enabled_features & inverter::feature_generator) != 0);
     cJSON_AddStringToObject(
@@ -881,7 +1024,7 @@ void MqttBridge::publish_live(const TelemetryMessage &message)
         app::phase_assignment_name(
             static_cast<app::PhaseAssignment>(cache.phase_assignment)));
     cJSON *operating = cJSON_AddObjectToObject(root, "operating_status");
-    if (cache.seen[0]) {
+    if (fresh[0]) {
         const std::uint16_t raw_status = cache.values[0];
         const bool running = raw_status == 1 || raw_status == 2 ||
                              raw_status == 5 || raw_status == 6 ||
@@ -899,19 +1042,33 @@ void MqttBridge::publish_live(const TelemetryMessage &message)
                                 source_priority_text(cache.source_priority));
     }
     if ((cache.enabled_features & inverter::feature_battery) != 0 &&
-        cache.seen[125]) {
+        fresh[125]) {
         cJSON_AddStringToObject(operating, "energy_priority",
                                 priority_text(cache.values[125]));
     }
 
-    auto decoded_published_value = [&cache](std::uint16_t address,
+    const auto sample_now = static_cast<std::uint32_t>(message.timestamp_ms);
+    auto coherent = [&](std::initializer_list<std::uint16_t> addresses) {
+        std::uint32_t youngest = UINT32_MAX, oldest = 0;
+        for (auto address : addresses) {
+            if (address >= input_point_count || !fresh[address]) return false;
+            const auto age = sample_now - cache.sampled_ms[address];
+            if (age > app::power_calculation_max_age_ms ||
+                received_now - cache.received_ms[address] > app::power_calculation_max_age_ms) return false;
+            youngest = std::min(youngest, age);
+            oldest = std::max(oldest, age);
+        }
+        return addresses.size() != 0 && oldest - youngest <= app::power_calculation_max_skew_ms;
+    };
+    auto decoded_published_value = [&](std::uint16_t address,
                                             double &value) {
-        if (address >= input_point_count || !cache.seen[address]) return false;
+        if (!coherent({address})) return false;
         const auto *descriptor = inverter::find_register(
             inverter::RegisterSpace::input, address);
         if (!is_public_descriptor(descriptor)) return false;
-        const bool next_seen = address + 1 < input_point_count &&
-                               cache.seen[address + 1];
+        const bool next_seen = address + 1 < input_point_count && coherent({address, static_cast<std::uint16_t>(address + 1)}) &&
+                               fresh[address + 1] &&
+                               cache.received_ms[address] == cache.received_ms[address + 1];
         const auto decoded = inverter::decode_numeric_value(
             *descriptor, cache.values[address],
             next_seen ? cache.values[address + 1] : 0, next_seen);
@@ -920,18 +1077,29 @@ void MqttBridge::publish_live(const TelemetryMessage &message)
         return true;
     };
 
-    auto signed_input_value = [&cache](std::uint16_t address, double scale,
+    auto signed_input_value = [&cache, &fresh](std::uint16_t address, double scale,
                                        double &value) {
-        if (address >= input_point_count || !cache.seen[address]) return false;
+        if (address >= input_point_count || !fresh[address]) return false;
         value = static_cast<std::int16_t>(cache.values[address]) * scale;
         return true;
     };
 
     const bool three_phase =
         (cache.enabled_features & inverter::feature_three_phase) != 0;
-    const bool phase_r_available = cache.seen[55] && cache.seen[56];
-    const bool phase_s_available = cache.seen[57] && cache.seen[58];
-    const bool phase_t_available = cache.seen[59] && cache.seen[60];
+    auto sum_phase_power = [&](std::uint16_t first, std::uint16_t stride,
+                               double &total) {
+        total = 0.0;
+        for (unsigned phase = 0; phase < (three_phase ? 3U : 1U); ++phase) {
+            double value = 0.0;
+            if (!decoded_published_value(first + phase * stride, value)) return false;
+            total += value;
+        }
+        return !three_phase || coherent({first, static_cast<std::uint16_t>(first + stride),
+                                         static_cast<std::uint16_t>(first + 2 * stride)});
+    };
+    const bool phase_r_available = coherent({55, 56});
+    const bool phase_s_available = coherent({55, 56, 57, 58});
+    const bool phase_t_available = coherent({55, 56, 59, 60});
     bool output_apparent_power_available = false;
     std::uint8_t output_phase_count = 0;
     double output_apparent_power_va = 0.0;
@@ -949,81 +1117,95 @@ void MqttBridge::publish_live(const TelemetryMessage &message)
         }
         output_apparent_power_available = true;
     }
+    double output_register_kva = 0.0;
+    const bool output_apparent_from_register = sum_phase_power(332, 4, output_register_kva);
+    if (output_apparent_from_register) {
+        output_apparent_power_va = output_register_kva * 1000.0;
+        output_apparent_power_available = true;
+        output_phase_count = three_phase ? 3 : 1;
+    }
+    double output_active_kw = 0.0;
+    const bool output_active_available = sum_phase_power(334, 4, output_active_kw);
 
     bool pv_power_available = false;
     bool pv_power_calculated = false;
     double pv_power_kw = 0.0;
     if (!decoded_published_value(250, pv_power_kw)) {
-        const std::uint8_t pv_count =
-            cache.connected_pv_inputs == 0 ? 2 : cache.connected_pv_inputs;
+        const std::uint8_t pv_count = cache.connected_pv_inputs;
+        bool all_pv_available = pv_count > 0 && pv_count <= 16;
+        std::uint32_t pv_youngest = UINT32_MAX, pv_oldest = 0;
         for (std::uint8_t pv = 0; pv < pv_count && pv < 16; ++pv) {
             const std::uint16_t voltage_address = 64 + pv * 2;
             const std::uint16_t current_address = voltage_address + 1;
-            if (!cache.seen[voltage_address] || !cache.seen[current_address]) {
+            if (!coherent({64, voltage_address, current_address})) {
+                all_pv_available = false;
                 continue;
             }
             pv_power_kw += (cache.values[voltage_address] * 0.1) *
                            (cache.values[current_address] * 0.1) / 1000.0;
+            for (auto address : {voltage_address, current_address}) {
+                const auto age = sample_now - cache.sampled_ms[address];
+                pv_youngest = std::min(pv_youngest, age);
+                pv_oldest = std::max(pv_oldest, age);
+            }
             pv_power_available = true;
             pv_power_calculated = true;
         }
+        pv_power_available = pv_power_available && all_pv_available &&
+            pv_oldest - pv_youngest <= app::power_calculation_max_skew_ms;
     } else {
         pv_power_available = true;
     }
 
     bool grid_power_available = false;
     double grid_power_kw = 0.0;
+    double grid_apparent_kva = 0.0;
     std::uint8_t grid_phase_count = 0;
     const std::uint16_t grid_voltage_addresses[] = {42, 44, 46};
     const std::uint16_t grid_current_addresses[] = {43, 45, 47};
     const std::uint8_t wanted_grid_phases = three_phase ? 3 : 1;
-    double power_factor = 1.0;
-    if (cache.seen[52]) {
-        power_factor = std::fabs(static_cast<std::int16_t>(cache.values[52]) *
-                                 0.0001);
-        if (power_factor > 1.0) power_factor = 1.0;
-    }
     for (std::uint8_t phase = 0; phase < wanted_grid_phases; ++phase) {
         const std::uint16_t voltage_address = grid_voltage_addresses[phase];
         const std::uint16_t current_address = grid_current_addresses[phase];
-        if (!cache.seen[voltage_address] || !cache.seen[current_address]) {
+        if (!coherent({42, voltage_address, current_address})) {
             continue;
         }
         double current_a = 0.0;
         signed_input_value(current_address, 0.1, current_a);
-        grid_power_kw += (cache.values[voltage_address] * 0.1) * current_a *
-                         power_factor / 1000.0;
+        grid_apparent_kva += (cache.values[voltage_address] * 0.1) *
+                             std::fabs(current_a) / 1000.0;
         ++grid_phase_count;
         grid_power_available = true;
     }
+    const bool grid_apparent_available = grid_phase_count == wanted_grid_phases &&
+        (!three_phase || coherent({42,43,44,45,46,47}));
+    // User-approved provisional interpretation: R320 is "AC power to user".
+    // Decode the documented unsigned high/low pair; do not infer import sign.
+    grid_power_available = decoded_published_value(320, grid_power_kw);
 
     bool inverter_power_available = false;
-    bool inverter_power_calculated = false;
     double inverter_power_kw = 0.0;
     const bool inverter_register_power_available =
-        decoded_published_value(345, inverter_power_kw);
+        decoded_published_value(286, inverter_power_kw);
     if (inverter_register_power_available) {
         inverter_power_available = true;
-    } else if (cache.seen[2] && cache.seen[5]) {
-        inverter_power_kw = (cache.values[2] * 0.1) *
-                            (static_cast<std::int16_t>(cache.values[5]) * 0.1) /
-                            1000.0;
-        inverter_power_available = true;
-        inverter_power_calculated = true;
-    }
-
-    bool load_power_available = false;
-    bool load_power_calculated = false;
-    double load_power_kw = 0.0;
-    if (!decoded_published_value(320, load_power_kw)) {
-        load_power_kw = output_apparent_power_va / 1000.0;
-        load_power_available = output_apparent_power_available;
-        load_power_calculated = output_apparent_power_available;
     } else {
-        load_power_available = true;
+        inverter_power_available = sum_phase_power(292, 6, inverter_power_kw);
+    }
+    double inverter_apparent_kva = 0.0;
+    bool inverter_apparent_available = true;
+    for (unsigned phase = 0; phase < (three_phase ? 3U : 1U); ++phase) {
+        if (!coherent({2, static_cast<std::uint16_t>(2 + phase),
+                       static_cast<std::uint16_t>(5 + phase)})) {
+            inverter_apparent_available = false;
+            break;
+        }
+        inverter_apparent_kva += (cache.values[2 + phase] * 0.1) *
+            std::fabs(static_cast<std::int16_t>(cache.values[5 + phase]) * 0.1) / 1000.0;
     }
 
     bool battery_power_available = false;
+    if (three_phase && !coherent({2,3,4,5,6,7})) inverter_apparent_available = false;
     bool battery_power_from_registers = false;
     double battery_power_kw = 0.0;
     double discharge_power_kw = 0.0;
@@ -1032,14 +1214,16 @@ void MqttBridge::publish_live(const TelemetryMessage &message)
         decoded_published_value(349, discharge_power_kw);
     const bool charge_power_available =
         decoded_published_value(351, charge_power_kw);
-    if (discharge_power_available || charge_power_available) {
+    if (discharge_power_available && charge_power_available && coherent({349, 351})) {
         battery_power_kw = discharge_power_kw - charge_power_kw;
         battery_power_available = true;
         battery_power_from_registers = true;
     } else if ((cache.enabled_features & inverter::feature_battery) != 0 &&
-               (cache.seen[127] || cache.seen[129]) && cache.seen[141]) {
+               (fresh[127] || fresh[129]) && fresh[141] &&
+               coherent({static_cast<std::uint16_t>(fresh[127] ? 127 : 129), 141}) &&
+               !cache.seen[349] && !cache.seen[351]) {
         const std::uint16_t voltage_raw =
-            cache.seen[127] ? cache.values[127] : cache.values[129];
+            fresh[127] ? cache.values[127] : cache.values[129];
         double battery_current_a = 0.0;
         signed_input_value(141, 0.01, battery_current_a);
         battery_power_kw = (voltage_raw * 0.1) * battery_current_a / 1000.0;
@@ -1049,19 +1233,58 @@ void MqttBridge::publish_live(const TelemetryMessage &message)
     bool load_percentage_available = false;
     bool load_percentage_direct = false;
     double load_percentage = 0.0;
-    const double rated_power_w = cache.rated_power_seen ? cache.rated_power_w :
-        (cache.seen[36] && cache.values[36] == 3008 ? 12000.0 : 0.0);
-    if (cache.seen[344]) {
+    // This gateway's nameplate override must not be applied to other members.
+    const bool local_member = message.source_member_id == config_.profile.logical_member_id;
+    const double rated_power_w = local_member ? (config_.output_rated_power_kw > 0.0F ? config_.output_rated_power_kw : 12.0F) * 1000.0 : 0.0;
+    const double rated_apparent_kva = local_member && rated_power_w == 0.0
+        ? app::output_rated_apparent_kva : 0.0;
+    const char *load_percentage_basis = "register";
+    if (three_phase && coherent({344})) {
         load_percentage_available = true;
         load_percentage_direct = true;
         load_percentage = cache.values[344] * 0.01;
-    } else if (rated_power_w > 0.0 && output_apparent_power_available) {
-        load_percentage = output_apparent_power_va * 100.0 / rated_power_w;
+    } else if (rated_apparent_kva > 0.0 && output_apparent_power_available) {
+        load_percentage = output_apparent_power_va * 0.1 / rated_apparent_kva;
+        load_percentage_basis = "apparent_power";
+        load_percentage_available = true;
+    } else if (rated_power_w > 0.0 && output_active_available) {
+        load_percentage = output_active_kw * 100000.0 / rated_power_w;
+        load_percentage_basis = "active_power";
         load_percentage_available = true;
     }
 
+    // Do not silently switch a previously reported measurement point after expiry.
+    if (cache.seen[250] && !fresh[250]) pv_power_available = false;
+    if (cache.seen[286] && !fresh[286]) inverter_power_available = false;
+    if (cache.seen[332] && !fresh[332]) output_apparent_power_available = false;
+    if ((cache.seen[349] && !fresh[349]) || (cache.seen[351] && !fresh[351]))
+        battery_power_available = false;
+    if (!load_percentage_direct &&
+        std::strcmp(load_percentage_basis, "apparent_power") == 0 && !output_apparent_power_available)
+        load_percentage_available = false;
+
     cJSON *power_summary = cJSON_AddObjectToObject(root, "power_summary");
     if (power_summary != nullptr) {
+        add_decimal_value(power_summary, "rated_power_kw", rated_power_w / 1000.0);
+        cJSON_AddStringToObject(power_summary, "rating_source", !local_member ? "unavailable_remote" : config_.output_rated_power_kw > 0.0F ? "saved_setup" : "default_12_kw");
+        cJSON_AddNumberToObject(power_summary, "freshness_limit_ms", app::live_value_max_age_ms);
+        cJSON_AddStringToObject(power_summary, "sampling", "sequential_cached_readings");
+        if (!battery_power_available) cJSON_AddNullToObject(power_summary, "battery_kw");
+        if (!pv_power_available) cJSON_AddNullToObject(power_summary, "pv_kw");
+        if (!load_percentage_available) cJSON_AddNullToObject(power_summary, "load_percentage");
+        cJSON_AddStringToObject(power_summary, "load_percentage_basis",
+            load_percentage_available ? load_percentage_basis : "unavailable");
+        // Stable keys distinguish an unavailable active reading from real zero.
+        if (!grid_power_available) cJSON_AddNullToObject(power_summary, "grid_kw");
+        if (!inverter_power_available) cJSON_AddNullToObject(power_summary, "inverter_kw");
+        if (grid_apparent_available) add_decimal_value(power_summary, "grid_apparent_kva", grid_apparent_kva);
+        else cJSON_AddNullToObject(power_summary, "grid_apparent_kva");
+        if (inverter_apparent_available) add_decimal_value(power_summary, "inverter_apparent_kva", inverter_apparent_kva);
+        else cJSON_AddNullToObject(power_summary, "inverter_apparent_kva");
+        if (output_apparent_power_available) add_decimal_value(power_summary, "load_apparent_kva", output_apparent_power_va / 1000.0);
+        else cJSON_AddNullToObject(power_summary, "load_apparent_kva");
+        if (output_active_available) add_decimal_value(power_summary, "load_kw", output_active_kw);
+        else cJSON_AddNullToObject(power_summary, "load_kw");
         if (pv_power_available) {
             add_decimal_value(power_summary, "pv_kw", pv_power_kw);
             cJSON_AddStringToObject(
@@ -1071,39 +1294,18 @@ void MqttBridge::publish_live(const TelemetryMessage &message)
         }
         if (grid_power_available) {
             add_decimal_value(power_summary, "grid_kw", grid_power_kw);
-            cJSON_AddStringToObject(
-                power_summary, "grid_direction",
-                "positive follows inverter grid-current sign");
             cJSON_AddNumberToObject(power_summary, "grid_phase_count",
                                     grid_phase_count);
         }
         if (inverter_power_available) {
-            add_decimal_value(power_summary,
-                                    inverter_power_calculated
-                                        ? "inverter_apparent_kva"
-                                        : "inverter_kw",
-                                    inverter_power_kw);
+            add_decimal_value(power_summary, "inverter_kw", inverter_power_kw);
             cJSON_AddStringToObject(power_summary, "inverter_source",
-                                    inverter_power_calculated
-                                        ? "calculated_from_voltage_current"
-                                        : "register");
+                                    inverter_register_power_available
+                                        ? "ac_active_total_register"
+                                        : "ac_active_phase_registers");
         }
-        if (output_apparent_power_available) {
-            add_decimal_value(power_summary, "output_apparent_kva",
-                                    output_apparent_power_va / 1000.0);
-            cJSON_AddNumberToObject(power_summary, "output_phase_count",
-                                    output_phase_count);
-        }
-        if (load_power_available) {
-            add_decimal_value(power_summary,
-                                    load_power_calculated ? "load_kva"
-                                                          : "load_kw",
-                                    load_power_kw);
-            cJSON_AddStringToObject(power_summary, "load_source",
-                                    load_power_calculated
-                                        ? "calculated_apparent_power"
-                                        : "register");
-        }
+
+
         if (load_percentage_available) {
             add_decimal_value(power_summary, "load_percentage",
                                     load_percentage);
@@ -1123,9 +1325,41 @@ void MqttBridge::publish_live(const TelemetryMessage &message)
         }
     }
 
+    // Retain display values separately from the raw inputs used by calculations.
+    // A held value must never feed a new calculation or appear fresh.
+    constexpr const char *power_keys[] = {"pv_kw", "grid_kw", "inverter_kw", "load_kw",
+        "grid_apparent_kva", "inverter_apparent_kva", "load_apparent_kva",
+        "battery_kw", "load_percentage"};
+    constexpr const char *power_groups[] = {"pv", "grid", "inverter", "load",
+        "grid", "inverter", "load", "battery", "load"};
+    std::array<bool, 9> held_power{};
+    cJSON *quality = cJSON_AddObjectToObject(root, "power_quality");
+    if (power_summary != nullptr && quality != nullptr) {
+        for (std::size_t index = 0; index < cache.last_power.size(); ++index) {
+            auto &saved = cache.last_power[index];
+            const cJSON *current = cJSON_GetObjectItemCaseSensitive(power_summary, power_keys[index]);
+            // Decimal measurements use cJSON_Raw to preserve numeric .2f output.
+            const bool valid = cJSON_IsNumber(current) || cJSON_IsRaw(current);
+            if (valid) {
+                saved.value = cJSON_IsNumber(current) ? current->valuedouble : std::strtod(current->valuestring, nullptr);
+                saved.valid = true;
+                saved.validated_ms = received_now;
+            } else if (saved.valid) {
+                cJSON_DeleteItemFromObjectCaseSensitive(power_summary, power_keys[index]);
+                add_decimal_value(power_summary, power_keys[index], saved.value);
+                held_power[index] = true;
+            }
+            cJSON *item = cJSON_AddObjectToObject(quality, power_keys[index]);
+            cJSON_AddBoolToObject(item, "available", saved.valid);
+            cJSON_AddBoolToObject(item, "stale", !valid);
+            cJSON_AddStringToObject(item, "state", valid ? "valid" : saved.valid ? "last_known" : "unavailable");
+            if (saved.valid) cJSON_AddNumberToObject(item, "since_valid_ms", received_now - saved.validated_ms);
+            else cJSON_AddNullToObject(item, "since_valid_ms");
+        }
+    }
     cJSON *sections = cJSON_AddObjectToObject(root, "sections");
     constexpr const char *section_names[] = {
-        "status", "inverter", "pv", "grid", "output",
+        "status", "inverter", "pv", "grid", "load",
         "battery", "bms", "generator", "parallel", "other",
     };
     for (const char *section_name : section_names) {
@@ -1140,46 +1374,52 @@ void MqttBridge::publish_live(const TelemetryMessage &message)
     if (grid_power_available) {
         cJSON *entry = add_calculated_section_entry(
             sections, "grid", "Grid active power",
-            "Estimated from grid voltage, signed current, and power factor",
-            "GRID", "kW", grid_power_kw, "calculated_signed_current");
+            "R320 total AC power to user; grid-intake interpretation UNVERIFIED",
+            "GRID", "kW", grid_power_kw, "unverified_R320_register");
         if (entry != nullptr) {
             cJSON_AddNumberToObject(entry, "phase_count", grid_phase_count);
-            add_decimal_value(entry, "power_factor", power_factor);
-            cJSON_AddStringToObject(
-                entry, "direction",
-                "positive follows inverter grid-current sign");
+            cJSON_AddNullToObject(entry, "power_factor"); // Not used to decode R320.
         }
     }
-    if (inverter_power_available && inverter_power_calculated) {
+    if (grid_apparent_available) {
+        add_calculated_section_entry(sections, "grid", "Grid apparent power",
+            "Sum of grid phase voltage times current magnitude", "GRID", "kVA",
+            grid_apparent_kva, "calculated");
+    }
+    if (inverter_power_available) {
+        add_calculated_section_entry(sections, "inverter", "Inverter active power",
+            "AC active power total or sum of phase readings", "INVERTER", "kW",
+            inverter_power_kw, "register");
+    }
+    if (inverter_apparent_available) {
         add_calculated_section_entry(
             sections, "inverter", "Inverter AC apparent power",
             "Calculated from inverter voltage/current", "INVERTER", "kVA",
-            inverter_power_kw, "calculated");
+            inverter_apparent_kva, "calculated");
     }
+    if (output_active_available) {
+        add_calculated_section_entry(sections, "load", "Load active power",
+            "Sum of EPS phase active power", "EPS", "kW", output_active_kw, "register");
+    }
+
     if (output_apparent_power_available) {
         cJSON *entry = add_calculated_section_entry(
-            sections, "output", "Output apparent power",
-            "Calculated from EPS output voltage/current", "EPS", "kVA",
-            output_apparent_power_va / 1000.0, "calculated");
+            sections, "load", "Load apparent power",
+            "EPS apparent power: phase registers or voltage/current", "EPS", "kVA",
+            output_apparent_power_va / 1000.0, output_apparent_from_register ? "register" : "calculated");
         if (entry != nullptr) {
             cJSON_AddNumberToObject(entry, "phase_count", output_phase_count);
         }
     }
-    if (load_power_available && load_power_calculated) {
+
+    if (load_percentage_available) {
         cJSON *entry = add_calculated_section_entry(
-            sections, "output", "Load apparent power",
-            "Calculated from EPS output voltage/current", "LOAD", "kVA",
-            load_power_kw, "calculated");
+            sections, "load", "Load percentage",
+            load_percentage_direct ? "Reported EPS load percentage" : "Calculated from EPS active output and selected rating",
+            "EPS", "%", load_percentage, load_percentage_direct ? "register" : "calculated");
         if (entry != nullptr) {
-            cJSON_AddNumberToObject(entry, "phase_count", output_phase_count);
-        }
-    }
-    if (load_percentage_available && !load_percentage_direct) {
-        cJSON *entry = add_calculated_section_entry(
-            sections, "output", "Output load percentage",
-            "Calculated from EPS output power and rated inverter power",
-            "EPS", "%", load_percentage, "calculated");
-        if (entry != nullptr) {
+            cJSON_AddStringToObject(entry, "basis", load_percentage_basis);
+            add_decimal_value(entry, "rated_apparent_kva", rated_apparent_kva);
             add_decimal_value(entry, "apparent_power_kva",
                                     output_apparent_power_va / 1000.0);
             add_decimal_value(entry, "rated_power_kw",
@@ -1200,6 +1440,10 @@ void MqttBridge::publish_live(const TelemetryMessage &message)
     }
     for (std::uint16_t address = 0; address < input_point_count; ++address) {
         if (!cache.seen[address]) continue;
+        if (address == 344 && !three_phase) continue;
+        // The live load group is EPS-terminal load, not every diagnostic power point.
+        // Named register inquiries remain available for these raw measurements.
+        if (address >= 284 && address <= 355) continue;
         const auto *descriptor = inverter::find_register(
             inverter::RegisterSpace::input, address);
         if (!is_public_descriptor(descriptor) ||
@@ -1209,34 +1453,71 @@ void MqttBridge::publish_live(const TelemetryMessage &message)
         cJSON *entries = cJSON_GetObjectItemCaseSensitive(sections, section_name);
         if (entries == nullptr) continue;
         cJSON *entry = cJSON_CreateObject();
-        cJSON_AddStringToObject(entry, "name", application_name(*descriptor));
-        cJSON_AddStringToObject(entry, "register_name", descriptor->name);
-        cJSON_AddStringToObject(entry, "description", descriptor->description);
-        cJSON_AddStringToObject(entry, "domain",
-                                inverter::register_domain_name(descriptor->domain));
-        cJSON_AddStringToObject(entry, "unit", engineering_unit(*descriptor));
+        if (entry == nullptr ||
+            !add_catalog_string(entry, "name", application_name(*descriptor)) ||
+            !add_catalog_string(entry, "register_name", descriptor->name) ||
+            !add_catalog_string(entry, "description", descriptor->description) ||
+            !add_catalog_string(entry, "domain", inverter::register_domain_name(descriptor->domain)) ||
+            !add_catalog_string(entry, "unit", engineering_unit(*descriptor))) {
+            cJSON_Delete(entry);
+            cJSON_Delete(root);
+            app::rgb_debug_publish_error();
+            ESP_LOGW(tag, "Live JSON metadata allocation failed");
+            return;
+        }
         const bool next_seen = address + 1 < input_point_count &&
-                               cache.seen[address + 1];
+                               cache.seen[address + 1] &&
+                               cache.received_ms[address] == cache.received_ms[address + 1];
+        cJSON_AddNumberToObject(entry, "age_ms", received_now - cache.received_ms[address]);
+        cJSON_AddBoolToObject(entry, "stale", !fresh[address] || (next_seen && !fresh[address + 1]));
         add_application_value(entry, "value", *descriptor,
                               cache.values.data() + address,
                               next_seen ? 2 : 1);
         cJSON_AddItemToArray(entries, entry);
     }
-    char *json = cJSON_PrintUnformatted(root);
+    for (std::size_t index = 0; index < held_power.size(); ++index) {
+        if (!held_power[index]) continue;
+        cJSON *entry = add_calculated_section_entry(sections, power_groups[index], power_keys[index],
+            "Last valid result; not a new measurement", power_groups[index],
+            index == 8 ? "%" : index >= 4 && index <= 6 ? "kVA" : "kW",
+            cache.last_power[index].value, "last_known");
+        if (entry != nullptr) {
+            cJSON_AddBoolToObject(entry, "stale", true);
+            cJSON_AddNumberToObject(entry, "since_valid_ms", received_now - cache.last_power[index].validated_ms);
+        }
+    }
+    const std::size_t capacity = json_capacity(root) + 5;
+    const auto free_before = heap_caps_get_free_size(MALLOC_CAP_8BIT);
+    const auto largest_before = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
+    char *json = static_cast<char *>(heap_caps_malloc(capacity, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    if (json == nullptr) json = static_cast<char *>(heap_caps_malloc(capacity, MALLOC_CAP_8BIT));
+    const bool serialized = json != nullptr &&
+        cJSON_PrintPreallocated(root, json, static_cast<int>(capacity), false);
+    // Release all JSON nodes before enqueue copies the serialized payload.
+    cJSON_Delete(root);
     char topic[192]{};
     make_topic(topic, sizeof(topic), message.source_member_id, "live");
-    if (json != nullptr) {
+    if (serialized) {
         const int message_id =
-            esp_mqtt_client_publish(client_, topic, json, 0, 0, 0);
+            enqueue_payload(client_, topic, json, 0, 0);
         if (message_id < 0) {
             ESP_LOGW(tag, "Could not publish live data to %s", topic);
+        } else {
+            cache.last_publish_ms = cache.timestamp_ms;
+            last_live_enqueued_ms_ = received_now;
         }
-        cJSON_free(json);
     } else {
-        ESP_LOGW(tag, "Could not allocate live JSON payload");
+        app::rgb_debug_publish_error();
+        ESP_LOGW(tag, "Live JSON %s failed: requested=%u free_before=%u largest_before=%u free_after=%u largest_after=%u outbox=%d",
+                 json == nullptr ? "allocation" : "serialization",
+                 static_cast<unsigned>(capacity),
+                 static_cast<unsigned>(free_before),
+                 static_cast<unsigned>(largest_before),
+                 static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_8BIT)),
+                 static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)),
+                 esp_mqtt_client_get_outbox_size(client_));
     }
-    cJSON_Delete(root);
-    cache.last_publish_ms = cache.timestamp_ms;
+    heap_caps_free(json);
 }
 
 void MqttBridge::publish_snapshot(const TelemetryMessage &message)
@@ -1301,7 +1582,7 @@ void MqttBridge::publish_snapshot(const TelemetryMessage &message)
                    "snapshot/identity/SerialNumber/Inverter_serial_number");
         char *json = cJSON_PrintUnformatted(identity);
         if (json != nullptr) {
-            esp_mqtt_client_publish(client_, topic, json, 0, 1, 1);
+            enqueue_payload(client_, topic, json, 1, 1);
             cJSON_free(json);
         }
         cJSON_Delete(identity);
@@ -1346,7 +1627,7 @@ void MqttBridge::publish_snapshot(const TelemetryMessage &message)
         make_topic(topic, sizeof(topic), message.source_member_id, suffix);
         char *json = cJSON_PrintUnformatted(root);
         if (json != nullptr) {
-            esp_mqtt_client_publish(client_, topic, json, 0, 1, 1);
+            enqueue_payload(client_, topic, json, 1, 1);
             cJSON_free(json);
         }
         cJSON_Delete(root);
@@ -1371,8 +1652,6 @@ void MqttBridge::publish_alert_changes(const TelemetryMessage &message)
         const bool seen = alert_seen_[message.source_member_id][address];
         const std::uint16_t previous = alert_values_[message.source_member_id][address];
         if (seen && previous == value) continue;
-        alert_seen_[message.source_member_id][address] = true;
-        alert_values_[message.source_member_id][address] = value;
 
         cJSON *root = cJSON_CreateObject();
         cJSON_AddNumberToObject(root, "member_id", message.source_member_id);
@@ -1399,7 +1678,10 @@ void MqttBridge::publish_alert_changes(const TelemetryMessage &message)
         make_topic(topic, sizeof(topic), message.source_member_id, suffix);
         char *json = cJSON_PrintUnformatted(root);
         if (json != nullptr) {
-            esp_mqtt_client_publish(client_, topic, json, 0, 1, 1);
+            if (enqueue_payload(client_, topic, json, 1, 1) >= 0) {
+                alert_seen_[message.source_member_id][address] = true;
+                alert_values_[message.source_member_id][address] = value;
+            }
             cJSON_free(json);
         }
         cJSON_Delete(root);
@@ -1498,7 +1780,7 @@ void MqttBridge::publish_command_result_now(const RoutedCommandResult &message)
     char topic[192]{};
     make_topic(topic, sizeof(topic), message.source_member_id, "result");
     if (json != nullptr) {
-        esp_mqtt_client_publish(client_, topic, json, 0, 1, 0);
+        enqueue_payload(client_, topic, json, 1, 0);
         cJSON_free(json);
     }
     cJSON_Delete(root);
@@ -1544,19 +1826,63 @@ void MqttBridge::publish_setting_snapshot(const RoutedCommandResult &message)
     make_topic(topic, sizeof(topic), message.source_member_id, suffix);
     char *json = cJSON_PrintUnformatted(root);
     if (json != nullptr) {
-        esp_mqtt_client_publish(client_, topic, json, 0, 1, 1);
+        enqueue_payload(client_, topic, json, 1, 1);
         cJSON_free(json);
     }
     cJSON_Delete(root);
+}
+
+void MqttBridge::publish_health()
+{
+    const auto now = static_cast<std::uint32_t>(esp_timer_get_time() / 1000);
+    const auto telemetry = last_telemetry_ms_.load();
+    const auto live = last_live_enqueued_ms_.load();
+    char payload[768]{};
+    const int size = std::snprintf(payload, sizeof(payload),
+        "{\"uptime_ms\":%llu,\"reset_reason\":%d,\"heap_free_bytes\":%u,"
+        "\"heap_minimum_bytes\":%u,\"heap_largest_block_bytes\":%u,"
+        "\"publisher_stack_free_bytes\":%u,\"outbox_bytes\":%d,"
+        "\"publish_queue_depth\":%u,\"telemetry_seen\":%s,\"telemetry_age_ms\":%u,"
+        "\"live_enqueued\":%s,\"live_enqueue_age_ms\":%u,"
+        "\"mqtt_disconnect_count\":%u,\"enqueue_failures\":%u,\"telemetry_queue_drops\":%u}",
+        static_cast<unsigned long long>(esp_timer_get_time() / 1000),
+        static_cast<int>(esp_reset_reason()),
+        static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_8BIT)),
+        static_cast<unsigned>(heap_caps_get_minimum_free_size(MALLOC_CAP_8BIT)),
+        static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)),
+        static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)),
+        esp_mqtt_client_get_outbox_size(client_),
+        static_cast<unsigned>(uxQueueMessagesWaiting(publish_queue_)),
+        telemetry ? "true" : "false", static_cast<unsigned>(telemetry ? now - telemetry : 0U),
+        live ? "true" : "false", static_cast<unsigned>(live ? now - live : 0U),
+        static_cast<unsigned>(reconnect_count_.load()),
+        static_cast<unsigned>(mqtt_enqueue_failures.load()),
+        static_cast<unsigned>(telemetry_queue_drops.load()));
+    char topic[192]{};
+    make_topic(topic, sizeof(topic), config_.profile.logical_member_id, "health");
+    if (size > 0 && static_cast<std::size_t>(size) < sizeof(payload)) {
+        enqueue_payload(client_, topic, payload, 0, 0);
+    }
 }
 
 void MqttBridge::publisher_task(void *argument)
 {
     auto *self = static_cast<MqttBridge *>(argument);
     OutboundMessage message{};
+    std::uint32_t last_health = 0;
     while (self != nullptr) {
-        if (xQueueReceive(self->publish_queue_, &message, portMAX_DELAY) != pdTRUE) continue;
-        while (!self->connected_) vTaskDelay(pdMS_TO_TICKS(250));
+        const auto now = static_cast<std::uint32_t>(esp_timer_get_time() / 1000);
+        if (self->connected_ && (last_health == 0 || now - last_health >= app::health_publish_interval_ms)) {
+            self->publish_health();
+            last_health = now;
+        }
+        // Do not wait indefinitely on one old sample while the queue fills.
+        // Drain telemetry during outages; a new input sample refreshes live.
+        if (xQueueReceive(self->publish_queue_, &message, pdMS_TO_TICKS(1000)) != pdTRUE) continue;
+        if (!self->connected_ && message.type == OutboundType::telemetry) {
+            ++telemetry_queue_drops;
+            continue;
+        }
         if (message.type == OutboundType::telemetry) {
             self->publish_telemetry_now(message.telemetry);
         } else {

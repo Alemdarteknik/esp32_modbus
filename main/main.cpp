@@ -1,9 +1,11 @@
 #include <cinttypes>
 #include <atomic>
 #include <memory>
+#include <new>
 
 #include "esp_log.h"
 #include "esp_system.h"
+#include "esp_timer.h"
 #include "esp_wifi.h"
 #include "driver/gpio.h"
 #include "freertos/FreeRTOS.h"
@@ -11,6 +13,7 @@
 #include "freertos/task.h"
 #include "inverter_gateway/app/monitor_output.hpp"
 #include "inverter_gateway/app/project_config.hpp"
+#include "inverter_gateway/app/rgb_debug.hpp"
 #include "inverter_gateway/app/system_config.hpp"
 #include "inverter_gateway/inverter/command_service.hpp"
 #include "inverter_gateway/inverter/production_poller.hpp"
@@ -51,6 +54,10 @@ public:
 
     void on_telemetry(const inverter_gateway::network::TelemetryMessage &message) override
     {
+        if (!inverter_gateway::app::role_has_local_inverter(config_.profile.device_role) ||
+            message.source_member_id == config_.profile.logical_member_id) {
+            last_data_ms_.store(static_cast<std::uint32_t>(esp_timer_get_time() / 1000));
+        }
         if (message.source_member_id == config_.profile.logical_member_id) {
             local_inverter_seen_ = true;
         }
@@ -113,6 +120,23 @@ public:
     }
 
     bool local_inverter_seen() const { return local_inverter_seen_; }
+    inverter_gateway::app::RgbDebugState rgb_state(bool station_ready) const
+    {
+        using namespace inverter_gateway::app;
+        const auto role = config_.profile.device_role;
+        if (role_uses_mqtt(role)) {
+            if (!station_ready) return RgbDebugState::wifi_wait;
+            if (mqtt_ == nullptr || !mqtt_->connected()) return RgbDebugState::mqtt_wait;
+        }
+        if (role_is_espnow_member(role) &&
+            (mesh_ == nullptr || !mesh_->has_coordinator())) return RgbDebugState::link_wait;
+        if (role_uses_coordinator_link(role) &&
+            (coordinator_link_ == nullptr || !coordinator_link_->connected())) return RgbDebugState::link_wait;
+        const auto last = last_data_ms_.load();
+        const auto now = static_cast<std::uint32_t>(esp_timer_get_time() / 1000);
+        if (last == 0 || now - last > rgb_debug_data_timeout_ms) return RgbDebugState::data_wait;
+        return RgbDebugState::ready;
+    }
     bool telemetry_transport_ready() const
     {
         return !inverter_gateway::app::role_is_espnow_member(config_.profile.device_role) ||
@@ -126,7 +150,23 @@ private:
     inverter_gateway::network::MqttBridge *mqtt_ = nullptr;
     inverter_gateway::network::CoordinatorLink *coordinator_link_ = nullptr;
     std::atomic_bool local_inverter_seen_{false};
+    std::atomic<std::uint32_t> last_data_ms_{0};
 };
+
+struct RgbContext {
+    UniversalRuntime &runtime;
+    inverter_gateway::network::WifiProvisioning &wifi;
+};
+
+inverter_gateway::app::RgbDebugState rgb_status(void *context)
+{
+    using inverter_gateway::app::RgbDebugState;
+    auto &state = *static_cast<RgbContext *>(context);
+    wifi_mode_t mode = WIFI_MODE_NULL;
+    if (esp_wifi_get_mode(&mode) == ESP_OK &&
+        (mode == WIFI_MODE_AP || mode == WIFI_MODE_APSTA)) return RgbDebugState::setup;
+    return state.runtime.rgb_state(state.wifi.station_connected());
+}
 
 std::uint16_t enabled_features(const inverter_gateway::app::SystemConfig &config)
 {
@@ -176,17 +216,26 @@ std::uint16_t enabled_features(const inverter_gateway::app::SystemConfig &config
             *device, config.profile.modbus_slave_address,
             inverter_gateway::app::modbus_response_timeout_ms,
             inverter_gateway::app::modbus_minimum_command_gap_ms);
-        inverter_gateway::inverter::ProductionPoller poller(
+        // The expanded polling state must not consume the small main-task stack.
+        std::unique_ptr<inverter_gateway::inverter::ProductionPoller> poller(
+            new (std::nothrow) inverter_gateway::inverter::ProductionPoller(
             client, config.profile.logical_member_id,
             config.profile.connected_pv_inputs,
-            static_cast<std::uint8_t>(config.profile.phase), runtime);
+            static_cast<std::uint8_t>(config.profile.phase), runtime));
+        if (!poller) {
+            ESP_LOGE(tag, "Not enough heap for inverter polling state");
+            device.reset();
+            vTaskDelay(pdMS_TO_TICKS(inverter_gateway::app::usb_reconnect_delay_ms));
+            continue;
+        }
         inverter_gateway::inverter::CommandService commands(client);
         inverter_gateway::inverter::RegisterCommandService register_commands(client);
+        std::int64_t last_task_diagnostics_ms = 0;
 
         while (!UsbRs485::disconnected()) {
             inverter_gateway::network::RoutedCommand command{};
             if (runtime.receive_command(command)) {
-                auto state = poller.state();
+                auto state = poller->state();
                 inverter_gateway::network::RoutedCommandResult routed_result{};
                 routed_result.source_member_id = config.profile.logical_member_id;
                 routed_result.kind = command.kind;
@@ -201,13 +250,46 @@ std::uint16_t enabled_features(const inverter_gateway::app::SystemConfig &config
                 runtime.on_command_result(routed_result);
             }
             if (runtime.telemetry_transport_ready()) {
-                poller.run_due(enabled_features(config));
+                poller->run_due(enabled_features(config));
+            }
+            const auto diagnostics_now_ms = esp_timer_get_time() / 1000;
+            if (diagnostics_now_ms - last_task_diagnostics_ms >=
+                inverter_gateway::app::inverter_task_diagnostics_ms) {
+                ESP_LOGI(tag, "Modbus task stack minimum free: %u bytes",
+                         static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));
+                last_task_diagnostics_ms = diagnostics_now_ms;
             }
             vTaskDelay(pdMS_TO_TICKS(inverter_gateway::app::inverter_loop_delay_ms));
         }
         ESP_LOGW(tag, "USB-RS485 adapter disconnected");
         device.reset();
         vTaskDelay(pdMS_TO_TICKS(inverter_gateway::app::usb_reconnect_delay_ms));
+    }
+}
+
+// app_main stays alive in idle_forever, so these references outlive this task.
+struct InverterTaskContext {
+    inverter_gateway::app::SystemConfig *config;
+    UniversalRuntime *runtime;
+};
+
+void inverter_task_entry(void *argument)
+{
+    auto *context = static_cast<InverterTaskContext *>(argument);
+    run_local_inverter(*context->config, *context->runtime);
+}
+
+void start_local_inverter_task(inverter_gateway::app::SystemConfig &config,
+                               UniversalRuntime &runtime)
+{
+    static InverterTaskContext context{};
+    static TaskHandle_t task = nullptr;
+    if (task != nullptr) return;
+    context = {&config, &runtime};
+    if (xTaskCreate(inverter_task_entry, "inverter_bus",
+                    inverter_gateway::app::inverter_task_stack_bytes, &context,
+                    inverter_gateway::app::inverter_task_priority, &task) != pdPASS) {
+        ESP_LOGE(tag, "Could not start inverter task; no inverter communication is running");
     }
 }
 
@@ -340,6 +422,7 @@ extern "C" void app_main(void)
         esp_restart();
     }
     UniversalRuntime runtime(config);
+    RgbContext rgb_context{runtime, wifi};
     wifi.set_inverter_ready_probe(inverter_ready, &runtime);
 
     // A valid saved configuration may be in either normal operation or the
@@ -392,9 +475,10 @@ extern "C" void app_main(void)
                 mqtt.reset();
             }
         }
+        inverter_gateway::app::start_rgb_debug(rgb_status, &rgb_context);
         if (configuration_ready &&
             inverter_gateway::app::role_has_local_inverter(config.profile.device_role)) {
-            run_local_inverter(config, runtime);
+            start_local_inverter_task(config, runtime);
         }
         idle_forever();
     }
@@ -449,8 +533,9 @@ extern "C" void app_main(void)
         }
     }
 
+    inverter_gateway::app::start_rgb_debug(rgb_status, &rgb_context);
     if (inverter_gateway::app::role_has_local_inverter(config.profile.device_role)) {
-        run_local_inverter(config, runtime);
+        start_local_inverter_task(config, runtime);
     }
     idle_forever();
 }

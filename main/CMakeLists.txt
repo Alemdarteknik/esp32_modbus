@@ -2,6 +2,7 @@ idf_component_register(
     SRCS
         "main.cpp"
         "src/app/monitor_output.cpp"
+        "src/app/rgb_debug.cpp"
         "src/app/system_config.cpp"
         "src/inverter/aohai_register_catalog.generated.cpp"
         "src/inverter/aohai_registers.cpp"
@@ -24,6 +25,7 @@ idf_component_register(
         usb
         esp_event
         esp_driver_gpio
+        esp_driver_rmt
         esp_driver_uart
         esp_http_server
         esp_netif

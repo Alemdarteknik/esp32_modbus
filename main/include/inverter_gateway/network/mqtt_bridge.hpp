@@ -3,6 +3,7 @@
 #include <array>
 #include <cstdint>
 #include <atomic>
+#include <memory>
 
 #include "esp_err.h"
 #include "freertos/FreeRTOS.h"
@@ -29,6 +30,15 @@ private:
     static constexpr std::size_t maximum_members = app::max_saved_peers + 1;
 
     struct LiveCache {
+        struct LastPower {
+            double value = 0;
+            std::uint32_t validated_ms = 0;
+            bool valid = false;
+        };
+        std::array<LastPower, 9> last_power{};
+        // Allocate timestamps only for members that actually send data.
+        std::unique_ptr<std::uint32_t[]> received_ms;
+        std::unique_ptr<std::uint32_t[]> sampled_ms;
         std::array<std::uint16_t, input_point_count> values{};
         std::array<bool, input_point_count> seen{};
         std::uint16_t enabled_features = 0;
@@ -41,6 +51,7 @@ private:
         std::uint32_t sequence = 0;
         std::int64_t timestamp_ms = 0;
         std::int64_t last_publish_ms = 0;
+        std::int64_t last_core_status_ms = 0;
     };
 
     static void event_callback(void *argument, esp_event_base_t base,
@@ -58,6 +69,7 @@ private:
     void publish_alert_changes(const TelemetryMessage &message);
     void publish_setting_snapshot(const RoutedCommandResult &message);
     bool remember_command_id(std::uint64_t command_id);
+    void publish_health();
 
     const app::SystemConfig &config_;
     RuntimeMessageSink &sink_;
@@ -68,6 +80,9 @@ private:
     char availability_topic_[192]{};
     std::array<std::uint64_t, 32> recent_command_ids_{};
     std::size_t next_command_id_slot_ = 0;
+    std::atomic<std::uint32_t> last_telemetry_ms_{0};
+    std::atomic<std::uint32_t> last_live_enqueued_ms_{0};
+    std::atomic<std::uint32_t> reconnect_count_{0};
     std::array<LiveCache, maximum_members> live_cache_{};
     std::array<std::array<std::uint16_t, alert_point_count>, maximum_members>
         alert_values_{};

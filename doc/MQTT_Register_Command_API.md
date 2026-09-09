@@ -1,8 +1,39 @@
 # MQTT Streams, Getters and Setters - Complete Mosquitto CLI Reference
 
+## Power timing correction
+
+### Last-known display values
+
+Existing numeric keys are preserved. New top-level `power_quality` contains an entry for each PV/grid/inverter/load/battery power and load percentage: `available`, `stale`, `state` (`valid`, `last_known`, or `unavailable`), and `since_valid_ms`. The latter is time since the result last passed validation, NOT measurement age. A previously valid value stays visible if the next computation is unavailable; it is marked stale and never used as a calculation input. Section entries restored this way have `source: last_known`, `stale: true`, and `since_valid_ms`. Never-successful readings remain null. History clears on detected member restart or gateway restart. When all live messages stop, the app must also use its own receive-time timeout.
+
+This supersedes earlier statements that every timing failure makes summary values null: only never-valid values remain null; held values require checking `power_quality`. Existing source/basis fields describe current computations and may be absent/unavailable during holdover. Grid interpretation remains provisional R320, even when its data passes timing validation.
+
+Priority polling attempts four-register reads for adjacent EPS apparent/active pairs (R332, R336, R340) and battery discharge/charge (R349). A failed combined read disables batching for that pair for the current adapter session and retries individual pairs. The 850 ms bus gap is unchanged. Support and achieved timing must be verified on hardware.
+
+The scheduler repeats the essential power group (grid/PV electrical readings, PV total, inverter active total, EPS active/apparent phases, battery charge/discharge), interleaves due critical status reads, and grants one rotating background read per pass. This replaces simple full-plan reordering. The bus gap is unchanged; failures or three-phase reads can still exceed calculation age/skew limits and must produce unavailable values. No whole-payload simultaneity guarantee is made. Validate timing on hardware.
+
+`grid_kw` temporarily uses R320-R321 (unsigned 32-bit, high word first, 0.1 W / 1000 = kW), as explicitly approved for validation. Its grid-intake interpretation is UNVERIFIED: the original workbook only says total AC power to user. The grid direction fields have been removed from live telemetry; the grid section source is `unverified_R320_register`, and its `power_factor` is null because PF is not used. R320 is included in priority polling. Missing or timing-invalid reads still yield null; no V*I*PF fallback is used. Topics and keys remain unchanged.
+
+MQTT topics and field names are unchanged. Power calculations require source samples at most 15000 ms old relative to the newest received source timestamp, gateway cache age at most 15000 ms, and at most 5000 ms between contributing samples. Configure these limits in `project_config.hpp`. Essential power requests are grouped, but remain sequential with status reads interleaved; missing/late inputs yield null, not zero. This does not guarantee that all independent summary fields describe one simultaneous snapshot. Transport delay before gateway receipt remains unmeasured.
+
+`grid_kw` temporarily uses R320-R321 (unsigned 32-bit, high word first, 0.1 W / 1000 = kW), as explicitly approved for validation. Its grid-intake interpretation is UNVERIFIED: the original workbook only says total AC power to user. The grid direction fields have been removed from live telemetry; the grid section source is `unverified_R320_register`, and its `power_factor` is null because PF is not used. R320 is included in priority polling. Missing or timing-invalid reads still yield null; no V*I*PF fallback is used. Topics and keys remain unchanged.
+
 This document lists every possible MQTT getter that reads data from the inverter and every permitted MQTT setter that writes a setting or command to the inverter. Each executable catalog row has its own `mosquitto_pub` command. The safety classes remain defined in `AOHAI_Modbus_RTU_V2.14_Register_Classes.md`.
 
 ## Document map
+
+Production hardening details and remaining release gates: [Production_Readiness.md](Production_Readiness.md). The Internet-facing gateway also publishes `<prefix>/<device-id>/inverter/<member-id>/health` every 30 seconds (QoS 0, not retained), independent of inverter-read success. Subscribe using `mosquitto_sub -v -t 'inverter/INV-44B176CDC70C/inverter/0/health'`. Its memory, stack, queue and age fields are documented in that guide.
+
+Retained command deliveries and payloads above 2048 bytes are rejected. During MQTT outages telemetry is drained/dropped rather than queued indefinitely. Cached input values become stale after 120 seconds (slow counters: 900 seconds), checked when another input message arrives; a member uptime rollback invalidates its old input cache. Last-known register values remain visible but stale inputs are excluded from calculations. The server must still detect missing messages and uncertain write outcomes. Deduplication remains RAM-only and is not an exactly-once guarantee.
+
+### Live measurement validity and power meanings
+
+- Live uses only grid, inverter and load AC power groups. `load_kw` and `load_apparent_kva` are EPS-terminal active/apparent power; `sections.load` replaces `sections.output`. Duplicate output/local-load/power-to-user summary fields and raw power-register entries are removed from live; named register inquiries remain available.
+- `grid_kw` remains an estimate using voltage, signed current and reported power factor. Its sign is not yet verified as import/export for every inverter model.
+- Select rated output power on the webpage: 3, 4, 5, 6, 8, 12, 15 or 20 kW. Local load percentage uses the saved rating, or the requested 12 kW default for an unset legacy rating. `rated_power_kw` and `rating_source` expose the effective choice. This is a configured assumption, not automatic nameplate detection. Remote-member rating forwarding is still pending. This setting never writes to the inverter.
+- `bms_configured` replaces the old configuration meaning of `bms_connected`; `bms_connected` is now null (unknown), not inferred from all-zero BMS registers. `battery_installed` and `generator_installed` remain configuration choices.
+- Raw register entries include `age_ms` measured since gateway cache receipt and `stale`. Display stale values as last-known, not live. Samples are sequential, not simultaneous, and transport delay is not included. `core_status_fresh` covers only the status block. `power_summary.freshness_limit_ms` describes the cache-age ceiling and `sampling` is `sequential_cached_readings`. Expiry of a previously received primary power register produces null rather than silently selecting a fallback source. On startup a source can still change as primary registers are first discovered.
+- Battery subtraction requires both charge and discharge readings. Calculated PV total requires all configured PV inputs. Unknown power is null, not a fabricated zero.
 
 1. MQTT topic tree, subscriptions, retention and polling timing.
 2. Terminus/Linux and Windows CLI quick-start.
@@ -13,9 +44,168 @@ This document lists every possible MQTT getter that reads data from the inverter
 7. Choice-specific commands for every documented multi-option setter.
 8. Workbook-writable rows that firmware intentionally blocks.
 
-The internal catalog accounts for all 687 documented rows: 265 configuration items and 422 input-data items. The public API exposes 223 uniquely named configuration getters, 288 uniquely named input-data getters, and 201 named executable setters. For 51 setters with documented discrete choices, the generated reference includes 150 choice-specific Mosquitto commands. Low-word, reserved, unnamed, and ambiguous catalog rows are handled internally or omitted because they do not have a safe public name. Three workbook-writable items remain deliberately non-executable under the current safety policy.
+The internal catalog accounts for all 687 documented rows: 265 configuration items and 422 input-data items. The public API exposes 223 uniquely named configuration getters, 288 uniquely named input-data getters, and 201 named executable setters. The reference includes 166 choice-specific commands across 58 settings, plus individual setter/confirmation recipes for all 201 setters. All 204 writable map rows are accounted for: three are blocked by the current firmware policy. Low-word, reserved, unnamed, and ambiguous catalog rows are handled internally or omitted because they do not have a public name. See [Detailed setter and confirmation recipes](#detailed-setter-and-confirmation-recipes) for commands using your device ID and automatically generated request IDs.
+
+## RGB debug LED
+
+Configure the single addressable WS2812 LED in `main/include/inverter_gateway/app/project_config.hpp`:
+
+```cpp
+inline constexpr bool rgb_debug_enabled = true;
+inline constexpr gpio_num_t rgb_debug_gpio = GPIO_NUM_48;
+inline constexpr std::uint8_t rgb_debug_brightness = 16;
+inline constexpr bool rgb_debug_grb_order = true;
+inline constexpr std::uint32_t rgb_debug_tick_ms = 250;
+inline constexpr std::uint32_t rgb_debug_data_timeout_ms = 15000;
+```
+
+Check the actual board schematic before selecting the pin: N16R8 describes flash/RAM, not LED wiring. GPIO 48 is the default assumption; some boards use another GPIO. This driver supports a single WS2812 RGB pixel with GRB or RGB byte order, not a discrete three-channel RGB LED or RGBW strip. Avoid pins already used by USB, BOOT or the coordinator UART. Set brightness to 0 or disable the feature for no light. Disabling the feature creates no LED task and allocates no RMT channel. LED driver failures are logged without stopping inverter communication. No additional downloaded LED component is required.
+
+| Colour | Pattern | Meaning |
+|---|---|---|
+| Blue | Solid | Setup AP is active (including AP+station mode) |
+| Yellow | Blinking | This role needs MQTT/Wi-Fi, but station IP is not ready |
+| Magenta | Blinking | Station IP is ready, but MQTT is disconnected or failed to start |
+| Cyan | Blinking | ESP-NOW member has no discovered coordinator, or required coordinator UART link is disconnected |
+| Red | Blinking | No successful relevant inverter telemetry within 15 seconds, or waiting for the first reading |
+| Orange | Blinking | Connections/data are otherwise ready, but JSON allocation, MQTT enqueue or telemetry queue submission failed within the last 15 seconds |
+| Green | Solid | Required connections are ready and relevant inverter telemetry was received within 15 seconds |
+| White | Solid | Driver fallback when no status provider is supplied; normal firmware supplies a provider |
+
+Blinking defaults to 500 ms on / 500 ms off. Priority follows the table from Blue through Orange, then Green. The LED task starts after the network services have been initialized; it is not an early-boot crash indicator. It works independently of serial-monitor printing. Setup mode deliberately remains blue even if connections are incomplete. A webpage available only on the LAN does not force blue.
+
+For inverter-attached ESPs, freshness means telemetry from their own inverter. For a separate Internet Gateway, it means telemetry arriving from any downstream inverter. ESP-NOW members do not need Wi-Fi/MQTT themselves. Green is not a guarantee that every parallel member is online, that every register is valid, or that the broker acknowledged the last live message. Cyan on an ESP-NOW member reflects discovery state, not a radio acknowledgement on every packet. These colours diagnose the ESP gateway, not inverter warning/fault codes. The LED does not issue inverter writes or introduce an MQTT LED setter.
+
+## Individual feature-flag controls
+
+Each control changes only its flag in `flcdEn`, preserving all other bits through an internal read-modify-write and full read-back. These semantic operations require a fresh standby/stopped inverter state, unlike the generic whole-field `hot_edit_guarded` setter. Send numeric `1` to enable or `0` to disable; the semantic API currently expects numbers, not JSON booleans. Bits 8 through 15 remain untouched. Feature names come from the map; support and behaviour depend on the inverter model. In particular, split-phase, generator and grid-feedback options must match the installation.
+
+Start this confirmation subscription in another terminal before publishing:
+
+```bash
+mosquitto_sub -v -t 'inverter/INV-44B176CDC70C/inverter/0/result'
+```
+
+Match `command_id` in the result. These semantic replies use uppercase `outcome`: `CONFIRMED` means read-back matched; `STATE_NOT_ALLOWED`, `STATE_UNAVAILABLE`, `COMMUNICATION_ERROR`, or `ADJUSTED` are not confirmed success. These operations currently do not refresh the setting snapshot automatically. To explicitly read the combined current flags, use the existing configuration getter for `flcdEn`. Update all ESP nodes that execute these new operations; older firmware will not recognize the added operations.
+
+### ECOMode_En
+
+Enable:
+
+```bash
+mosquitto_pub -q 1 -t 'inverter/INV-44B176CDC70C/inverter/0/command' -m "{\"command_id\":\"$(date +%s%N)\",\"operation\":\"set_eco_mode_enabled\",\"value\":1}"
+```
+
+Disable:
+
+```bash
+mosquitto_pub -q 1 -t 'inverter/INV-44B176CDC70C/inverter/0/command' -m "{\"command_id\":\"$(date +%s%N)\",\"operation\":\"set_eco_mode_enabled\",\"value\":0}"
+```
+
+### OverLoad_RestartEn
+
+Enable:
+
+```bash
+mosquitto_pub -q 1 -t 'inverter/INV-44B176CDC70C/inverter/0/command' -m "{\"command_id\":\"$(date +%s%N)\",\"operation\":\"set_overload_restart_enabled\",\"value\":1}"
+```
+
+Disable:
+
+```bash
+mosquitto_pub -q 1 -t 'inverter/INV-44B176CDC70C/inverter/0/command' -m "{\"command_id\":\"$(date +%s%N)\",\"operation\":\"set_overload_restart_enabled\",\"value\":0}"
+```
+
+### OverTemp_RestartEn
+
+Enable:
+
+```bash
+mosquitto_pub -q 1 -t 'inverter/INV-44B176CDC70C/inverter/0/command' -m "{\"command_id\":\"$(date +%s%N)\",\"operation\":\"set_overtemperature_restart_enabled\",\"value\":1}"
+```
+
+Disable:
+
+```bash
+mosquitto_pub -q 1 -t 'inverter/INV-44B176CDC70C/inverter/0/command' -m "{\"command_id\":\"$(date +%s%N)\",\"operation\":\"set_overtemperature_restart_enabled\",\"value\":0}"
+```
+
+### InputChange_RemEn
+
+Enable:
+
+```bash
+mosquitto_pub -q 1 -t 'inverter/INV-44B176CDC70C/inverter/0/command' -m "{\"command_id\":\"$(date +%s%N)\",\"operation\":\"set_input_change_reminder_enabled\",\"value\":1}"
+```
+
+Disable:
+
+```bash
+mosquitto_pub -q 1 -t 'inverter/INV-44B176CDC70C/inverter/0/command' -m "{\"command_id\":\"$(date +%s%N)\",\"operation\":\"set_input_change_reminder_enabled\",\"value\":0}"
+```
+
+### OPSplit_PhaseEn
+
+Enable:
+
+```bash
+mosquitto_pub -q 1 -t 'inverter/INV-44B176CDC70C/inverter/0/command' -m "{\"command_id\":\"$(date +%s%N)\",\"operation\":\"set_output_split_phase_enabled\",\"value\":1}"
+```
+
+Disable:
+
+```bash
+mosquitto_pub -q 1 -t 'inverter/INV-44B176CDC70C/inverter/0/command' -m "{\"command_id\":\"$(date +%s%N)\",\"operation\":\"set_output_split_phase_enabled\",\"value\":0}"
+```
+
+### Generator_AutoIPEn
+
+Enable:
+
+```bash
+mosquitto_pub -q 1 -t 'inverter/INV-44B176CDC70C/inverter/0/command' -m "{\"command_id\":\"$(date +%s%N)\",\"operation\":\"set_generator_auto_input_enabled\",\"value\":1}"
+```
+
+Disable:
+
+```bash
+mosquitto_pub -q 1 -t 'inverter/INV-44B176CDC70C/inverter/0/command' -m "{\"command_id\":\"$(date +%s%N)\",\"operation\":\"set_generator_auto_input_enabled\",\"value\":0}"
+```
+
+### DualChannel_LoadEn
+
+Enable:
+
+```bash
+mosquitto_pub -q 1 -t 'inverter/INV-44B176CDC70C/inverter/0/command' -m "{\"command_id\":\"$(date +%s%N)\",\"operation\":\"set_dual_channel_load_enabled\",\"value\":1}"
+```
+
+Disable:
+
+```bash
+mosquitto_pub -q 1 -t 'inverter/INV-44B176CDC70C/inverter/0/command' -m "{\"command_id\":\"$(date +%s%N)\",\"operation\":\"set_dual_channel_load_enabled\",\"value\":0}"
+```
+
+### ubridFeedBackEn
+
+Enable:
+
+```bash
+mosquitto_pub -q 1 -t 'inverter/INV-44B176CDC70C/inverter/0/command' -m "{\"command_id\":\"$(date +%s%N)\",\"operation\":\"set_grid_feedback_enabled\",\"value\":1}"
+```
+
+Disable:
+
+```bash
+mosquitto_pub -q 1 -t 'inverter/INV-44B176CDC70C/inverter/0/command' -m "{\"command_id\":\"$(date +%s%N)\",\"operation\":\"set_grid_feedback_enabled\",\"value\":0}"
+```
+
 
 ## Public device identity
+
+Live delivery note: any successful input-register update can trigger a live message, limited to the configured fast interval. A failed core-status block no longer suppresses other successful measurements. `core_status_fresh` and `core_status_age_ms` report the age of the cached core status; they do not certify freshness of every measurement. If all inverter reads stop succeeding, no new live measurement is generated.
+
+Telemetry, snapshots, alerts and command results use the MQTT task's asynchronous outbox. It is limited to 64 KiB; an allocation or capacity failure is logged and that message is not queued. An alert rejected by the queue is retried when its value is next polled. Clients must still check matching command results; absence of a result is not confirmation and must not trigger an automatic write retry.
 
 The public MQTT API does not use a user-created site ID. Each installation is addressed by a stable `device-id` generated automatically from the coordinator or gateway ESP32 hardware MAC address. This prevents installers from accidentally assigning the same identity to different installations.
 
@@ -106,11 +296,14 @@ Signed battery power is published as `power_summary.battery_kw`: positive means 
 | Key | Unit | Meaning |
 |---|---|---|
 | `pv_kw` | kW | Total PV input power; direct inverter register preferred, otherwise calculated from connected PV voltage/current |
-| `grid_kw` | kW | Signed grid active-power estimate from grid voltage/current and power factor |
-| `inverter_kw` | kW | Direct inverter system/output active-power register, when available |
-| `inverter_apparent_kva` | kVA | Fallback inverter apparent power calculated from inverter voltage/current |
-| `output_apparent_kva` | kVA | EPS/load-output apparent power calculated from output voltage/current |
-| `load_kw` | kW | Direct total AC power to user/load register, when available |
+| `grid_kw` | kW | Signed grid active-power estimate from complete phase voltage/current readings and valid grid power factor; otherwise null |
+| `grid_apparent_kva` | kVA | Sum of phase voltage times current magnitude; null if any required phase is missing |
+| `inverter_kw` | kW | AC active-power total (ActPacAll), otherwise the sum of required ActPac phase readings; null if unavailable |
+| `inverter_apparent_kva` | kVA | Sum of inverter phase voltage times current magnitude, published independently of active power; otherwise null |
+| `output_kw` | kW | Sum of EPS phase active-power readings; otherwise null |
+| `output_apparent_kva` | kVA | Sum of EPS phase apparent-power readings, otherwise calculated from output voltage/current |
+| `load_kw` | kW | Direct total AC power to user, otherwise EPS active power; null if neither is available |
+| `load_apparent_kva` | kVA | EPS/output apparent power, available alongside load active power; otherwise null |
 | `load_kva` | kVA | Fallback load apparent power calculated from output voltage/current |
 | `load_percentage` | % | Direct R344 load percentage if available, otherwise calculated from output apparent power and rated inverter power |
 | `battery_kw` | kW | Signed battery power; positive discharging, negative charging |
@@ -118,6 +311,10 @@ Signed battery power is published as `power_summary.battery_kw`: positive means 
 This contract applies independently to member `0` and every parallel member topic. A native three-phase member contains its available R/S/T values. A grouped three-phase member contains the locally connected inverter's values plus its configured `phase_1`, `phase_2`, or `phase_3` assignment. A separate Internet Gateway forwards the same structure without changing the originating member's applicability profile.
 
 Active power is published in `kW`, apparent power in `kVA`, and reactive power in `kvar`. Values are already converted; clients must not apply the source-register scale again.
+
+Grid, inverter and Output/Load expose active and apparent power independently. Voltage times current provides apparent power, not active power. Missing grid power factor is not assumed to be 1. Active power is null if its required readings are unavailable; null is not zero and must not be integrated as a zero sample. Grid active power remains an estimate using the reported grid PF, including in three-phase mode. AC active power and system generation are separate readings. Load active power may cover total power to user while load apparent power describes EPS output, so these are not guaranteed to be the same measurement boundary. Each native three-phase sum requires all three phases; parallel ESP members publish their own local readings. Load measurements remain in `sections.output`; no separate Load or Energy section is created.
+
+Polling covers the complete plan, with a compile-time capacity check. Due requests rotate fairly, with critical status given priority between other transactions. Failed boot/setup reads retry at the normal interval instead of blocking later requests. AC, EPS and battery power pairs are requested separately; load percentage is not grouped with system generation. Configured polling intervals are eligibility intervals, not guaranteed full-sweep times: the 850 ms Modbus spacing, response timeouts and number of enabled readings limit actual update frequency.
 
 Live data is filtered by the setup profile of the ESP attached to that inverter:
 
@@ -308,7 +505,8 @@ Example live message:
   "connected_pv_inputs": 2,
   "topology": "standalone_single_phase",
   "battery_installed": true,
-  "bms_connected": true,
+  "bms_configured": true,
+  "bms_connected": null,
   "generator_installed": false,
   "phase": "none",
   "operating_status": {
@@ -323,7 +521,6 @@ Example live message:
     "pv_kw": 3.3671,
     "pv_source": "register",
     "grid_kw": 1.1142,
-    "grid_direction": "positive follows inverter grid-current sign",
     "grid_phase_count": 1,
     "inverter_kw": 3.52,
     "inverter_source": "register",
@@ -727,7 +924,7 @@ Typical confirmed setter result:
 <!-- BEGIN GENERATED COMPLETE COMMAND CATALOG -->
 ## Complete generated Mosquitto command catalog
 
-This section is generated from the internal catalog. Replace `<broker>`, `<prefix>`, `<device-id>`, and `<member-id>`. Every displayed `command_id` is illustrative and must be replaced by a fresh globally unique positive ID before each publication. Replace `<new-value>` with the intended application-level JSON value: a boolean, an engineering-unit number, a documented mode number, or a one/two-character string as appropriate. MQTT clients never send Modbus addresses, register spaces, raw words, scaling values, or expected register values.
+This section is generated from the firmware catalog and checked against every writable row of `AOHAI_Modbus_RTU_V2.14_Register_Map.md`. Replace `<broker>`, `<prefix>`, `<device-id>`, and `<member-id>`. Use a fresh positive numeric command ID for each request. Replace `<new-value>` with the intended application value. The detailed setter recipes below include concrete examples, confirmation subscriptions and source limitations. Commands do not contain Modbus addresses.
 
 Add `-u "<username>" -P "<password>"` when authentication is enabled. Subscribe to command results before publishing. Use the `live`, `alert/#`, and `snapshot/#` subscriptions documented above for asynchronous data:
 
@@ -1190,7 +1387,7 @@ These public commands contain only an application category and catalog data name
 | EPS ActPac_S H | Off-grid S phase output active power | power | uint32; 0.1W | live_flow | `mosquitto_pub -h "<broker>" -q 1 -t "<prefix>/<device-id>/inverter/<member-id>/command" -m '{"command_id":"<unique-command-id>","operation":"get","category":"input_data","name":"EPS ActPac_S H"}'` |
 | EPS Pac_T H | Off-grid T-phase output power | power | uint32; 0.1VA | live_flow | `mosquitto_pub -h "<broker>" -q 1 -t "<prefix>/<device-id>/inverter/<member-id>/command" -m '{"command_id":"<unique-command-id>","operation":"get","category":"input_data","name":"EPS Pac_T H"}'` |
 | EPS ActPac_T H | Off-grid T-phase output active power | power | uint32; 0.1W | live_flow | `mosquitto_pub -h "<broker>" -q 1 -t "<prefix>/<device-id>/inverter/<member-id>/command" -m '{"command_id":"<unique-command-id>","operation":"get","category":"input_data","name":"EPS ActPac_T H"}'` |
-| Loadpercent | Off-grid Output Load Percentage | power | uint16; 0.01 | live_flow | `mosquitto_pub -h "<broker>" -q 1 -t "<prefix>/<device-id>/inverter/<member-id>/command" -m '{"command_id":"<unique-command-id>","operation":"get","category":"input_data","name":"Loadpercent"}'` |
+| Loadpercent | Load percentage | power | uint16; 0.01 | live_flow | `mosquitto_pub -h "<broker>" -q 1 -t "<prefix>/<device-id>/inverter/<member-id>/command" -m '{"command_id":"<unique-command-id>","operation":"get","category":"input_data","name":"Loadpercent"}'` |
 | PSystem H | System Power Generation | power | uint32; 0.1W | live_flow | `mosquitto_pub -h "<broker>" -q 1 -t "<prefix>/<device-id>/inverter/<member-id>/command" -m '{"command_id":"<unique-command-id>","operation":"get","category":"input_data","name":"PSystem H"}'` |
 | PSelf H | Spontaneous self-consumption power | power | uint32; 0.1W | live_flow | `mosquitto_pub -h "<broker>" -q 1 -t "<prefix>/<device-id>/inverter/<member-id>/command" -m '{"command_id":"<unique-command-id>","operation":"get","category":"input_data","name":"PSelf H"}'` |
 | Pdischarge H | Discharge power | power | uint32; 0.1W | live_flow | `mosquitto_pub -h "<broker>" -q 1 -t "<prefix>/<device-id>/inverter/<member-id>/command" -m '{"command_id":"<unique-command-id>","operation":"get","category":"input_data","name":"Pdischarge H"}'` |
@@ -1346,7 +1543,7 @@ These commands reach the common setter only after MQTT-origin validation. The ES
 | Bypass_En | Bypass mode enabled | eps | uint16 | standby_required | Bypass mode enabled | `mosquitto_pub -h "<broker>" -q 1 -t "<prefix>/<device-id>/inverter/<member-id>/command" -m '{"command_id":"<unique-command-id>","operation":"set","name":"Bypass_En","value":"<new-value>","confirmed":true}'` |
 | UPS_En | UPS Function Enabled | eps | uint16 | standby_required | TBC | `mosquitto_pub -h "<broker>" -q 1 -t "<prefix>/<device-id>/inverter/<member-id>/command" -m '{"command_id":"<unique-command-id>","operation":"set","name":"UPS_En","value":"<new-value>","confirmed":true}'` |
 | ubN_PE_RelayCMD | Zero earth relay control enabled | eps | uint16 | commissioning_only | Attendance Functional Requirements | `mosquitto_pub -h "<broker>" -q 1 -t "<prefix>/<device-id>/inverter/<member-id>/command" -m '{"command_id":"<unique-command-id>","operation":"set","name":"ubN_PE_RelayCMD","value":"<new-value>","confirmed":true,"commissioning_interlock":true}'` |
-| unAFCICtrlReg | AFCI Self-Test Command | system | uint16 | service_only | Bit0: SelfCheckCmd, ; Bit1: ClrFaultCmd, ; Bit2~7:reserved,  | `mosquitto_pub -h "<broker>" -q 1 -t "<prefix>/<device-id>/inverter/<member-id>/command" -m '{"command_id":"<unique-command-id>","operation":"set","name":"unAFCICtrlReg","value":"<new-value>","confirmed":true,"service_interlock":true}'` |
+| unAFCICtrlReg | AFCI Self-Test Command | system | uint16 | service_only | Bit0: SelfCheckCmd;; Bit1: ClrFaultCmd;; Bit2~7:reserved; | `mosquitto_pub -h "<broker>" -q 1 -t "<prefix>/<device-id>/inverter/<member-id>/command" -m '{"command_id":"<unique-command-id>","operation":"set","name":"unAFCICtrlReg","value":"<new-value>","confirmed":true,"service_interlock":true}'` |
 | uwAFCIThresholdValue | AFCI error threshold | system | uint16 | service_only | AFCI error threshold | `mosquitto_pub -h "<broker>" -q 1 -t "<prefix>/<device-id>/inverter/<member-id>/command" -m '{"command_id":"<unique-command-id>","operation":"set","name":"uwAFCIThresholdValue","value":"<new-value>","confirmed":true,"service_interlock":true}'` |
 | AFCIClrFaultCmd | AFCI Error Clear Command | system | uint16 | service_only | AFCI Error Clear Command | `mosquitto_pub -h "<broker>" -q 1 -t "<prefix>/<device-id>/inverter/<member-id>/command" -m '{"command_id":"<unique-command-id>","operation":"set","name":"AFCIClrFaultCmd","value":"<new-value>","confirmed":true,"service_interlock":true}'` |
 | uwRestartVoltL | Fault reconnect grid low voltage | grid | uint16; 0.1V | commissioning_only | Fault reconnection and grid connection conditions | `mosquitto_pub -h "<broker>" -q 1 -t "<prefix>/<device-id>/inverter/<member-id>/command" -m '{"command_id":"<unique-command-id>","operation":"set","name":"uwRestartVoltL","value":"<new-value>","confirmed":true,"commissioning_interlock":true}'` |
@@ -1477,9 +1674,17 @@ These commands reach the common setter only after MQTT-origin validation. The ES
 | PowerStartSlope | Load rate | grid | uint16; 0.1Pn%/min | commissioning_only | Load rate | `mosquitto_pub -h "<broker>" -q 1 -t "<prefix>/<device-id>/inverter/<member-id>/command" -m '{"command_id":"<unique-command-id>","operation":"set","name":"PowerStartSlope","value":"<new-value>","confirmed":true,"commissioning_interlock":true}'` |
 | PowerRestartSlopeEE | Restart Load Rate | grid | uint16; 0.1Pn%/min | commissioning_only | Restart Load Rate | `mosquitto_pub -h "<broker>" -q 1 -t "<prefix>/<device-id>/inverter/<member-id>/command" -m '{"command_id":"<unique-command-id>","operation":"set","name":"PowerRestartSlopeEE","value":"<new-value>","confirmed":true,"commissioning_interlock":true}'` |
 
-### Enumerated setter choices (51 settings)
+### Enumerated setter choices (58 settings)
 
 Each row below is a complete command illustration for one documented choice. Use a fresh numeric `command_id` for every publication. Boolean enable/disable choices use `true` and `false`; other choices use their documented application mode number. These are requested settings, not Modbus addresses or raw register words.
+
+#### OnOffSet - Switch on/off
+
+| Choice | Application value | Mosquitto command |
+|---|---:|---|
+| Off | `0` | `mosquitto_pub -h "<broker>" -q 1 -t "<prefix>/<device-id>/inverter/<member-id>/command" -m '{"command_id":"<unique-command-id>","operation":"set","name":"OnOffSet","value":0,"confirmed":true}'` |
+| On | `1` | `mosquitto_pub -h "<broker>" -q 1 -t "<prefix>/<device-id>/inverter/<member-id>/command" -m '{"command_id":"<unique-command-id>","operation":"set","name":"OnOffSet","value":1,"confirmed":true}'` |
+| Restart (TBD in map; not validated) | `165` | `mosquitto_pub -h "<broker>" -q 1 -t "<prefix>/<device-id>/inverter/<member-id>/command" -m '{"command_id":"<unique-command-id>","operation":"set","name":"OnOffSet","value":165,"confirmed":true}'` |
 
 #### BaudrateSet - Select Baud Rate
 
@@ -1628,6 +1833,34 @@ Each row below is a complete command illustration for one documented choice. Use
 | 50Hz | `0` | `mosquitto_pub -h "<broker>" -q 1 -t "<prefix>/<device-id>/inverter/<member-id>/command" -m '{"command_id":"<unique-command-id>","operation":"set","name":"NominalEPSFre","value":0,"confirmed":true}'` |
 | 60Hz | `1` | `mosquitto_pub -h "<broker>" -q 1 -t "<prefix>/<device-id>/inverter/<member-id>/command" -m '{"command_id":"<unique-command-id>","operation":"set","name":"NominalEPSFre","value":1,"confirmed":true}'` |
 
+#### EPS_En - Off-grid functionality enabled
+
+| Choice | Application value | Mosquitto command |
+|---|---:|---|
+| Value 0 (see description) | `0` | `mosquitto_pub -h "<broker>" -q 1 -t "<prefix>/<device-id>/inverter/<member-id>/command" -m '{"command_id":"<unique-command-id>","operation":"set","name":"EPS_En","value":0,"confirmed":true}'` |
+| Value 1 (see description) | `1` | `mosquitto_pub -h "<broker>" -q 1 -t "<prefix>/<device-id>/inverter/<member-id>/command" -m '{"command_id":"<unique-command-id>","operation":"set","name":"EPS_En","value":1,"confirmed":true}'` |
+
+#### Bypass_En - Bypass mode enabled
+
+| Choice | Application value | Mosquitto command |
+|---|---:|---|
+| Value 0 (see description) | `0` | `mosquitto_pub -h "<broker>" -q 1 -t "<prefix>/<device-id>/inverter/<member-id>/command" -m '{"command_id":"<unique-command-id>","operation":"set","name":"Bypass_En","value":0,"confirmed":true}'` |
+| Value 1 (see description) | `1` | `mosquitto_pub -h "<broker>" -q 1 -t "<prefix>/<device-id>/inverter/<member-id>/command" -m '{"command_id":"<unique-command-id>","operation":"set","name":"Bypass_En","value":1,"confirmed":true}'` |
+
+#### UPS_En - UPS Function Enabled
+
+| Choice | Application value | Mosquitto command |
+|---|---:|---|
+| Value 0 (see description) | `0` | `mosquitto_pub -h "<broker>" -q 1 -t "<prefix>/<device-id>/inverter/<member-id>/command" -m '{"command_id":"<unique-command-id>","operation":"set","name":"UPS_En","value":0,"confirmed":true}'` |
+| Value 1 (see description) | `1` | `mosquitto_pub -h "<broker>" -q 1 -t "<prefix>/<device-id>/inverter/<member-id>/command" -m '{"command_id":"<unique-command-id>","operation":"set","name":"UPS_En","value":1,"confirmed":true}'` |
+
+#### ubN_PE_RelayCMD - Zero earth relay control enabled
+
+| Choice | Application value | Mosquitto command |
+|---|---:|---|
+| Value 0 (see description) | `0` | `mosquitto_pub -h "<broker>" -q 1 -t "<prefix>/<device-id>/inverter/<member-id>/command" -m '{"command_id":"<unique-command-id>","operation":"set","name":"ubN_PE_RelayCMD","value":0,"confirmed":true,"commissioning_interlock":true}'` |
+| Value 1 (see description) | `1` | `mosquitto_pub -h "<broker>" -q 1 -t "<prefix>/<device-id>/inverter/<member-id>/command" -m '{"command_id":"<unique-command-id>","operation":"set","name":"ubN_PE_RelayCMD","value":1,"confirmed":true,"commissioning_interlock":true}'` |
+
 #### BatteryType - Battery type
 
 | Choice | Application value | Mosquitto command |
@@ -1649,6 +1882,15 @@ Each row below is a complete command illustration for one documented choice. Use
 | Protocol 3 | `3` | `mosquitto_pub -h "<broker>" -q 1 -t "<prefix>/<device-id>/inverter/<member-id>/command" -m '{"command_id":"<unique-command-id>","operation":"set","name":"BatteryCompanySet","value":3,"confirmed":true}'` |
 | Protocol 4 | `4` | `mosquitto_pub -h "<broker>" -q 1 -t "<prefix>/<device-id>/inverter/<member-id>/command" -m '{"command_id":"<unique-command-id>","operation":"set","name":"BatteryCompanySet","value":4,"confirmed":true}'` |
 
+#### BatMdlSerialNum - Number of batteries in series - high-voltage batteries;
+
+| Choice | Application value | Mosquitto command |
+|---|---:|---|
+| Documented choice 12 | `12` | `mosquitto_pub -h "<broker>" -q 1 -t "<prefix>/<device-id>/inverter/<member-id>/command" -m '{"command_id":"<unique-command-id>","operation":"set","name":"BatMdlSerialNum","value":12,"confirmed":true}'` |
+| Documented choice 18 | `18` | `mosquitto_pub -h "<broker>" -q 1 -t "<prefix>/<device-id>/inverter/<member-id>/command" -m '{"command_id":"<unique-command-id>","operation":"set","name":"BatMdlSerialNum","value":18,"confirmed":true}'` |
+| Documented choice 24 | `24` | `mosquitto_pub -h "<broker>" -q 1 -t "<prefix>/<device-id>/inverter/<member-id>/command" -m '{"command_id":"<unique-command-id>","operation":"set","name":"BatMdlSerialNum","value":24,"confirmed":true}'` |
+| Documented choice 36 | `36` | `mosquitto_pub -h "<broker>" -q 1 -t "<prefix>/<device-id>/inverter/<member-id>/command" -m '{"command_id":"<unique-command-id>","operation":"set","name":"BatMdlSerialNum","value":36,"confirmed":true}'` |
+
 #### Gen Charge En - Total Diesel Charging Enabled
 
 | Choice | Application value | Mosquitto command |
@@ -1662,6 +1904,13 @@ Each row below is a complete command illustration for one documented choice. Use
 |---|---:|---|
 | Disabled | `false` | `mosquitto_pub -h "<broker>" -q 1 -t "<prefix>/<device-id>/inverter/<member-id>/command" -m '{"command_id":"<unique-command-id>","operation":"set","name":"AcCharge_En","value":false,"confirmed":true,"guarded_interlock":true}'` |
 | Enabled | `true` | `mosquitto_pub -h "<broker>" -q 1 -t "<prefix>/<device-id>/inverter/<member-id>/command" -m '{"command_id":"<unique-command-id>","operation":"set","name":"AcCharge_En","value":true,"confirmed":true,"guarded_interlock":true}'` |
+
+#### LoadFirstDischargeDisableFlag - Load Preferred Discharge Prohibit Sign
+
+| Choice | Application value | Mosquitto command |
+|---|---:|---|
+| Value 0 (see description) | `0` | `mosquitto_pub -h "<broker>" -q 1 -t "<prefix>/<device-id>/inverter/<member-id>/command" -m '{"command_id":"<unique-command-id>","operation":"set","name":"LoadFirstDischargeDisableFlag","value":0,"confirmed":true,"guarded_interlock":true}'` |
+| Value 1 (see description) | `1` | `mosquitto_pub -h "<broker>" -q 1 -t "<prefix>/<device-id>/inverter/<member-id>/command" -m '{"command_id":"<unique-command-id>","operation":"set","name":"LoadFirstDischargeDisableFlag","value":1,"confirmed":true,"guarded_interlock":true}'` |
 
 #### RemotePowerControl - One-click charging and discharging
 
@@ -1798,19 +2047,6 @@ Each row below is a complete command illustration for one documented choice. Use
 | Disable | `false` | `mosquitto_pub -h "<broker>" -q 1 -t "<prefix>/<device-id>/inverter/<member-id>/command" -m '{"command_id":"<unique-command-id>","operation":"set","name":"EqualizationImmediately","value":false,"confirmed":true,"service_interlock":true}'` |
 | Enable | `true` | `mosquitto_pub -h "<broker>" -q 1 -t "<prefix>/<device-id>/inverter/<member-id>/command" -m '{"command_id":"<unique-command-id>","operation":"set","name":"EqualizationImmediately","value":true,"confirmed":true,"service_interlock":true}'` |
 
-#### flcdEn - LCD setting enable bit
-
-| Choice | Application value | Mosquitto command |
-|---|---:|---|
-| ECOMode_En (Energy Saving Mode Enabled) | `0` | `mosquitto_pub -h "<broker>" -q 1 -t "<prefix>/<device-id>/inverter/<member-id>/command" -m '{"command_id":"<unique-command-id>","operation":"set","name":"flcdEn","value":0,"confirmed":true,"guarded_interlock":true}'` |
-| OverLoad_RestartEn | `1` | `mosquitto_pub -h "<broker>" -q 1 -t "<prefix>/<device-id>/inverter/<member-id>/command" -m '{"command_id":"<unique-command-id>","operation":"set","name":"flcdEn","value":1,"confirmed":true,"guarded_interlock":true}'` |
-| OverTemp_RestartEn | `2` | `mosquitto_pub -h "<broker>" -q 1 -t "<prefix>/<device-id>/inverter/<member-id>/command" -m '{"command_id":"<unique-command-id>","operation":"set","name":"flcdEn","value":2,"confirmed":true,"guarded_interlock":true}'` |
-| InputChange_RemEn | `3` | `mosquitto_pub -h "<broker>" -q 1 -t "<prefix>/<device-id>/inverter/<member-id>/command" -m '{"command_id":"<unique-command-id>","operation":"set","name":"flcdEn","value":3,"confirmed":true,"guarded_interlock":true}'` |
-| OPSplit_PhaseEn | `4` | `mosquitto_pub -h "<broker>" -q 1 -t "<prefix>/<device-id>/inverter/<member-id>/command" -m '{"command_id":"<unique-command-id>","operation":"set","name":"flcdEn","value":4,"confirmed":true,"guarded_interlock":true}'` |
-| Generator_AutoIPEn | `5` | `mosquitto_pub -h "<broker>" -q 1 -t "<prefix>/<device-id>/inverter/<member-id>/command" -m '{"command_id":"<unique-command-id>","operation":"set","name":"flcdEn","value":5,"confirmed":true,"guarded_interlock":true}'` |
-| DualChannel_LoadEn | `6` | `mosquitto_pub -h "<broker>" -q 1 -t "<prefix>/<device-id>/inverter/<member-id>/command" -m '{"command_id":"<unique-command-id>","operation":"set","name":"flcdEn","value":6,"confirmed":true,"guarded_interlock":true}'` |
-| ubridFeedBackEn | `7` | `mosquitto_pub -h "<broker>" -q 1 -t "<prefix>/<device-id>/inverter/<member-id>/command" -m '{"command_id":"<unique-command-id>","operation":"set","name":"flcdEn","value":7,"confirmed":true,"guarded_interlock":true}'` |
-
 #### DspBeepOnOff - Buzzer switch
 
 | Choice | Application value | Mosquitto command |
@@ -1857,6 +2093,18 @@ Each row below is a complete command illustration for one documented choice. Use
 | can communication | `1` | `mosquitto_pub -h "<broker>" -q 1 -t "<prefix>/<device-id>/inverter/<member-id>/command" -m '{"command_id":"<unique-command-id>","operation":"set","name":"ubBMSWorkMode","value":1,"confirmed":true}'` |
 | 485 communication | `2` | `mosquitto_pub -h "<broker>" -q 1 -t "<prefix>/<device-id>/inverter/<member-id>/command" -m '{"command_id":"<unique-command-id>","operation":"set","name":"ubBMSWorkMode","value":2,"confirmed":true}'` |
 
+#### Gen Port Work Mode - Diesel Port Function Selection
+
+| Choice | Application value | Mosquitto command |
+|---|---:|---|
+| Default | `0` | `mosquitto_pub -h "<broker>" -q 1 -t "<prefix>/<device-id>/inverter/<member-id>/command" -m '{"command_id":"<unique-command-id>","operation":"set","name":"Gen Port Work Mode","value":0,"confirmed":true}'` |
+| Generator En | `1` | `mosquitto_pub -h "<broker>" -q 1 -t "<prefix>/<device-id>/inverter/<member-id>/command" -m '{"command_id":"<unique-command-id>","operation":"set","name":"Gen Port Work Mode","value":1,"confirmed":true}'` |
+| Gen Force | `2` | `mosquitto_pub -h "<broker>" -q 1 -t "<prefix>/<device-id>/inverter/<member-id>/command" -m '{"command_id":"<unique-command-id>","operation":"set","name":"Gen Port Work Mode","value":2,"confirmed":true}'` |
+| SmartLoad Output | `3` | `mosquitto_pub -h "<broker>" -q 1 -t "<prefix>/<device-id>/inverter/<member-id>/command" -m '{"command_id":"<unique-command-id>","operation":"set","name":"Gen Port Work Mode","value":3,"confirmed":true}'` |
+| On Grid always on | `4` | `mosquitto_pub -h "<broker>" -q 1 -t "<prefix>/<device-id>/inverter/<member-id>/command" -m '{"command_id":"<unique-command-id>","operation":"set","name":"Gen Port Work Mode","value":4,"confirmed":true}'` |
+| Off Grid immediately off | `5` | `mosquitto_pub -h "<broker>" -q 1 -t "<prefix>/<device-id>/inverter/<member-id>/command" -m '{"command_id":"<unique-command-id>","operation":"set","name":"Gen Port Work Mode","value":5,"confirmed":true}'` |
+| AC Couple on SecEPS side | `6` | `mosquitto_pub -h "<broker>" -q 1 -t "<prefix>/<device-id>/inverter/<member-id>/command" -m '{"command_id":"<unique-command-id>","operation":"set","name":"Gen Port Work Mode","value":6,"confirmed":true}'` |
+
 #### ubBluetoothEn - Bluetooth Enabled
 
 | Choice | Application value | Mosquitto command |
@@ -1895,4 +2143,5266 @@ These rows are included for protocol coverage but are not published as setter co
 | SystemSetBit | System Enable Flag Bit | system | read_write | blocked_unvalidated | Single and Triple Camera Use |
 | ubConnectServer | Collector network status | communications | read_write | read_only | Low 8-bit indicates networking status:; 0x0055: Networking exception; 0x00AA: Networking normal; High 8-bit indicates collector type:; 0x0100: Wifi-U; 0x0200: 4G-U |
 | ubDatalogAndArmCommunication | Collector and inverter communication status | communications | read_write | read_only | 0x55: Communication error; 0xAA: Communication OK |
+
+## Detailed setter and confirmation recipes
+
+Coverage: 204 writable map rows; 201 named setters allowed by firmware; 3 blocked rows listed above. Each allowed setter has a recipe below. Availability still depends on the inverter model and operating state.
+
+These are individual examples, not a script to execute in sequence. A documented default is an illustration, not a recommended installation setting. Where the map supplies no usable value, the example deliberately retains `<new-value>`; it must be replaced after model-specific validation. Number ranges are not discrete lists: choose a valid value within the documented range. Values described as TBD, reserved, unused or unsupported retain those limitations even when firmware exposes their name.
+
+### Terminal setup and confirmation meaning
+
+In each Linux/Terminus terminal, set these variables. These examples use your local broker and inverter; change MEMBER for a parallel slave. MQTT authentication options can be added to both commands if required.
+
+```bash
+BROKER=localhost
+PORT=1883
+DEVICE=INV-44B176CDC70C
+MEMBER=0
+BASE="inverter/$DEVICE/inverter/$MEMBER"
+```
+
+Start the confirmation subscription in terminal 1 BEFORE publishing from terminal 2. Keep it running for subsequent setters. The subscription only listens; it never writes to the inverter. Match the returned `command_id` with the printed request ID. `confirmed:true` in the request is your authorization, not a success result. Only a returned `outcome:"confirmed"` indicates successful read-back. A write-only action can return `sent_unverifiable`; verify its actual effect separately. Errors such as `state_not_allowed`, `communication_error` or an interlock requirement are not success. Malformed or duplicate requests may only be logged by firmware and produce no result.
+
+Illustrative confirmed result (additional fields may be present):
+
+```json
+{"member_id":0,"command_id":"123456789","operation":"set","name":"DspBeepOnOff","outcome":"confirmed","value":1}
+```
+
+The setting snapshot is also refreshed after a confirmed setter and contains `updated_by_command_id`. To watch it:
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/snapshot/#"
+```
+
+Commands below use `date +%s%N` to generate numeric IDs for manual Linux testing. Production servers should allocate IDs uniquely across concurrent clients. Do not publish setter commands as retained messages.
+
+### Setter 1 - OnOffSet: Switch on/off
+
+Operating requirement: runtime_command. Fresh valid runtime state; transition/status monitoring.
+Applicable models: Single-phase/three-phase/off-grid.
+Map comments: On: 1; Off: 0; Restart: 0xA5 (TBD).
+Map default: 1; map range: 0 ~ 1 or 0xA5; map unit: -. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Off (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"OnOffSet","value":0,"confirmed":true}'
+```
+
+Setter example - On (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"OnOffSet","value":1,"confirmed":true}'
+```
+
+Setter example - Restart (TBD in map; not validated) (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"OnOffSet","value":165,"confirmed":true}'
+```
+
+Confirmation: match the printed ID and `name` = `OnOffSet` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 2 - DeviceID: Device Correspondence Address
+
+Operating requirement: commissioning_only. Fresh standby/stopped state and commissioning_interlock.
+Map comments: Communication ID.
+Map default: 1; map range: 1~245; map unit: -. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Example using the documented default converted to the current API scale (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"DeviceID","value":1,"confirmed":true,"commissioning_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `DeviceID` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 3 - BaudrateSet: Select Baud Rate
+
+Operating requirement: commissioning_only. Fresh standby/stopped state and commissioning_interlock.
+Map comments: 0:9600bps; 1:38400bps.
+Map default: 0; map range: 0~1; map unit: -. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - 9600bps (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"BaudrateSet","value":0,"confirmed":true,"commissioning_interlock":true}'
+```
+
+Setter example - 38400bps (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"BaudrateSet","value":1,"confirmed":true,"commissioning_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `BaudrateSet` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 4 - Serial NO.1: Serial number 1
+
+Operating requirement: service_only. Fresh standby/stopped state and service_interlock; never auto-retry.
+Map comments: Product serial number, valid minimum 16 digits.
+Map default: -; map range: -; map unit: -. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Illustrative two-character fragment AB (service operation) (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"Serial NO.1","value":"AB","confirmed":true,"service_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `Serial NO.1` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 5 - Serial NO.2: Serial number 2
+
+Operating requirement: service_only. Fresh standby/stopped state and service_interlock; never auto-retry.
+Map default: -; map range: -; map unit: -. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Illustrative two-character fragment AB (service operation) (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"Serial NO.2","value":"AB","confirmed":true,"service_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `Serial NO.2` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 6 - Serial NO.3: Serial number 3
+
+Operating requirement: service_only. Fresh standby/stopped state and service_interlock; never auto-retry.
+Map default: -; map range: -; map unit: -. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Illustrative two-character fragment AB (service operation) (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"Serial NO.3","value":"AB","confirmed":true,"service_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `Serial NO.3` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 7 - Serial NO.4: Serial numbe 4
+
+Operating requirement: service_only. Fresh standby/stopped state and service_interlock; never auto-retry.
+Map default: -; map range: -; map unit: -. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Illustrative two-character fragment AB (service operation) (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"Serial NO.4","value":"AB","confirmed":true,"service_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `Serial NO.4` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 8 - Serial NO.5: Serial number 5
+
+Operating requirement: service_only. Fresh standby/stopped state and service_interlock; never auto-retry.
+Map default: -; map range: -; map unit: -. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Illustrative two-character fragment AB (service operation) (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"Serial NO.5","value":"AB","confirmed":true,"service_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `Serial NO.5` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 9 - Serial NO.6: Serial number 6
+
+Operating requirement: service_only. Fresh standby/stopped state and service_interlock; never auto-retry.
+Map default: -; map range: -; map unit: -. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Illustrative two-character fragment AB (service operation) (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"Serial NO.6","value":"AB","confirmed":true,"service_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `Serial NO.6` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 10 - Serial NO.7: Serial numbe 7
+
+Operating requirement: service_only. Fresh standby/stopped state and service_interlock; never auto-retry.
+Map default: -; map range: -; map unit: -. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Illustrative two-character fragment AB (service operation) (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"Serial NO.7","value":"AB","confirmed":true,"service_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `Serial NO.7` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 11 - Serial NO.8: Serial numbe 8
+
+Operating requirement: service_only. Fresh standby/stopped state and service_interlock; never auto-retry.
+Map default: -; map range: -; map unit: -. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Illustrative two-character fragment AB (service operation) (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"Serial NO.8","value":"AB","confirmed":true,"service_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `Serial NO.8` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 12 - Serial NO.9: Serial number 9
+
+Operating requirement: service_only. Fresh standby/stopped state and service_interlock; never auto-retry.
+Map default: -; map range: -; map unit: -. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Illustrative two-character fragment AB (service operation) (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"Serial NO.9","value":"AB","confirmed":true,"service_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `Serial NO.9` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 13 - Serial NO.10: Serial number 10
+
+Operating requirement: service_only. Fresh standby/stopped state and service_interlock; never auto-retry.
+Map default: -; map range: -; map unit: -. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Illustrative two-character fragment AB (service operation) (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"Serial NO.10","value":"AB","confirmed":true,"service_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `Serial NO.10` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 14 - Serial NO.11: Serial number 11
+
+Operating requirement: service_only. Fresh standby/stopped state and service_interlock; never auto-retry.
+Map default: -; map range: -; map unit: -. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Illustrative two-character fragment AB (service operation) (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"Serial NO.11","value":"AB","confirmed":true,"service_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `Serial NO.11` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 15 - Serial NO.12: Serial number 12
+
+Operating requirement: service_only. Fresh standby/stopped state and service_interlock; never auto-retry.
+Map default: -; map range: -; map unit: -. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Illustrative two-character fragment AB (service operation) (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"Serial NO.12","value":"AB","confirmed":true,"service_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `Serial NO.12` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 16 - Serial NO.13: Serial number 13
+
+Operating requirement: service_only. Fresh standby/stopped state and service_interlock; never auto-retry.
+Map default: -; map range: -; map unit: -. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Illustrative two-character fragment AB (service operation) (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"Serial NO.13","value":"AB","confirmed":true,"service_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `Serial NO.13` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 17 - Serial NO.14: Serial number 14
+
+Operating requirement: service_only. Fresh standby/stopped state and service_interlock; never auto-retry.
+Map default: -; map range: -; map unit: -. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Illustrative two-character fragment AB (service operation) (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"Serial NO.14","value":"AB","confirmed":true,"service_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `Serial NO.14` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 18 - Serial NO.15: Serial numbe 15
+
+Operating requirement: service_only. Fresh standby/stopped state and service_interlock; never auto-retry.
+Map default: -; map range: -; map unit: -. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Illustrative two-character fragment AB (service operation) (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"Serial NO.15","value":"AB","confirmed":true,"service_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `Serial NO.15` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 19 - Rs485WorkMode: 485 Operating Mode Selection
+
+Operating requirement: commissioning_only. Fresh standby/stopped state and commissioning_interlock.
+Map comments: 0: Slave mode (ate); 1: Host mode (BMS485); 2: Host mode (Meter485).
+Map default: 0; map range: 0~2; map unit: . These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Slave mode (ate) (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"Rs485WorkMode","value":0,"confirmed":true,"commissioning_interlock":true}'
+```
+
+Setter example - Host mode (BMS485) (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"Rs485WorkMode","value":1,"confirmed":true,"commissioning_interlock":true}'
+```
+
+Setter example - Host mode (Meter485) (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"Rs485WorkMode","value":2,"confirmed":true,"commissioning_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `Rs485WorkMode` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 20 - Year: System Time - Year
+
+Operating requirement: hot_edit_guarded. Also requires guarded_interlock and validated dependencies.
+Map default: 2022; map range: Read: 2022 ~ 2050; Write: 22 ~ 50; map unit: Year. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Example calendar year 2026 (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"Year","value":2026,"confirmed":true,"guarded_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `Year` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 21 - Month: System Time - Month
+
+Operating requirement: hot_edit_guarded. Also requires guarded_interlock and validated dependencies.
+Map default: 1; map range: 1~12; map unit: Month. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Example using the documented default converted to the current API scale (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"Month","value":1,"confirmed":true,"guarded_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `Month` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 22 - Day: System Time - Day
+
+Operating requirement: hot_edit_guarded. Also requires guarded_interlock and validated dependencies.
+Map default: 1; map range: 1~31; map unit: Day. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Example using the documented default converted to the current API scale (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"Day","value":1,"confirmed":true,"guarded_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `Day` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 23 - Hour: System Time - Hours
+
+Operating requirement: hot_edit_guarded. Also requires guarded_interlock and validated dependencies.
+Map default: 0; map range: 0~59; map unit: Hour. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Example using the documented default converted to the current API scale (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"Hour","value":0,"confirmed":true,"guarded_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `Hour` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 24 - Minute: System Time - Minutes
+
+Operating requirement: hot_edit_guarded. Also requires guarded_interlock and validated dependencies.
+Map default: 0; map range: 0~59; map unit: Minutes. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Example using the documented default converted to the current API scale (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"Minute","value":0,"confirmed":true,"guarded_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `Minute` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 25 - Second: System Time - Seconds
+
+Operating requirement: hot_edit_guarded. Also requires guarded_interlock and validated dependencies.
+Map comments: Set time to seconds to take effect.
+Map default: 0; map range: 0~59; map unit: Seconds. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Example using the documented default converted to the current API scale (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"Second","value":0,"confirmed":true,"guarded_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `Second` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 26 - Weekday: System Week
+
+Operating requirement: hot_edit_guarded. Also requires guarded_interlock and validated dependencies.
+Map default: 1; map range: 1~7; map unit: -. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Example using the documented default converted to the current API scale (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"Weekday","value":1,"confirmed":true,"guarded_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `Weekday` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 27 - Manufacturer Info 1: Manufacturer Info 1
+
+Operating requirement: service_only. Fresh standby/stopped state and service_interlock; never auto-retry.
+Map comments: Optional vendor name when configuring.
+Map default: -; map range: 0~4; map unit: -. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Range-boundary illustration; not a recommended operating setting (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"Manufacturer Info 1","value":0,"confirmed":true,"service_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `Manufacturer Info 1` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 28 - Module 4: Inverter Mode (4)
+
+Operating requirement: service_only. Fresh standby/stopped state and service_interlock; never auto-retry.
+Map default: -; map range: -; map unit: -. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Choose a validated value; the map does not define a complete usable example (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"Module 4","value":"<new-value>","confirmed":true,"service_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `Module 4` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 29 - Module 3: Inverter Mode (3)
+
+Operating requirement: service_only. Fresh standby/stopped state and service_interlock; never auto-retry.
+Map default: -; map range: -; map unit: -. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Choose a validated value; the map does not define a complete usable example (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"Module 3","value":"<new-value>","confirmed":true,"service_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `Module 3` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 30 - Module 2: Inverter Mode (2)
+
+Operating requirement: service_only. Fresh standby/stopped state and service_interlock; never auto-retry.
+Map default: -; map range: -; map unit: -. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Choose a validated value; the map does not define a complete usable example (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"Module 2","value":"<new-value>","confirmed":true,"service_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `Module 2` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 31 - Module 1: Inverter Mode (1)
+
+Operating requirement: service_only. Fresh standby/stopped state and service_interlock; never auto-retry.
+Map default: -; map range: -; map unit: -. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Choose a validated value; the map does not define a complete usable example (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"Module 1","value":"<new-value>","confirmed":true,"service_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `Module 1` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 32 - Reset to factory: Factory reset
+
+Operating requirement: service_only. Fresh standby/stopped state and service_interlock; never auto-retry.
+Map comments: 0x01: Restore user data; 0xA0: Restore factory settings.
+Map default: -; map range: -; map unit: -. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Restore user data (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"Reset to factory","value":1,"confirmed":true,"service_interlock":true}'
+```
+
+Setter example - Restore factory settings (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"Reset to factory","value":160,"confirmed":true,"service_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `Reset to factory` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 33 - UpdateFileType: Upgrade File Type
+
+Operating requirement: service_only. Fresh standby/stopped state and service_interlock; never auto-retry.
+Map comments: 0x01: bin upgrade; 0x10: Hex upgrade.
+Map default: -; map range: -; map unit: -. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - bin upgrade (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"UpdateFileType","value":1,"confirmed":true,"service_interlock":true}'
+```
+
+Setter example - Hex upgrade (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"UpdateFileType","value":16,"confirmed":true,"service_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `UpdateFileType` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 34 - ubScreenType: Screen Type
+
+Operating requirement: commissioning_only. Fresh standby/stopped state and commissioning_interlock.
+Map comments: 0: Small screen; 1: Large screen.
+Map default: -; map range: -; map unit: -. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Small screen (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"ubScreenType","value":0,"confirmed":true,"commissioning_interlock":true}'
+```
+
+Setter example - Large screen (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"ubScreenType","value":1,"confirmed":true,"commissioning_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `ubScreenType` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 35 - SafetyId: Safety regulation number
+
+Operating requirement: commissioning_only. Fresh standby/stopped state and commissioning_interlock.
+Map default: 0; map range: 0~200; map unit: . These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Example using the documented default converted to the current API scale (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"SafetyId","value":0,"confirmed":true,"commissioning_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `SafetyId` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 36 - ReactivePowerDelayTIme: Reactive Percent Response Time
+
+Operating requirement: commissioning_only. Fresh standby/stopped state and commissioning_interlock.
+Map default: 0; map range: 0~30000; map unit: 20ms. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Example using the documented default converted to the current API scale (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"ReactivePowerDelayTIme","value":0,"confirmed":true,"commissioning_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `ReactivePowerDelayTIme` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 37 - ActiveOverloadEnable: Active Power Overload Enabled
+
+Operating requirement: commissioning_only. Fresh standby/stopped state and commissioning_interlock.
+Applicable models: Single-phase temporarily not supported.
+Map comments: 0: Disabled; 1: Enabled.
+Map default: 0; map range: 0~1; map unit: -. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Disabled (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"ActiveOverloadEnable","value":false,"confirmed":true,"commissioning_interlock":true}'
+```
+
+Setter example - Enabled (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"ActiveOverloadEnable","value":true,"confirmed":true,"commissioning_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `ActiveOverloadEnable` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 38 - AcChargePowerRate: Inverter Max Take-Off Power Percentage
+
+Operating requirement: commissioning_only. Fresh standby/stopped state and commissioning_interlock.
+Map comments: Grid Intake.
+Map default: 100; map range: 0~100; map unit: 1%Pn. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Example using the documented default converted to the current API scale (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"AcChargePowerRate","value":100,"confirmed":true,"commissioning_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `AcChargePowerRate` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 39 - ActivePowerSlope: Active power rate of change (N4105)
+
+Operating requirement: commissioning_only. Fresh standby/stopped state and commissioning_interlock.
+Applicable models: Single-phase temporarily not supported.
+Map comments: 0: Not Enabled; Other: Enabled.
+Map default: 0; map range: 0~30000; map unit: 0.1Pn/min. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Not Enabled (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"ActivePowerSlope","value":0,"confirmed":true,"commissioning_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `ActivePowerSlope` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 40 - ActivePowerRate: Inverter Max Output Active Power Percentage
+
+Operating requirement: commissioning_only. Fresh standby/stopped state and commissioning_interlock.
+Map comments: Power Generation to the Grid.
+Map default: 100; map range: 0~100; map unit: 1%Pn. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Example using the documented default converted to the current API scale (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"ActivePowerRate","value":100,"confirmed":true,"commissioning_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `ActivePowerRate` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 41 - ReactivePowerRate: Inverter Max Output Reactive Power Percentage
+
+Operating requirement: commissioning_only. Fresh standby/stopped state and commissioning_interlock.
+Map default: ; map range: 100~-100; map unit: 1%Pn. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Range-boundary illustration; not a recommended operating setting (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"ReactivePowerRate","value":100,"confirmed":true,"commissioning_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `ReactivePowerRate` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 42 - PowerFactorSet: Inverter output power factor 10,000 times
+
+Operating requirement: commissioning_only. Fresh standby/stopped state and commissioning_interlock.
+Map comments: PF=(X-10000)/10000.
+Map default: 10000; map range: 0~20000; map unit: . These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Example using the documented default converted to the current API scale (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"PowerFactorSet","value":10000,"confirmed":true,"commissioning_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `PowerFactorSet` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 43 - PVModelSelect: MPPT Mode
+
+Operating requirement: commissioning_only. Fresh standby/stopped state and commissioning_interlock.
+Map comments: 0: Independent MPPT mode; 1: DC source mode; 2: Parallel MPPT mode.
+Map default: 0; map range: 0~2; map unit: . These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Independent MPPT mode (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"PVModelSelect","value":0,"confirmed":true,"commissioning_interlock":true}'
+```
+
+Setter example - DC source mode (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"PVModelSelect","value":1,"confirmed":true,"commissioning_interlock":true}'
+```
+
+Setter example - Parallel MPPT mode (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"PVModelSelect","value":2,"confirmed":true,"commissioning_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `PVModelSelect` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 44 - PvStartVoltage: PV start voltage
+
+Operating requirement: commissioning_only. Fresh standby/stopped state and commissioning_interlock.
+Map default: ; map range: ; map unit: 0.1V. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Choose a validated value; the map does not define a complete usable example (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"PvStartVoltage","value":"<new-value>","confirmed":true,"commissioning_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `PvStartVoltage` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 45 - FastDerating_en: Fast Down Enable
+
+Operating requirement: commissioning_only. Fresh standby/stopped state and commissioning_interlock.
+Map comments: 0: Disabled; 1: Enabled.
+Map default: 0; map range: 0~1; map unit: -. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Disabled (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"FastDerating_en","value":false,"confirmed":true,"commissioning_interlock":true}'
+```
+
+Setter example - Enabled (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"FastDerating_en","value":true,"confirmed":true,"commissioning_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `FastDerating_en` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 46 - Island_en: Island Enabling
+
+Operating requirement: commissioning_only. Fresh standby/stopped state and commissioning_interlock.
+Map comments: 0: Disabled; 1: Enabled.
+Map default: 0; map range: 0~1; map unit: -. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Disabled (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"Island_en","value":false,"confirmed":true,"commissioning_interlock":true}'
+```
+
+Setter example - Enabled (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"Island_en","value":true,"confirmed":true,"commissioning_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `Island_en` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 47 - VFRT_en: High and low penetration enable
+
+Operating requirement: commissioning_only. Fresh standby/stopped state and commissioning_interlock.
+Map comments: 0: Disabled; 1: Enabled.
+Map default: 0; map range: 0~1; map unit: -. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Disabled (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"VFRT_en","value":false,"confirmed":true,"commissioning_interlock":true}'
+```
+
+Setter example - Enabled (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"VFRT_en","value":true,"confirmed":true,"commissioning_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `VFRT_en` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 48 - DRMS_en: DRMS Enabled
+
+Operating requirement: commissioning_only. Fresh standby/stopped state and commissioning_interlock.
+Map comments: 0: Disabled; 1: Enabled.
+Map default: 0; map range: 0~1; map unit: -. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Disabled (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"DRMS_en","value":false,"confirmed":true,"commissioning_interlock":true}'
+```
+
+Setter example - Enabled (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"DRMS_en","value":true,"confirmed":true,"commissioning_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `DRMS_en` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 49 - NLineConnectMode: N-line enable
+
+Operating requirement: commissioning_only. Fresh standby/stopped state and commissioning_interlock.
+Applicable models: Single-phase temporarily not supported.
+Map comments: 0: Disabled; 1: Enabled.
+Map default: 0; map range: 0~1; map unit: -. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Disabled (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"NLineConnectMode","value":false,"confirmed":true,"commissioning_interlock":true}'
+```
+
+Setter example - Enabled (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"NLineConnectMode","value":true,"confirmed":true,"commissioning_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `NLineConnectMode` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 50 - NToGNDDetect: Zero Earth Detection
+
+Operating requirement: commissioning_only. Fresh standby/stopped state and commissioning_interlock.
+Applicable models: Single-phase temporarily not supported.
+Map comments: 0: Disabled; 1: Enabled.
+Map default: 0; map range: 0~1; map unit: -. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Disabled (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"NToGNDDetect","value":false,"confirmed":true,"commissioning_interlock":true}'
+```
+
+Setter example - Enabled (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"NToGNDDetect","value":true,"confirmed":true,"commissioning_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `NToGNDDetect` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 51 - ZeroPowerOutputEnable: Zero power output enabled
+
+Operating requirement: commissioning_only. Fresh standby/stopped state and commissioning_interlock.
+Applicable models: Single-phase temporarily not supported.
+Map comments: 0: Disabled; 1: Enabled.
+Map default: 0; map range: 0~1; map unit: -. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Disabled (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"ZeroPowerOutputEnable","value":false,"confirmed":true,"commissioning_interlock":true}'
+```
+
+Setter example - Enabled (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"ZeroPowerOutputEnable","value":true,"confirmed":true,"commissioning_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `ZeroPowerOutputEnable` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 52 - FastMpptEnable: Fast mppt enable
+
+Operating requirement: commissioning_only. Fresh standby/stopped state and commissioning_interlock.
+Applicable models: Single-phase temporarily not supported.
+Map comments: 0: Disabled; 1: Enabled.
+Map default: 0; map range: 0~1; map unit: -. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Disabled (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"FastMpptEnable","value":false,"confirmed":true,"commissioning_interlock":true}'
+```
+
+Setter example - Enabled (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"FastMpptEnable","value":true,"confirmed":true,"commissioning_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `FastMpptEnable` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 53 - CtRatioSet: CT Rheological Ratio Setting
+
+Operating requirement: commissioning_only. Fresh standby/stopped state and commissioning_interlock.
+Map comments: Reserved.
+Map default: 2000; map range: 1~3000; map unit: . These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Example using the documented default converted to the current API scale (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"CtRatioSet","value":2000,"confirmed":true,"commissioning_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `CtRatioSet` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 54 - CTMode: Using CT Mode
+
+Operating requirement: commissioning_only. Fresh standby/stopped state and commissioning_interlock.
+Map comments: 0:METER; 1:CT.
+Map default: 0; map range: 0~1; map unit: . These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - METER (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"CTMode","value":0,"confirmed":true,"commissioning_interlock":true}'
+```
+
+Setter example - CT (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"CTMode","value":1,"confirmed":true,"commissioning_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `CTMode` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 55 - LocalAntiBackflowEnable: Anti-reflux enable
+
+Operating requirement: commissioning_only. Fresh standby/stopped state and commissioning_interlock.
+Map comments: 0: Disable; 1: Total anti-reflux enable; 2: Three-phase independent anti-reflux enable.
+Map default: 0; map range: 0~3; map unit: . These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Disable (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"LocalAntiBackflowEnable","value":0,"confirmed":true,"commissioning_interlock":true}'
+```
+
+Setter example - Total anti-reflux enable (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"LocalAntiBackflowEnable","value":1,"confirmed":true,"commissioning_interlock":true}'
+```
+
+Setter example - Three-phase independent anti-reflux enable (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"LocalAntiBackflowEnable","value":2,"confirmed":true,"commissioning_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `LocalAntiBackflowEnable` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 56 - BackflowMeterPowerLimit_R: Anti-reflux Reflux Power Limit
+
+Operating requirement: commissioning_only. Fresh standby/stopped state and commissioning_interlock.
+Map default: 0; map range: 0~100; map unit: 1Pn%. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Example using the documented default converted to the current API scale (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"BackflowMeterPowerLimit_R","value":0,"confirmed":true,"commissioning_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `BackflowMeterPowerLimit_R` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 57 - BackflowMeterPowerLimit_S: Anti-reflux Reflux Power Limit
+
+Operating requirement: commissioning_only. Fresh standby/stopped state and commissioning_interlock.
+Applicable models: Single-phase temporarily not supported.
+Map default: 0; map range: 0~100; map unit: 1Pn%. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Example using the documented default converted to the current API scale (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"BackflowMeterPowerLimit_S","value":0,"confirmed":true,"commissioning_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `BackflowMeterPowerLimit_S` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 58 - BackflowMeterPowerLimit_T: Anti-reflux Reflux Power Limit
+
+Operating requirement: commissioning_only. Fresh standby/stopped state and commissioning_interlock.
+Applicable models: Single-phase temporarily not supported.
+Map default: 0; map range: 0~100; map unit: 1Pn%. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Example using the documented default converted to the current API scale (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"BackflowMeterPowerLimit_T","value":0,"confirmed":true,"commissioning_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `BackflowMeterPowerLimit_T` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 59 - BackflowFaultTime: Anti-reflux failure time
+
+Operating requirement: commissioning_only. Fresh standby/stopped state and commissioning_interlock.
+Applicable models: Single-phase temporarily not supported.
+Map default: 30; map range: 30~120; map unit: 1s. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Example using the documented default converted to the current API scale (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"BackflowFaultTime","value":30,"confirmed":true,"commissioning_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `BackflowFaultTime` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 60 - BackflowFaultPowerRate: Percentage of active anti-reflux failure
+
+Operating requirement: commissioning_only. Fresh standby/stopped state and commissioning_interlock.
+Applicable models: Single-phase temporarily not supported.
+Map comments: Machine operates at given power after anti-reverse flow failure.
+Map default: 50; map range: 0~100; map unit: 1Pn%. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Example using the documented default converted to the current API scale (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"BackflowFaultPowerRate","value":50,"confirmed":true,"commissioning_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `BackflowFaultPowerRate` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 61 - Power on config falg: Boot navigation flags
+
+Operating requirement: commissioning_only. Fresh standby/stopped state and commissioning_interlock.
+Map comments: 0x00: default; 0x01: configuring (no storage, shutdown); 0x55: configuration complete (save).
+Map default: 0; map range: 0 ~ 1 or 0x55; map unit: . These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - default (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"Power on config falg","value":0,"confirmed":true,"commissioning_interlock":true}'
+```
+
+Setter example - configuring (no storage, shutdown) (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"Power on config falg","value":1,"confirmed":true,"commissioning_interlock":true}'
+```
+
+Setter example - configuration complete (save) (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"Power on config falg","value":85,"confirmed":true,"commissioning_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `Power on config falg` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 62 - Vac low C: Grid Low Voltage Restrictions Connected to the Grid
+
+Operating requirement: commissioning_only. Fresh standby/stopped state and commissioning_interlock.
+Map comments: Grid-connected conditions.
+Map default: ; map range: 1700~2400; map unit: 0.1V. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Range-boundary illustration; not a recommended operating setting (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"Vac low C","value":170,"confirmed":true,"commissioning_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `Vac low C` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 63 - Vac high C: Grid High Voltage Restriction Connected to Grid
+
+Operating requirement: commissioning_only. Fresh standby/stopped state and commissioning_interlock.
+Map default: ; map range: 2000~2900; map unit: 0.1V. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Range-boundary illustration; not a recommended operating setting (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"Vac high C","value":200,"confirmed":true,"commissioning_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `Vac high C` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 64 - Fac low C: Grid Low Frequency Restrictions Connected to the Grid
+
+Operating requirement: commissioning_only. Fresh standby/stopped state and commissioning_interlock.
+Map default: ; map range: 50Hz:4700~5010; 60Hz:; 5700~6010; map unit: 0.01Hz. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Choose a validated value; the map does not define a complete usable example (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"Fac low C","value":"<new-value>","confirmed":true,"commissioning_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `Fac low C` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 65 - Fac high C: Grid High Frequency Restrictions Connected to the Grid
+
+Operating requirement: commissioning_only. Fresh standby/stopped state and commissioning_interlock.
+Map default: ; map range: 50Hz:; 4990~5300; 60Hz:; 5990~6300; map unit: 0.01Hz. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Choose a validated value; the map does not define a complete usable example (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"Fac high C","value":"<new-value>","confirmed":true,"commissioning_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `Fac high C` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 66 - NominalEPSVolt: Optional rated off-grid voltage
+
+Operating requirement: standby_required. Fresh standby or stopped state.
+Map comments: 0: 230V; 1: 240V; 2: 208V; 3: 220V (off-grid); 4: 200V (off-grid).
+Map default: 0; map range: 0~4; map unit: . These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - 230V (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"NominalEPSVolt","value":0,"confirmed":true}'
+```
+
+Setter example - 240V (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"NominalEPSVolt","value":1,"confirmed":true}'
+```
+
+Setter example - 208V (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"NominalEPSVolt","value":2,"confirmed":true}'
+```
+
+Setter example - 220V (off-grid) (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"NominalEPSVolt","value":3,"confirmed":true}'
+```
+
+Setter example - 200V (off-grid) (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"NominalEPSVolt","value":4,"confirmed":true}'
+```
+
+Confirmation: match the printed ID and `name` = `NominalEPSVolt` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 67 - NominalEPSFre: Optional rated off-grid frequency
+
+Operating requirement: standby_required. Fresh standby or stopped state.
+Map comments: 0:50Hz; 1:60Hz.
+Map default: 0; map range: 0~1; map unit: . These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - 50Hz (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"NominalEPSFre","value":0,"confirmed":true}'
+```
+
+Setter example - 60Hz (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"NominalEPSFre","value":1,"confirmed":true}'
+```
+
+Confirmation: match the printed ID and `name` = `NominalEPSFre` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 68 - EPS_En: Off-grid functionality enabled
+
+Operating requirement: standby_required. Fresh standby or stopped state.
+Map default: 1; map range: 0~1; map unit: . These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Value 0 (see description) (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"EPS_En","value":0,"confirmed":true}'
+```
+
+Setter example - Value 1 (see description) (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"EPS_En","value":1,"confirmed":true}'
+```
+
+Confirmation: match the printed ID and `name` = `EPS_En` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 69 - Bypass_En: Bypass mode enabled
+
+Operating requirement: standby_required. Fresh standby or stopped state.
+Map default: 0; map range: 0~1; map unit: . These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Value 0 (see description) (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"Bypass_En","value":0,"confirmed":true}'
+```
+
+Setter example - Value 1 (see description) (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"Bypass_En","value":1,"confirmed":true}'
+```
+
+Confirmation: match the printed ID and `name` = `Bypass_En` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 70 - UPS_En: UPS Function Enabled
+
+Operating requirement: standby_required. Fresh standby or stopped state.
+Applicable models: Single-phase temporarily not supported.
+Map comments: TBC.
+Map default: 0; map range: 0~1; map unit: . These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Value 0 (see description) (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"UPS_En","value":0,"confirmed":true}'
+```
+
+Setter example - Value 1 (see description) (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"UPS_En","value":1,"confirmed":true}'
+```
+
+Confirmation: match the printed ID and `name` = `UPS_En` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 71 - ubN_PE_RelayCMD: Zero earth relay control enabled
+
+Operating requirement: commissioning_only. Fresh standby/stopped state and commissioning_interlock.
+Map comments: Attendance Functional Requirements.
+Map default: 0; map range: 0~1; map unit: . These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Value 0 (see description) (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"ubN_PE_RelayCMD","value":0,"confirmed":true,"commissioning_interlock":true}'
+```
+
+Setter example - Value 1 (see description) (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"ubN_PE_RelayCMD","value":1,"confirmed":true,"commissioning_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `ubN_PE_RelayCMD` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 72 - unAFCICtrlReg: AFCI Self-Test Command
+
+Operating requirement: service_only. Fresh standby/stopped state and service_interlock; never auto-retry.
+Applicable models: Single-phase temporarily not supported.
+Map comments: Bit0: SelfCheckCmd;; Bit1: ClrFaultCmd;; Bit2~7:reserved;.
+Map default: ; map range: ; map unit: . These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Choose a validated value; the map does not define a complete usable example (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"unAFCICtrlReg","value":"<new-value>","confirmed":true,"service_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `unAFCICtrlReg` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 73 - uwAFCIThresholdValue: AFCI error threshold
+
+Operating requirement: service_only. Fresh standby/stopped state and service_interlock; never auto-retry.
+Applicable models: Single-phase temporarily not supported.
+Map comments: AFCI error threshold.
+Map default: ; map range: ; map unit: . These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Choose a validated value; the map does not define a complete usable example (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"uwAFCIThresholdValue","value":"<new-value>","confirmed":true,"service_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `uwAFCIThresholdValue` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 74 - AFCIClrFaultCmd: AFCI Error Clear Command
+
+Operating requirement: service_only. Fresh standby/stopped state and service_interlock; never auto-retry.
+Map default: ; map range: ; map unit: . These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Choose a validated value; the map does not define a complete usable example (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"AFCIClrFaultCmd","value":"<new-value>","confirmed":true,"service_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `AFCIClrFaultCmd` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 75 - uwRestartVoltL: Fault reconnect grid low voltage
+
+Operating requirement: commissioning_only. Fresh standby/stopped state and commissioning_interlock.
+Map comments: Fault reconnection and grid connection conditions.
+Map default: ; map range: 1700~2400; map unit: 0.1V. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Range-boundary illustration; not a recommended operating setting (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"uwRestartVoltL","value":170,"confirmed":true,"commissioning_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `uwRestartVoltL` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 76 - uwRestartVoltH: Fault reconnect grid high voltage
+
+Operating requirement: commissioning_only. Fresh standby/stopped state and commissioning_interlock.
+Map default: ; map range: 2000~2900; map unit: 0.1V. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Range-boundary illustration; not a recommended operating setting (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"uwRestartVoltH","value":200,"confirmed":true,"commissioning_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `uwRestartVoltH` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 77 - uwRestartFreqL: Fault Reconnect Grid Low Frequency
+
+Operating requirement: commissioning_only. Fresh standby/stopped state and commissioning_interlock.
+Map default: ; map range: 50Hz:4700~5010; 60Hz:; 5700~6010; map unit: 0.01Hz. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Choose a validated value; the map does not define a complete usable example (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"uwRestartFreqL","value":"<new-value>","confirmed":true,"commissioning_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `uwRestartFreqL` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 78 - uwRestartFreqH: Fault Reconnect Grid High Frequency
+
+Operating requirement: commissioning_only. Fresh standby/stopped state and commissioning_interlock.
+Map default: ; map range: 50Hz:; 4990~5300; 60Hz:; 5990~6300; map unit: 0.01Hz. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Choose a validated value; the map does not define a complete usable example (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"uwRestartFreqH","value":"<new-value>","confirmed":true,"commissioning_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `uwRestartFreqH` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 79 - BatteryType: Battery type
+
+Operating requirement: standby_required. Fresh standby or stopped state.
+Map comments: 0: Lead acid; 1: Lithium battery; 2: Lithium battery without communication (off-grid); 3: User 2 (off-grid); 4: User 3 (off-grid); 5: NO Bat.
+Map default: 1; map range: ; map unit: . These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Lead acid (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"BatteryType","value":0,"confirmed":true}'
+```
+
+Setter example - Lithium battery (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"BatteryType","value":1,"confirmed":true}'
+```
+
+Setter example - Lithium battery without communication (off-grid) (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"BatteryType","value":2,"confirmed":true}'
+```
+
+Setter example - User 2 (off-grid) (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"BatteryType","value":3,"confirmed":true}'
+```
+
+Setter example - User 3 (off-grid) (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"BatteryType","value":4,"confirmed":true}'
+```
+
+Setter example - NO Bat (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"BatteryType","value":5,"confirmed":true}'
+```
+
+Confirmation: match the printed ID and `name` = `BatteryType` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 80 - BatteryCompanySet: Battery communication protocol selection
+
+Operating requirement: standby_required. Fresh standby or stopped state.
+Applicable models: Single-phase temporarily not supported.
+Map comments: 0: null; 1: Protocol 1; 2: Protocol 2; 3: Protocol 3; 4: Protocol 4.
+Map default: 0; map range: ; map unit: . These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - null (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"BatteryCompanySet","value":0,"confirmed":true}'
+```
+
+Setter example - Protocol 1 (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"BatteryCompanySet","value":1,"confirmed":true}'
+```
+
+Setter example - Protocol 2 (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"BatteryCompanySet","value":2,"confirmed":true}'
+```
+
+Setter example - Protocol 3 (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"BatteryCompanySet","value":3,"confirmed":true}'
+```
+
+Setter example - Protocol 4 (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"BatteryCompanySet","value":4,"confirmed":true}'
+```
+
+Confirmation: match the printed ID and `name` = `BatteryCompanySet` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 81 - BatMdlSerialNum: Number of batteries in series - high-voltage batteries;
+
+Operating requirement: standby_required. Fresh standby or stopped state.
+Applicable models: Single-phase temporarily not supported.
+Map comments: Lead-acid batteries (for high-voltage battery systems).
+Map default: 36; map range: 12,18,24,36; map unit: . These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Documented choice 12 (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"BatMdlSerialNum","value":12,"confirmed":true}'
+```
+
+Setter example - Documented choice 18 (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"BatMdlSerialNum","value":18,"confirmed":true}'
+```
+
+Setter example - Documented choice 24 (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"BatMdlSerialNum","value":24,"confirmed":true}'
+```
+
+Setter example - Documented choice 36 (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"BatMdlSerialNum","value":36,"confirmed":true}'
+```
+
+Confirmation: match the printed ID and `name` = `BatMdlSerialNum` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 82 - BatMdlParallNum: Number of battery parallel joints;
+
+Operating requirement: standby_required. Fresh standby or stopped state.
+Applicable models: Single-phase temporarily not supported.
+Map comments: Lead-acid batteries (reserved, unused).
+Map default: 1; map range: 1~160; map unit: . These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Example using the documented default converted to the current API scale (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"BatMdlParallNum","value":1,"confirmed":true}'
+```
+
+Confirmation: match the printed ID and `name` = `BatMdlParallNum` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 83 - ChargeCurrentLimit: Charge Limit Current
+
+Operating requirement: standby_required. Fresh standby or stopped state.
+Map comments: When the charging current needs to be lower than this value, enter the floating charging CC.
+Map default: 8500; map range: S, O:; 100~12000; T:10~250; map unit: 0.01A. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Example using the documented default converted to the current API scale (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"ChargeCurrentLimit","value":85,"confirmed":true}'
+```
+
+Confirmation: match the printed ID and `name` = `ChargeCurrentLimit` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 84 - VbatStopForDischarge: Discharge cut-off voltage
+
+Operating requirement: standby_required. Fresh standby or stopped state.
+Map default: 4600; map range: S:4200~5000; T:700~1200; O:4000~5200; map unit: 0.01V. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Example using the documented default converted to the current API scale (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"VbatStopForDischarge","value":46,"confirmed":true}'
+```
+
+Confirmation: match the printed ID and `name` = `VbatStopForDischarge` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 85 - Vbat constant charge: Charge cut-off voltage
+
+Operating requirement: standby_required. Fresh standby or stopped state.
+Map comments: CV voltage (lead-acid battery).
+Map default: 5800; map range: S, O:; 4800~5920; T:1200~1600; map unit: 0.01V. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Example using the documented default converted to the current API scale (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"Vbat constant charge","value":58,"confirmed":true}'
+```
+
+Confirmation: match the printed ID and `name` = `Vbat constant charge` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 86 - ubHighVoltBatRatedVolt: Battery nominal voltage
+
+Operating requirement: standby_required. Fresh standby or stopped state.
+Map default: 400; map range: T:100~800; map unit: 1V. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Example using the documented default converted to the current API scale (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"ubHighVoltBatRatedVolt","value":400,"confirmed":true}'
+```
+
+Confirmation: match the printed ID and `name` = `ubHighVoltBatRatedVolt` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 87 - ChargeRate: Charging power
+
+Operating requirement: standby_required. Fresh standby or stopped state.
+Map default: 100; map range: 0~100; map unit: 0.01. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Example using the documented default converted to the current API scale (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"ChargeRate","domain":"battery","description":"Charging power","value":1,"confirmed":true}'
+```
+
+Confirmation: match the printed ID and `name` = `ChargeRate` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 88 - ChargeRate: Discharge power
+
+Operating requirement: standby_required. Fresh standby or stopped state.
+Map default: 100; map range: 0~100; map unit: 0.01. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Example using the documented default converted to the current API scale (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"ChargeRate","domain":"battery","description":"Discharge power","value":1,"confirmed":true}'
+```
+
+Confirmation: match the printed ID and `name` = `ChargeRate` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 89 - BatFirstStopSOC: Charge cut-off SOC
+
+Operating requirement: standby_required. Fresh standby or stopped state.
+Map default: 100; map range: 10~100; map unit: 0.01. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Example using the documented default converted to the current API scale (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"BatFirstStopSOC","value":1,"confirmed":true}'
+```
+
+Confirmation: match the printed ID and `name` = `BatFirstStopSOC` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 90 - OnLineStopSOC: Grid-connected discharge cut-off SOC
+
+Operating requirement: standby_required. Fresh standby or stopped state.
+Map default: 10; map range: 10~100; map unit: 0.01. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Example using the documented default converted to the current API scale (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"OnLineStopSOC","value":0.1,"confirmed":true}'
+```
+
+Confirmation: match the printed ID and `name` = `OnLineStopSOC` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 91 - OffLineStopSoc: Off-grid Discharge Cutoff SOC
+
+Operating requirement: standby_required. Fresh standby or stopped state.
+Map default: 10; map range: 10~100; map unit: 0.01. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Example using the documented default converted to the current API scale (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"OffLineStopSoc","value":0.1,"confirmed":true}'
+```
+
+Confirmation: match the printed ID and `name` = `OffLineStopSoc` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 92 - Gen Charge En: Total Diesel Charging Enabled
+
+Operating requirement: hot_edit_guarded. Also requires guarded_interlock and validated dependencies.
+Map comments: 0: Disabled; 1: Enabled.
+Map default: 0; map range: 0~1; map unit: . These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Disabled (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"Gen Charge En","value":false,"confirmed":true,"guarded_interlock":true}'
+```
+
+Setter example - Enabled (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"Gen Charge En","value":true,"confirmed":true,"guarded_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `Gen Charge En` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 93 - AcCharge_En: AC Charge Enabled
+
+Operating requirement: hot_edit_guarded. Also requires guarded_interlock and validated dependencies.
+Map comments: 0: Disabled; 1: Enabled.
+Map default: 1; map range: 0~1; map unit: . These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Disabled (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"AcCharge_En","value":false,"confirmed":true,"guarded_interlock":true}'
+```
+
+Setter example - Enabled (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"AcCharge_En","value":true,"confirmed":true,"guarded_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `AcCharge_En` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 94 - LoadFirstDischargeDisableFlag: Load Preferred Discharge Prohibit Sign
+
+Operating requirement: hot_edit_guarded. Also requires guarded_interlock and validated dependencies.
+Map comments: TBC.
+Map default: 0; map range: 0~1; map unit: . These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Value 0 (see description) (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"LoadFirstDischargeDisableFlag","value":0,"confirmed":true,"guarded_interlock":true}'
+```
+
+Setter example - Value 1 (see description) (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"LoadFirstDischargeDisableFlag","value":1,"confirmed":true,"guarded_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `LoadFirstDischargeDisableFlag` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 95 - RemotePowerControl: One-click charging and discharging
+
+Operating requirement: runtime_command. Fresh valid runtime state; transition/status monitoring.
+Map comments: 255: Fail; 0: Load first; 1: Battery first; 2: Grid first.
+Map default: 255; map range: 0~2,255; map unit: . These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Fail (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"RemotePowerControl","value":255,"confirmed":true}'
+```
+
+Setter example - Load first (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"RemotePowerControl","value":0,"confirmed":true}'
+```
+
+Setter example - Battery first (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"RemotePowerControl","value":1,"confirmed":true}'
+```
+
+Setter example - Grid first (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"RemotePowerControl","value":2,"confirmed":true}'
+```
+
+Confirmation: match the printed ID and `name` = `RemotePowerControl` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 96 - NumberTimePeriods: Number of charging and discharging periods - number of currently valid periods, starting with period 1
+
+Operating requirement: hot_edit_guarded. Also requires guarded_interlock and validated dependencies.
+Map comments: 0 ~ 10: Number of time periods; 0xA5: Number of time periods reset, all time period setting values reset.
+Map default: 0; map range: 0~10; map unit: . These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Number of time periods reset, all time period setting values reset (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"NumberTimePeriods","value":165,"confirmed":true,"guarded_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `NumberTimePeriods` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 97 - PeriodTimeStart1: Period 1 Start Time
+
+Operating requirement: hot_edit_guarded. Also requires guarded_interlock and validated dependencies.
+Map comments: H: hour 0 ~ 23; L: minute 0 ~ 59.
+Map default: 0; map range: 0~0x173B; map unit: 1min. These source fields retain the map notation; example payloads use the firmware application scale.
+The map packs hour and minute together. The current named API does not accept an HH:MM string or convert ordinary elapsed minutes. The zero example means midnight only; other times require a validated complete encoding. A friendly time setter is not implemented.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Example using the documented default converted to the current API scale (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"PeriodTimeStart1","value":0,"confirmed":true,"guarded_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `PeriodTimeStart1` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 98 - PeriodTimeEnd1: Period 1 End Time
+
+Operating requirement: hot_edit_guarded. Also requires guarded_interlock and validated dependencies.
+Map comments: H: hour 0 ~ 23; L: minute 0 ~ 59.
+Map default: 0; map range: 0~0x173B; map unit: 1min. These source fields retain the map notation; example payloads use the firmware application scale.
+The map packs hour and minute together. The current named API does not accept an HH:MM string or convert ordinary elapsed minutes. The zero example means midnight only; other times require a validated complete encoding. A friendly time setter is not implemented.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Example using the documented default converted to the current API scale (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"PeriodTimeEnd1","domain":"system","description":"Period 1 End Time","value":0,"confirmed":true,"guarded_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `PeriodTimeEnd1` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 99 - PeriodTimeRate1: Period 1 Priority
+
+Operating requirement: hot_edit_guarded. Also requires guarded_interlock and validated dependencies.
+Map comments: 0: Load first; 1: Battery first; 2: Grid first.
+Map default: 0; map range: 0~2; map unit: 1Pn%. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Load first (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"PeriodTimeRate1","domain":"system","description":"Period 1 Priority","value":0,"confirmed":true,"guarded_interlock":true}'
+```
+
+Setter example - Battery first (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"PeriodTimeRate1","domain":"system","description":"Period 1 Priority","value":1,"confirmed":true,"guarded_interlock":true}'
+```
+
+Setter example - Grid first (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"PeriodTimeRate1","domain":"system","description":"Period 1 Priority","value":2,"confirmed":true,"guarded_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `PeriodTimeRate1` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 100 - PeriodTimeStart2: Period 2 Start Time
+
+Operating requirement: hot_edit_guarded. Also requires guarded_interlock and validated dependencies.
+Map comments: H: hour 0 ~ 23; L: minute 0 ~ 59.
+Map default: 0; map range: 0~0x173B; map unit: 1min. These source fields retain the map notation; example payloads use the firmware application scale.
+The map packs hour and minute together. The current named API does not accept an HH:MM string or convert ordinary elapsed minutes. The zero example means midnight only; other times require a validated complete encoding. A friendly time setter is not implemented.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Example using the documented default converted to the current API scale (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"PeriodTimeStart2","value":0,"confirmed":true,"guarded_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `PeriodTimeStart2` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 101 - PeriodTimeEnd2: Period 2 End Time
+
+Operating requirement: hot_edit_guarded. Also requires guarded_interlock and validated dependencies.
+Map comments: H: hour 0 ~ 23; L: minute 0 ~ 59.
+Map default: 0; map range: 0~0x173B; map unit: 1min. These source fields retain the map notation; example payloads use the firmware application scale.
+The map packs hour and minute together. The current named API does not accept an HH:MM string or convert ordinary elapsed minutes. The zero example means midnight only; other times require a validated complete encoding. A friendly time setter is not implemented.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Example using the documented default converted to the current API scale (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"PeriodTimeEnd2","value":0,"confirmed":true,"guarded_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `PeriodTimeEnd2` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 102 - PeriodTimeRate2: Period 2 Priority
+
+Operating requirement: hot_edit_guarded. Also requires guarded_interlock and validated dependencies.
+Map comments: 0: Load first; 1: Battery first; 2: Grid first.
+Map default: 0; map range: 0~2; map unit: 1Pn%. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Load first (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"PeriodTimeRate2","value":0,"confirmed":true,"guarded_interlock":true}'
+```
+
+Setter example - Battery first (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"PeriodTimeRate2","value":1,"confirmed":true,"guarded_interlock":true}'
+```
+
+Setter example - Grid first (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"PeriodTimeRate2","value":2,"confirmed":true,"guarded_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `PeriodTimeRate2` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 103 - PeriodTimeStart3: Period 3 Start Time
+
+Operating requirement: hot_edit_guarded. Also requires guarded_interlock and validated dependencies.
+Map comments: H: hour 0 ~ 23; L: minute 0 ~ 59.
+Map default: 0; map range: 0~0x173B; map unit: 1min. These source fields retain the map notation; example payloads use the firmware application scale.
+The map packs hour and minute together. The current named API does not accept an HH:MM string or convert ordinary elapsed minutes. The zero example means midnight only; other times require a validated complete encoding. A friendly time setter is not implemented.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Example using the documented default converted to the current API scale (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"PeriodTimeStart3","value":0,"confirmed":true,"guarded_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `PeriodTimeStart3` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 104 - PeriodTimeEnd3: Slot 3 End Time
+
+Operating requirement: hot_edit_guarded. Also requires guarded_interlock and validated dependencies.
+Map comments: H: hour 0 ~ 23; L: minute 0 ~ 59.
+Map default: 0; map range: 0~0x173B; map unit: 1min. These source fields retain the map notation; example payloads use the firmware application scale.
+The map packs hour and minute together. The current named API does not accept an HH:MM string or convert ordinary elapsed minutes. The zero example means midnight only; other times require a validated complete encoding. A friendly time setter is not implemented.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Example using the documented default converted to the current API scale (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"PeriodTimeEnd3","value":0,"confirmed":true,"guarded_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `PeriodTimeEnd3` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 105 - PeriodTimeRate3: Period 3 Priority
+
+Operating requirement: hot_edit_guarded. Also requires guarded_interlock and validated dependencies.
+Map comments: 0: Load first; 1: Battery first; 2: Grid first.
+Map default: 0; map range: 0~2; map unit: 1Pn%. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Load first (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"PeriodTimeRate3","value":0,"confirmed":true,"guarded_interlock":true}'
+```
+
+Setter example - Battery first (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"PeriodTimeRate3","value":1,"confirmed":true,"guarded_interlock":true}'
+```
+
+Setter example - Grid first (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"PeriodTimeRate3","value":2,"confirmed":true,"guarded_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `PeriodTimeRate3` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 106 - PeriodTimeStart4: Period 4 Start Time
+
+Operating requirement: hot_edit_guarded. Also requires guarded_interlock and validated dependencies.
+Map comments: H: hour 0 ~ 23; L: minute 0 ~ 59.
+Map default: 0; map range: 0~0x173B; map unit: 1min. These source fields retain the map notation; example payloads use the firmware application scale.
+The map packs hour and minute together. The current named API does not accept an HH:MM string or convert ordinary elapsed minutes. The zero example means midnight only; other times require a validated complete encoding. A friendly time setter is not implemented.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Example using the documented default converted to the current API scale (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"PeriodTimeStart4","value":0,"confirmed":true,"guarded_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `PeriodTimeStart4` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 107 - PeriodTimeEnd4: Period 4 End Time
+
+Operating requirement: hot_edit_guarded. Also requires guarded_interlock and validated dependencies.
+Map comments: H: hour 0 ~ 23; L: minute 0 ~ 59.
+Map default: 0; map range: 0~0x173B; map unit: 1min. These source fields retain the map notation; example payloads use the firmware application scale.
+The map packs hour and minute together. The current named API does not accept an HH:MM string or convert ordinary elapsed minutes. The zero example means midnight only; other times require a validated complete encoding. A friendly time setter is not implemented.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Example using the documented default converted to the current API scale (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"PeriodTimeEnd4","value":0,"confirmed":true,"guarded_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `PeriodTimeEnd4` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 108 - PeriodTimeRate4: Period 4 Priority
+
+Operating requirement: hot_edit_guarded. Also requires guarded_interlock and validated dependencies.
+Map comments: 0: Load first; 1: Battery first; 2: Grid first.
+Map default: 0; map range: 0~2; map unit: 1Pn%. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Load first (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"PeriodTimeRate4","value":0,"confirmed":true,"guarded_interlock":true}'
+```
+
+Setter example - Battery first (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"PeriodTimeRate4","value":1,"confirmed":true,"guarded_interlock":true}'
+```
+
+Setter example - Grid first (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"PeriodTimeRate4","value":2,"confirmed":true,"guarded_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `PeriodTimeRate4` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 109 - PeriodTimeStart5: Period 5 Start Time
+
+Operating requirement: hot_edit_guarded. Also requires guarded_interlock and validated dependencies.
+Map comments: H: hour 0 ~ 23; L: minute 0 ~ 59.
+Map default: 0; map range: 0~0x173B; map unit: 1min. These source fields retain the map notation; example payloads use the firmware application scale.
+The map packs hour and minute together. The current named API does not accept an HH:MM string or convert ordinary elapsed minutes. The zero example means midnight only; other times require a validated complete encoding. A friendly time setter is not implemented.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Example using the documented default converted to the current API scale (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"PeriodTimeStart5","value":0,"confirmed":true,"guarded_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `PeriodTimeStart5` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 110 - PeriodTimeEnd5: Slot 5 End Time
+
+Operating requirement: hot_edit_guarded. Also requires guarded_interlock and validated dependencies.
+Map comments: H: hour 0 ~ 23; L: minute 0 ~ 59.
+Map default: 0; map range: 0~0x173B; map unit: 1min. These source fields retain the map notation; example payloads use the firmware application scale.
+The map packs hour and minute together. The current named API does not accept an HH:MM string or convert ordinary elapsed minutes. The zero example means midnight only; other times require a validated complete encoding. A friendly time setter is not implemented.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Example using the documented default converted to the current API scale (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"PeriodTimeEnd5","value":0,"confirmed":true,"guarded_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `PeriodTimeEnd5` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 111 - PeriodTimeRate5: Period 5 Priority
+
+Operating requirement: hot_edit_guarded. Also requires guarded_interlock and validated dependencies.
+Map comments: 0: Load first; 1: Battery first; 2: Grid first.
+Map default: 0; map range: 0~2; map unit: 1Pn%. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Load first (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"PeriodTimeRate5","value":0,"confirmed":true,"guarded_interlock":true}'
+```
+
+Setter example - Battery first (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"PeriodTimeRate5","value":1,"confirmed":true,"guarded_interlock":true}'
+```
+
+Setter example - Grid first (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"PeriodTimeRate5","value":2,"confirmed":true,"guarded_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `PeriodTimeRate5` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 112 - PeriodTimeStart6: Period 6 Start Time
+
+Operating requirement: hot_edit_guarded. Also requires guarded_interlock and validated dependencies.
+Map comments: H: hour 0 ~ 23; L: minute 0 ~ 59.
+Map default: 0; map range: 0~0x173B; map unit: 1min. These source fields retain the map notation; example payloads use the firmware application scale.
+The map packs hour and minute together. The current named API does not accept an HH:MM string or convert ordinary elapsed minutes. The zero example means midnight only; other times require a validated complete encoding. A friendly time setter is not implemented.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Example using the documented default converted to the current API scale (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"PeriodTimeStart6","value":0,"confirmed":true,"guarded_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `PeriodTimeStart6` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 113 - PeriodTimeEnd1: Slot 6 End Time
+
+Operating requirement: hot_edit_guarded. Also requires guarded_interlock and validated dependencies.
+Map comments: H: hour 0 ~ 23; L: minute 0 ~ 59.
+Map default: 0; map range: 0~0x173B; map unit: 1min. These source fields retain the map notation; example payloads use the firmware application scale.
+The map packs hour and minute together. The current named API does not accept an HH:MM string or convert ordinary elapsed minutes. The zero example means midnight only; other times require a validated complete encoding. A friendly time setter is not implemented.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Example using the documented default converted to the current API scale (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"PeriodTimeEnd1","domain":"system","description":"Slot 6 End Time","value":0,"confirmed":true,"guarded_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `PeriodTimeEnd1` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 114 - PeriodTimeRate1: Period 6 Priority
+
+Operating requirement: hot_edit_guarded. Also requires guarded_interlock and validated dependencies.
+Map comments: 0: Load first; 1: Battery first; 2: Grid first.
+Map default: 0; map range: 0~2; map unit: 1Pn%. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Load first (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"PeriodTimeRate1","domain":"system","description":"Period 6 Priority","value":0,"confirmed":true,"guarded_interlock":true}'
+```
+
+Setter example - Battery first (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"PeriodTimeRate1","domain":"system","description":"Period 6 Priority","value":1,"confirmed":true,"guarded_interlock":true}'
+```
+
+Setter example - Grid first (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"PeriodTimeRate1","domain":"system","description":"Period 6 Priority","value":2,"confirmed":true,"guarded_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `PeriodTimeRate1` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 115 - PeriodTimeStart7: Period 7 Start Time
+
+Operating requirement: hot_edit_guarded. Also requires guarded_interlock and validated dependencies.
+Map comments: H: hour 0 ~ 23; L: minute 0 ~ 59.
+Map default: 0; map range: 0~0x173B; map unit: 1min. These source fields retain the map notation; example payloads use the firmware application scale.
+The map packs hour and minute together. The current named API does not accept an HH:MM string or convert ordinary elapsed minutes. The zero example means midnight only; other times require a validated complete encoding. A friendly time setter is not implemented.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Example using the documented default converted to the current API scale (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"PeriodTimeStart7","value":0,"confirmed":true,"guarded_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `PeriodTimeStart7` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 116 - PeriodTimeEnd1: Segment 7 End Time
+
+Operating requirement: hot_edit_guarded. Also requires guarded_interlock and validated dependencies.
+Map comments: H: hour 0 ~ 23; L: minute 0 ~ 59.
+Map default: 0; map range: 0~0x173B; map unit: 1min. These source fields retain the map notation; example payloads use the firmware application scale.
+The map packs hour and minute together. The current named API does not accept an HH:MM string or convert ordinary elapsed minutes. The zero example means midnight only; other times require a validated complete encoding. A friendly time setter is not implemented.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Example using the documented default converted to the current API scale (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"PeriodTimeEnd1","domain":"system","description":"Segment 7 End Time","value":0,"confirmed":true,"guarded_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `PeriodTimeEnd1` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 117 - PeriodTimeRate1: Period 7 Priority
+
+Operating requirement: hot_edit_guarded. Also requires guarded_interlock and validated dependencies.
+Map comments: 0: Load first; 1: Battery first; 2: Grid first.
+Map default: 0; map range: 0~2; map unit: 1Pn%. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Load first (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"PeriodTimeRate1","domain":"system","description":"Period 7 Priority","value":0,"confirmed":true,"guarded_interlock":true}'
+```
+
+Setter example - Battery first (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"PeriodTimeRate1","domain":"system","description":"Period 7 Priority","value":1,"confirmed":true,"guarded_interlock":true}'
+```
+
+Setter example - Grid first (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"PeriodTimeRate1","domain":"system","description":"Period 7 Priority","value":2,"confirmed":true,"guarded_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `PeriodTimeRate1` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 118 - PeriodTimeStart8: Period 8 Start Time
+
+Operating requirement: hot_edit_guarded. Also requires guarded_interlock and validated dependencies.
+Map comments: H: hour 0 ~ 23; L: minute 0 ~ 59.
+Map default: 0; map range: 0~0x173B; map unit: 1min. These source fields retain the map notation; example payloads use the firmware application scale.
+The map packs hour and minute together. The current named API does not accept an HH:MM string or convert ordinary elapsed minutes. The zero example means midnight only; other times require a validated complete encoding. A friendly time setter is not implemented.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Example using the documented default converted to the current API scale (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"PeriodTimeStart8","value":0,"confirmed":true,"guarded_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `PeriodTimeStart8` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 119 - PeriodTimeEnd1: Slot 8 End Time
+
+Operating requirement: hot_edit_guarded. Also requires guarded_interlock and validated dependencies.
+Map comments: H: hour 0 ~ 23; L: minute 0 ~ 59.
+Map default: 0; map range: 0~0x173B; map unit: 1min. These source fields retain the map notation; example payloads use the firmware application scale.
+The map packs hour and minute together. The current named API does not accept an HH:MM string or convert ordinary elapsed minutes. The zero example means midnight only; other times require a validated complete encoding. A friendly time setter is not implemented.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Example using the documented default converted to the current API scale (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"PeriodTimeEnd1","domain":"system","description":"Slot 8 End Time","value":0,"confirmed":true,"guarded_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `PeriodTimeEnd1` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 120 - PeriodTimeRate1: Period 8 Priority
+
+Operating requirement: hot_edit_guarded. Also requires guarded_interlock and validated dependencies.
+Map comments: 0: Load first; 1: Battery first; 2: Grid first.
+Map default: 0; map range: 0~2; map unit: 1Pn%. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Load first (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"PeriodTimeRate1","domain":"system","description":"Period 8 Priority","value":0,"confirmed":true,"guarded_interlock":true}'
+```
+
+Setter example - Battery first (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"PeriodTimeRate1","domain":"system","description":"Period 8 Priority","value":1,"confirmed":true,"guarded_interlock":true}'
+```
+
+Setter example - Grid first (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"PeriodTimeRate1","domain":"system","description":"Period 8 Priority","value":2,"confirmed":true,"guarded_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `PeriodTimeRate1` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 121 - PeriodTimeStart9: Period 9 Start Time
+
+Operating requirement: hot_edit_guarded. Also requires guarded_interlock and validated dependencies.
+Map comments: H: hour 0 ~ 23; L: minute 0 ~ 59.
+Map default: 0; map range: 0~0x173B; map unit: 1min. These source fields retain the map notation; example payloads use the firmware application scale.
+The map packs hour and minute together. The current named API does not accept an HH:MM string or convert ordinary elapsed minutes. The zero example means midnight only; other times require a validated complete encoding. A friendly time setter is not implemented.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Example using the documented default converted to the current API scale (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"PeriodTimeStart9","value":0,"confirmed":true,"guarded_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `PeriodTimeStart9` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 122 - PeriodTimeEnd1: Period 9 End Time
+
+Operating requirement: hot_edit_guarded. Also requires guarded_interlock and validated dependencies.
+Map comments: H: hour 0 ~ 23; L: minute 0 ~ 59.
+Map default: 0; map range: 0~0x173B; map unit: 1min. These source fields retain the map notation; example payloads use the firmware application scale.
+The map packs hour and minute together. The current named API does not accept an HH:MM string or convert ordinary elapsed minutes. The zero example means midnight only; other times require a validated complete encoding. A friendly time setter is not implemented.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Example using the documented default converted to the current API scale (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"PeriodTimeEnd1","domain":"system","description":"Period 9 End Time","value":0,"confirmed":true,"guarded_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `PeriodTimeEnd1` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 123 - PeriodTimeRate1: Period 9 Priority
+
+Operating requirement: hot_edit_guarded. Also requires guarded_interlock and validated dependencies.
+Map comments: 0: Load first; 1: Battery first; 2: Grid first.
+Map default: 0; map range: 0~2; map unit: 1Pn%. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Load first (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"PeriodTimeRate1","domain":"system","description":"Period 9 Priority","value":0,"confirmed":true,"guarded_interlock":true}'
+```
+
+Setter example - Battery first (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"PeriodTimeRate1","domain":"system","description":"Period 9 Priority","value":1,"confirmed":true,"guarded_interlock":true}'
+```
+
+Setter example - Grid first (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"PeriodTimeRate1","domain":"system","description":"Period 9 Priority","value":2,"confirmed":true,"guarded_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `PeriodTimeRate1` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 124 - PeriodTimeStart10: Period 10 Start Time
+
+Operating requirement: hot_edit_guarded. Also requires guarded_interlock and validated dependencies.
+Map comments: H: hour 0 ~ 23; L: minute 0 ~ 59.
+Map default: 0; map range: 0~0x173B; map unit: 1min. These source fields retain the map notation; example payloads use the firmware application scale.
+The map packs hour and minute together. The current named API does not accept an HH:MM string or convert ordinary elapsed minutes. The zero example means midnight only; other times require a validated complete encoding. A friendly time setter is not implemented.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Example using the documented default converted to the current API scale (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"PeriodTimeStart10","value":0,"confirmed":true,"guarded_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `PeriodTimeStart10` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 125 - PeriodTimeEnd10: Slot 10 End Time
+
+Operating requirement: hot_edit_guarded. Also requires guarded_interlock and validated dependencies.
+Map comments: H: hour 0 ~ 23; L: minute 0 ~ 59.
+Map default: 0; map range: 0~0x173B; map unit: 1min. These source fields retain the map notation; example payloads use the firmware application scale.
+The map packs hour and minute together. The current named API does not accept an HH:MM string or convert ordinary elapsed minutes. The zero example means midnight only; other times require a validated complete encoding. A friendly time setter is not implemented.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Example using the documented default converted to the current API scale (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"PeriodTimeEnd10","value":0,"confirmed":true,"guarded_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `PeriodTimeEnd10` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 126 - PeriodTimeRate10: Period 10 Priority
+
+Operating requirement: hot_edit_guarded. Also requires guarded_interlock and validated dependencies.
+Map comments: 0: Load first; 1: Battery first; 2: Grid first.
+Map default: 0; map range: 0~2; map unit: 1Pn%. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Load first (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"PeriodTimeRate10","value":0,"confirmed":true,"guarded_interlock":true}'
+```
+
+Setter example - Battery first (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"PeriodTimeRate10","value":1,"confirmed":true,"guarded_interlock":true}'
+```
+
+Setter example - Grid first (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"PeriodTimeRate10","value":2,"confirmed":true,"guarded_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `PeriodTimeRate10` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 127 - ChargeSourcePriority: Charge Priority
+
+Operating requirement: hot_edit_guarded. Also requires guarded_interlock and validated dependencies.
+Map comments: 0:CSO; 1:SNU; 2:OSO.
+Map default: 1; map range: 0~2; map unit: . These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - CSO (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"ChargeSourcePriority","value":0,"confirmed":true,"guarded_interlock":true}'
+```
+
+Setter example - SNU (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"ChargeSourcePriority","value":1,"confirmed":true,"guarded_interlock":true}'
+```
+
+Setter example - OSO (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"ChargeSourcePriority","value":2,"confirmed":true,"guarded_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `ChargeSourcePriority` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 128 - SourcePriority: Energy Priority
+
+Operating requirement: hot_edit_guarded. Also requires guarded_interlock and validated dependencies.
+Map comments: 0: Sol; 1: UTI; 2: SBU; 10: Grid connected output mode.
+Map default: 1; map range: 0~10; map unit: . These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Sol (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"SourcePriority","value":0,"confirmed":true,"guarded_interlock":true}'
+```
+
+Setter example - UTI (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"SourcePriority","value":1,"confirmed":true,"guarded_interlock":true}'
+```
+
+Setter example - SBU (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"SourcePriority","value":2,"confirmed":true,"guarded_interlock":true}'
+```
+
+Setter example - Grid connected output mode (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"SourcePriority","value":10,"confirmed":true,"guarded_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `SourcePriority` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 129 - uwCC_DisChrLead_100T: Lead Acid Discharge Current
+
+Operating requirement: standby_required. Fresh standby or stopped state.
+Map default: 13700; map range: 100~13700; map unit: 0.01A. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Example using the documented default converted to the current API scale (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"uwCC_DisChrLead_100T","value":137,"confirmed":true}'
+```
+
+Confirmation: match the printed ID and `name` = `uwCC_DisChrLead_100T` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 130 - ubOP_RecoverDischargeSOC: Grid-connected stop discharge recovery SOC
+
+Operating requirement: standby_required. Fresh standby or stopped state.
+Map default: 90; map range: 20~100; map unit: 0.01. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Example using the documented default converted to the current API scale (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"ubOP_RecoverDischargeSOC","value":0.9,"confirmed":true}'
+```
+
+Confirmation: match the printed ID and `name` = `ubOP_RecoverDischargeSOC` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 131 - ubOffGrid_RecoverDischargeSOC: Off-grid Stop Discharge Recovery SOC
+
+Operating requirement: standby_required. Fresh standby or stopped state.
+Map default: 30; map range: 10~100; map unit: 0.01. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Example using the documented default converted to the current API scale (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"ubOffGrid_RecoverDischargeSOC","value":0.3,"confirmed":true}'
+```
+
+Confirmation: match the printed ID and `name` = `ubOffGrid_RecoverDischargeSOC` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 132 - BatUnderVol: Battery Low Voltage Shutdown Voltage
+
+Operating requirement: standby_required. Fresh standby or stopped state.
+Map default: 400; map range: 400~480; map unit: 0.1V. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Example using the documented default converted to the current API scale (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"BatUnderVol","value":40,"confirmed":true}'
+```
+
+Confirmation: match the printed ID and `name` = `BatUnderVol` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 133 - AcChargingCurrent: AC Charge Limit Current
+
+Operating requirement: standby_required. Fresh standby or stopped state.
+Map default: 600; map range: 10~1000; map unit: 0.1A. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Example using the documented default converted to the current API scale (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"AcChargingCurrent","value":60,"confirmed":true}'
+```
+
+Confirmation: match the printed ID and `name` = `AcChargingCurrent` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 134 - uwFloatV_Lead_100T: Floating Charge Voltage
+
+Operating requirement: standby_required. Fresh standby or stopped state.
+Map default: 5520; map range: 4800~5840; map unit: 0.01V. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Example using the documented default converted to the current API scale (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"uwFloatV_Lead_100T","value":55.2,"confirmed":true}'
+```
+
+Confirmation: match the printed ID and `name` = `uwFloatV_Lead_100T` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 135 - BAT2AC_Volt: Battery-to-market voltage
+
+Operating requirement: standby_required. Fresh standby or stopped state.
+Map default: 460; map range: 440~520; map unit: 0.1V. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Example using the documented default converted to the current API scale (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"BAT2AC_Volt","value":46,"confirmed":true}'
+```
+
+Confirmation: match the printed ID and `name` = `BAT2AC_Volt` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 136 - AC2BAT_Volt: Mains to Battery Voltage
+
+Operating requirement: standby_required. Fresh standby or stopped state.
+Map default: 540; map range: 480~580; map unit: 0.1V. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Example using the documented default converted to the current API scale (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"AC2BAT_Volt","value":54,"confirmed":true}'
+```
+
+Confirmation: match the printed ID and `name` = `AC2BAT_Volt` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 137 - ubLeadAcid_BatSubType: Subtype of lead-acid battery
+
+Operating requirement: standby_required. Fresh standby or stopped state.
+Map comments: 0:USE; 1:SLD; 2:FLD; 3:GEL; 4:L14; 5:L15; 6:L16; 7:N13; 8:N14; 9:LIT.
+Map default: 3; map range: 0~8; map unit: . These source fields retain the map notation; example payloads use the firmware application scale.
+Source conflict: the range says 0 through 8, but the comments also list 9 (LIT). That extra choice is documented, not guaranteed accepted by the model or firmware validation.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - USE (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"ubLeadAcid_BatSubType","value":0,"confirmed":true}'
+```
+
+Setter example - SLD (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"ubLeadAcid_BatSubType","value":1,"confirmed":true}'
+```
+
+Setter example - FLD (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"ubLeadAcid_BatSubType","value":2,"confirmed":true}'
+```
+
+Setter example - GEL (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"ubLeadAcid_BatSubType","value":3,"confirmed":true}'
+```
+
+Setter example - L14 (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"ubLeadAcid_BatSubType","value":4,"confirmed":true}'
+```
+
+Setter example - L15 (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"ubLeadAcid_BatSubType","value":5,"confirmed":true}'
+```
+
+Setter example - L16 (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"ubLeadAcid_BatSubType","value":6,"confirmed":true}'
+```
+
+Setter example - N13 (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"ubLeadAcid_BatSubType","value":7,"confirmed":true}'
+```
+
+Setter example - N14 (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"ubLeadAcid_BatSubType","value":8,"confirmed":true}'
+```
+
+Setter example - LIT (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"ubLeadAcid_BatSubType","value":9,"confirmed":true}'
+```
+
+Confirmation: match the printed ID and `name` = `ubLeadAcid_BatSubType` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 138 - IncreChar_MaxTim: Improved charging time
+
+Operating requirement: standby_required. Fresh standby or stopped state.
+Map default: 120; map range: 5~900; map unit: 1min. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Example using the documented default converted to the current API scale (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"IncreChar_MaxTim","value":120,"confirmed":true}'
+```
+
+Confirmation: match the printed ID and `name` = `IncreChar_MaxTim` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 139 - BatUnderVolt_Point: Battery undervoltage alarm point
+
+Operating requirement: standby_required. Fresh standby or stopped state.
+Map default: 440; map range: 400~500; map unit: 0.1V. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Example using the documented default converted to the current API scale (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"BatUnderVolt_Point","value":44,"confirmed":true}'
+```
+
+Confirmation: match the printed ID and `name` = `BatUnderVolt_Point` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 140 - Equalization: Equalization Mode Enabled
+
+Operating requirement: standby_required. Fresh standby or stopped state.
+Map comments: 0: Disable; 1: Enable.
+Map default: 1; map range: 0~1; map unit: . These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Disable (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"Equalization","value":false,"confirmed":true}'
+```
+
+Setter example - Enable (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"Equalization","value":true,"confirmed":true}'
+```
+
+Confirmation: match the printed ID and `name` = `Equalization` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 141 - EQBatteryTime: Equalize charging time
+
+Operating requirement: standby_required. Fresh standby or stopped state.
+Map default: 120; map range: 5~900; map unit: 1min. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Example using the documented default converted to the current API scale (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"EQBatteryTime","value":120,"confirmed":true}'
+```
+
+Confirmation: match the printed ID and `name` = `EQBatteryTime` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 142 - EQBatteryTimeout: Equalize Charge Delay Time
+
+Operating requirement: standby_required. Fresh standby or stopped state.
+Map default: 120; map range: 5~900; map unit: 1min. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Example using the documented default converted to the current API scale (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"EQBatteryTimeout","value":120,"confirmed":true}'
+```
+
+Confirmation: match the printed ID and `name` = `EQBatteryTimeout` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 143 - EqualizationCycle: Balanced charge interval
+
+Operating requirement: standby_required. Fresh standby or stopped state.
+Map default: 30; map range: 0~30; map unit: 1DAY. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Example using the documented default converted to the current API scale (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"EqualizationCycle","value":30,"confirmed":true}'
+```
+
+Confirmation: match the printed ID and `name` = `EqualizationCycle` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 144 - EqualizationImmediately: Turn on Balanced Charging now
+
+Operating requirement: service_only. Fresh standby/stopped state and service_interlock; never auto-retry.
+Map comments: 0: Disable; 1: Enable.
+Map default: 0; map range: 0~1; map unit: . These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Disable (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"EqualizationImmediately","value":false,"confirmed":true,"service_interlock":true}'
+```
+
+Setter example - Enable (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"EqualizationImmediately","value":true,"confirmed":true,"service_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `EqualizationImmediately` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 145 - flcdEn: LCD setting enable bit
+
+Operating requirement: hot_edit_guarded. Also requires guarded_interlock and validated dependencies.
+Map comments: 0: ECOMode_En (Energy Saving Mode Enabled); 1: OverLoad_RestartEn; 2: OverTemp_RestartEn; 3: InputChange_RemEn; 4: OPSplit_PhaseEn; 5: Generator_AutoIPEn; 6: DualChannel_LoadEn; 7: ubridFeedBackEn; 8 ~ 15: unused.
+Map default: ; map range: ; map unit: . These source fields retain the map notation; example payloads use the firmware application scale.
+This is a combined flag field, not a mode selector. The listed numbers are bit positions. A named write replaces the whole flag field; there is currently no named per-flag setter here that preserves other flags automatically. Do not send a bit position as if it enabled that feature. A validated complete value is required.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Choose a validated value; the map does not define a complete usable example (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"flcdEn","value":"<new-value>","confirmed":true,"guarded_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `flcdEn` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 146 - BatLVBreak_RestartVolt: Low Voltage Disconnect Battery Recovery Point
+
+Operating requirement: standby_required. Fresh standby or stopped state.
+Map default: 520; map range: 500~580; map unit: 0.1V. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Example using the documented default converted to the current API scale (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"BatLVBreak_RestartVolt","value":52,"confirmed":true}'
+```
+
+Confirmation: match the printed ID and `name` = `BatLVBreak_RestartVolt` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 147 - BatNeedChr_Volt: Battery Recharge Recovery Point
+
+Operating requirement: standby_required. Fresh standby or stopped state.
+Map default: 520; map range: 500~560; map unit: 0.1V. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Example using the documented default converted to the current API scale (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"BatNeedChr_Volt","value":52,"confirmed":true}'
+```
+
+Confirmation: match the printed ID and `name` = `BatNeedChr_Volt` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 148 - NonCriticlLoad_BatDisConVolt: Non-critical load disconnect battery voltage
+
+Operating requirement: standby_required. Fresh standby or stopped state.
+Map default: 460; map range: 420~540; map unit: 0.1V. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Example using the documented default converted to the current API scale (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"NonCriticlLoad_BatDisConVolt","value":46,"confirmed":true}'
+```
+
+Confirmation: match the printed ID and `name` = `NonCriticlLoad_BatDisConVolt` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 149 - BatHighVolt_DisConPoint: Overvoltage disconnection voltage
+
+Operating requirement: standby_required. Fresh standby or stopped state.
+Map default: 600; map range: 300~600; map unit: 0.1V. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Example using the documented default converted to the current API scale (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"BatHighVolt_DisConPoint","value":60,"confirmed":true}'
+```
+
+Confirmation: match the printed ID and `name` = `BatHighVolt_DisConPoint` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 150 - BatOverDisCharge_Delay: Battery Overdischarge Delay Time
+
+Operating requirement: standby_required. Fresh standby or stopped state.
+Map default: 5; map range: 5~50; map unit: 1s. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Example using the documented default converted to the current API scale (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"BatOverDisCharge_Delay","value":5,"confirmed":true}'
+```
+
+Confirmation: match the printed ID and `name` = `BatOverDisCharge_Delay` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 151 - DspBeepOnOff: Buzzer switch
+
+Operating requirement: hot_edit_confirmed. Confirmed internal read-before-write and read-back.
+Map comments: 0: Disable; 1: Enable.
+Map default: 1; map range: 0~1; map unit: . These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Disable (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"DspBeepOnOff","value":false,"confirmed":true}'
+```
+
+Setter example - Enable (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"DspBeepOnOff","value":true,"confirmed":true}'
+```
+
+Confirmation: match the printed ID and `name` = `DspBeepOnOff` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 152 - OverloadToBypass: Overload transfer bypass enable
+
+Operating requirement: hot_edit_guarded. Also requires guarded_interlock and validated dependencies.
+Map comments: 0: Disable; 1: Enable.
+Map default: 1; map range: 0~1; map unit: . These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Disable (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"OverloadToBypass","value":false,"confirmed":true,"guarded_interlock":true}'
+```
+
+Setter example - Enable (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"OverloadToBypass","value":true,"confirmed":true,"guarded_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `OverloadToBypass` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 153 - AcInputType: Off-grid output mode
+
+Operating requirement: standby_required. Fresh standby or stopped state.
+Map comments: 0:APL; 1:UPS.
+Map default: 1; map range: 0~1; map unit: . These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - APL (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"AcInputType","value":0,"confirmed":true}'
+```
+
+Setter example - UPS (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"AcInputType","value":1,"confirmed":true}'
+```
+
+Confirmation: match the printed ID and `name` = `AcInputType` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 154 - EQBatteryVoltage_100T: Balanced Charging Voltage
+
+Operating requirement: standby_required. Fresh standby or stopped state.
+Map default: 5840; map range: 4800~5840; map unit: . These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Example using the documented default converted to the current API scale (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"EQBatteryVoltage_100T","value":5840,"confirmed":true}'
+```
+
+Confirmation: match the printed ID and `name` = `EQBatteryVoltage_100T` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 155 - Parallel_Mode: Parallel Mode
+
+Operating requirement: standby_required. Fresh standby or stopped state.
+Map comments: 0:SIG; 1:PAL; 2:3P1; 3:3P2; 4:3P3.
+Map default: 0; map range: 0~4; map unit: . These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - SIG (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"Parallel_Mode","value":0,"confirmed":true}'
+```
+
+Setter example - PAL (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"Parallel_Mode","value":1,"confirmed":true}'
+```
+
+Setter example - 3P1 (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"Parallel_Mode","value":2,"confirmed":true}'
+```
+
+Setter example - 3P2 (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"Parallel_Mode","value":3,"confirmed":true}'
+```
+
+Setter example - 3P3 (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"Parallel_Mode","value":4,"confirmed":true}'
+```
+
+Confirmation: match the printed ID and `name` = `Parallel_Mode` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 156 - ubParallelDeviveID: Parallel can communication address
+
+Operating requirement: standby_required. Fresh standby or stopped state.
+Map default: 0; map range: 0~9; map unit: . These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Example using the documented default converted to the current API scale (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"ubParallelDeviveID","value":0,"confirmed":true}'
+```
+
+Confirmation: match the printed ID and `name` = `ubParallelDeviveID` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 157 - ubParallelDeviveType: Parallel Device Type
+
+Operating requirement: standby_required. Fresh standby or stopped state.
+Map comments: 0: Host; 1: Slave.
+Map default: 0; map range: 0~1; map unit: . These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Host (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"ubParallelDeviveType","value":0,"confirmed":true}'
+```
+
+Setter example - Slave (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"ubParallelDeviveType","value":1,"confirmed":true}'
+```
+
+Confirmation: match the printed ID and `name` = `ubParallelDeviveType` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 158 - ubBMSWorkMode: BMS communication method
+
+Operating requirement: standby_required. Fresh standby or stopped state.
+Map comments: 0: Disable; 1: can communication; 2: 485 communication.
+Map default: 0; map range: 0~2; map unit: . These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Disable (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"ubBMSWorkMode","value":0,"confirmed":true}'
+```
+
+Setter example - can communication (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"ubBMSWorkMode","value":1,"confirmed":true}'
+```
+
+Setter example - 485 communication (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"ubBMSWorkMode","value":2,"confirmed":true}'
+```
+
+Confirmation: match the printed ID and `name` = `ubBMSWorkMode` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 159 - uwGridPowerCompensation: Grid Power Compensation
+
+Operating requirement: hot_edit_guarded. Also requires guarded_interlock and validated dependencies.
+Map default: 40; map range: 0~200; map unit: . These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Example using the documented default converted to the current API scale (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"uwGridPowerCompensation","value":40,"confirmed":true,"guarded_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `uwGridPowerCompensation` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 160 - Gen Port Work Mode: Diesel Port Function Selection
+
+Operating requirement: standby_required. Fresh standby or stopped state.
+Map comments: 0.Default; 1.Generator En; 2.Gen Force; 3.SmartLoad Output; 4.On Grid always on; 5.Off Grid immediately off; 6.AC Couple on SecEPS side.
+Map default: 0; map range: ; map unit: . These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Default (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"Gen Port Work Mode","value":0,"confirmed":true}'
+```
+
+Setter example - Generator En (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"Gen Port Work Mode","value":1,"confirmed":true}'
+```
+
+Setter example - Gen Force (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"Gen Port Work Mode","value":2,"confirmed":true}'
+```
+
+Setter example - SmartLoad Output (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"Gen Port Work Mode","value":3,"confirmed":true}'
+```
+
+Setter example - On Grid always on (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"Gen Port Work Mode","value":4,"confirmed":true}'
+```
+
+Setter example - Off Grid immediately off (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"Gen Port Work Mode","value":5,"confirmed":true}'
+```
+
+Setter example - AC Couple on SecEPS side (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"Gen Port Work Mode","value":6,"confirmed":true}'
+```
+
+Confirmation: match the printed ID and `name` = `Gen Port Work Mode` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 161 - Gen Charge Curr Limit: Diesel Charging Current Limit
+
+Operating requirement: standby_required. Fresh standby or stopped state.
+Map default: 100A; map range: ; map unit: 1A. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Example using the documented default converted to the current API scale (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"Gen Charge Curr Limit","value":100,"confirmed":true}'
+```
+
+Confirmation: match the printed ID and `name` = `Gen Charge Curr Limit` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 162 - Gen Input Rated Power: Generator Input Rated Power
+
+Operating requirement: standby_required. Fresh standby or stopped state.
+Map default: 8000W; map range: ; map unit: 10W. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Example using the documented default converted to the current API scale (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"Gen Input Rated Power","value":8000,"confirmed":true}'
+```
+
+Confirmation: match the printed ID and `name` = `Gen Input Rated Power` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 163 - SecEPS ON SOC/Vbat: (Lithium) Start SOC
+
+Operating requirement: hot_edit_guarded. Also requires guarded_interlock and validated dependencies.
+Map default: 0.4; map range: ; map unit: 0.01. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Example using the documented default converted to the current API scale (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"SecEPS ON SOC/Vbat","value":0.4,"confirmed":true,"guarded_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `SecEPS ON SOC/Vbat` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 164 - SecEPS ON Vbat: (Lead acid) Starting battery voltage
+
+Operating requirement: hot_edit_guarded. Also requires guarded_interlock and validated dependencies.
+Map default: 45.0V; map range: ; map unit: 0.1V. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Example using the documented default converted to the current API scale (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"SecEPS ON Vbat","value":45,"confirmed":true,"guarded_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `SecEPS ON Vbat` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 165 - SecEPS OFF SOC/Vbat: (Lithium) Shutdown SOC
+
+Operating requirement: hot_edit_guarded. Also requires guarded_interlock and validated dependencies.
+Map default: 0.4; map range: ; map unit: 0.01. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Example using the documented default converted to the current API scale (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"SecEPS OFF SOC/Vbat","value":0.4,"confirmed":true,"guarded_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `SecEPS OFF SOC/Vbat` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 166 - SecEPS OFF Vbat: (Lead Acid) Shutdown Battery Voltage
+
+Operating requirement: hot_edit_guarded. Also requires guarded_interlock and validated dependencies.
+Map default: 55.0V; map range: ; map unit: 0.1V. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Example using the documented default converted to the current API scale (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"SecEPS OFF Vbat","value":55,"confirmed":true,"guarded_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `SecEPS OFF Vbat` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 167 - SecEPS  On PV Power Min: Minimum power of photovoltaic startup smart load
+
+Operating requirement: hot_edit_guarded. Also requires guarded_interlock and validated dependencies.
+Map default: 3000W; map range: ; map unit: 10W. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Example using the documented default converted to the current API scale (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"SecEPS  On PV Power Min","value":3000,"confirmed":true,"guarded_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `SecEPS  On PV Power Min` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 168 - ubBluetoothEn: Bluetooth Enabled
+
+Operating requirement: hot_edit_confirmed. Confirmed internal read-before-write and read-back.
+Map comments: 1: Bluetooth On; 0: Bluetooth Off.
+Map default: 1; map range: ; map unit: . These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Bluetooth On (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"ubBluetoothEn","value":true,"confirmed":true}'
+```
+
+Setter example - Bluetooth Off (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"ubBluetoothEn","value":false,"confirmed":true}'
+```
+
+Confirmation: match the printed ID and `name` = `ubBluetoothEn` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 169 - upgrade notification: Data update notification, wifi re-submit 0304 data to the server
+
+Operating requirement: service_only. Fresh standby/stopped state and service_interlock; never auto-retry.
+Map comments: 0: Invalid default; 1: Trigger update.
+Map default: 0; map range: ; map unit: . These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Invalid default (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"upgrade notification","value":0,"confirmed":true,"service_interlock":true}'
+```
+
+Setter example - Trigger update (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"upgrade notification","value":1,"confirmed":true,"service_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `upgrade notification` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 170 - Datalogger Restart: wifi factory settings restored, server domain name and escalation time modified
+
+Operating requirement: service_only. Fresh standby/stopped state and service_interlock; never auto-retry.
+Map comments: 0: Invalid by default; 1: Trigger a factory reset.
+Map default: 0; map range: ; map unit: . These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Invalid by default (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"Datalogger Restart","value":0,"confirmed":true,"service_interlock":true}'
+```
+
+Setter example - Trigger a factory reset (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"Datalogger Restart","value":1,"confirmed":true,"service_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `Datalogger Restart` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 171 - LocalSafetyCmd: User Safety Selection Instructions
+
+Operating requirement: commissioning_only. Fresh standby/stopped state and commissioning_interlock.
+Map comments: TBD; 0: Regional Standard Safety Code; 1: Subscriber Wide Range; 2: Grid Company Safety Code.
+Map default: 0; map range: ; map unit: . These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Regional Standard Safety Code (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"LocalSafetyCmd","value":0,"confirmed":true,"commissioning_interlock":true}'
+```
+
+Setter example - Subscriber Wide Range (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"LocalSafetyCmd","value":1,"confirmed":true,"commissioning_interlock":true}'
+```
+
+Setter example - Grid Company Safety Code (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"LocalSafetyCmd","value":2,"confirmed":true,"commissioning_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `LocalSafetyCmd` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 172 - fGridVoltLow1EE: Low Grid Voltage Protection Tier 1
+
+Operating requirement: commissioning_only. Fresh standby/stopped state and commissioning_interlock.
+Map default: ; map range: 460~2400; map unit: 0.1V. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Range-boundary illustration; not a recommended operating setting (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"fGridVoltLow1EE","value":46,"confirmed":true,"commissioning_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `fGridVoltLow1EE` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 173 - fGridVoltHigh1EE: High Grid Voltage Protection Tier 1
+
+Operating requirement: commissioning_only. Fresh standby/stopped state and commissioning_interlock.
+Map default: ; map range: 2000~2900; map unit: 0.1V. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Range-boundary illustration; not a recommended operating setting (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"fGridVoltHigh1EE","value":200,"confirmed":true,"commissioning_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `fGridVoltHigh1EE` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 174 - fFreqLow1EE: Grid Low Frequency Protection First Order
+
+Operating requirement: commissioning_only. Fresh standby/stopped state and commissioning_interlock.
+Map default: ; map range: 50Hz:4700~5010; 60Hz:; 5700~6010; map unit: 0.01Hz. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Choose a validated value; the map does not define a complete usable example (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"fFreqLow1EE","value":"<new-value>","confirmed":true,"commissioning_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `fFreqLow1EE` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 175 - fFreqHigh1EE: Grid High Frequency Protection First Order
+
+Operating requirement: commissioning_only. Fresh standby/stopped state and commissioning_interlock.
+Map default: ; map range: 50Hz:; 4990~5300; 60Hz:; 5990~6300; map unit: 0.01Hz. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Choose a validated value; the map does not define a complete usable example (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"fFreqHigh1EE","value":"<new-value>","confirmed":true,"commissioning_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `fFreqHigh1EE` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 176 - fGridVoltLow2EE: Low Grid Voltage Protection Level 2
+
+Operating requirement: commissioning_only. Fresh standby/stopped state and commissioning_interlock.
+Map default: ; map range: 460~2400; map unit: 0.1V. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Range-boundary illustration; not a recommended operating setting (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"fGridVoltLow2EE","value":46,"confirmed":true,"commissioning_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `fGridVoltLow2EE` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 177 - fGridVoltHigh2EE: High Grid Voltage Protection Level 2
+
+Operating requirement: commissioning_only. Fresh standby/stopped state and commissioning_interlock.
+Map default: ; map range: 2000~2900; map unit: 0.1V. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Range-boundary illustration; not a recommended operating setting (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"fGridVoltHigh2EE","value":200,"confirmed":true,"commissioning_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `fGridVoltHigh2EE` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 178 - fFreqLow2EE: Grid Low Frequency Protection Second Order
+
+Operating requirement: commissioning_only. Fresh standby/stopped state and commissioning_interlock.
+Map default: ; map range: 50Hz:4700~5010; 60Hz:; 5700~6010; map unit: 0.01Hz. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Choose a validated value; the map does not define a complete usable example (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"fFreqLow2EE","value":"<new-value>","confirmed":true,"commissioning_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `fFreqLow2EE` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 179 - fFreqHigh2EE: Grid High Frequency Protection Second Order
+
+Operating requirement: commissioning_only. Fresh standby/stopped state and commissioning_interlock.
+Map default: ; map range: 50Hz:; 4990~5300; 60Hz:; 5990~6300; map unit: 0.01Hz. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Choose a validated value; the map does not define a complete usable example (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"fFreqHigh2EE","value":"<new-value>","confirmed":true,"commissioning_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `fFreqHigh2EE` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 180 - fGridVoltLow3EE: Low Grid Voltage Protection Level 3
+
+Operating requirement: commissioning_only. Fresh standby/stopped state and commissioning_interlock.
+Applicable models: Single-phase temporarily not supported.
+Map default: ; map range: 460~2400; map unit: 0.1V. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Range-boundary illustration; not a recommended operating setting (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"fGridVoltLow3EE","value":46,"confirmed":true,"commissioning_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `fGridVoltLow3EE` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 181 - fGridVoltHigh3EE: High Grid Voltage Protection Level 3
+
+Operating requirement: commissioning_only. Fresh standby/stopped state and commissioning_interlock.
+Applicable models: Single-phase temporarily not supported.
+Map default: ; map range: 2000~2900; map unit: 0.1V. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Range-boundary illustration; not a recommended operating setting (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"fGridVoltHigh3EE","value":200,"confirmed":true,"commissioning_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `fGridVoltHigh3EE` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 182 - fFreqLow3EE: Grid Low Frequency Protection Level 3
+
+Operating requirement: commissioning_only. Fresh standby/stopped state and commissioning_interlock.
+Applicable models: Single-phase temporarily not supported.
+Map default: ; map range: 50Hz:4700~5010; 60Hz:; 5700~6010; map unit: 0.01Hz. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Choose a validated value; the map does not define a complete usable example (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"fFreqLow3EE","value":"<new-value>","confirmed":true,"commissioning_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `fFreqLow3EE` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 183 - fFreqHigh3EE: Grid High Frequency Protection Level 3
+
+Operating requirement: commissioning_only. Fresh standby/stopped state and commissioning_interlock.
+Applicable models: Single-phase temporarily not supported.
+Map default: ; map range: 50Hz:; 4990~5300; 60Hz:; 5990~6300; map unit: 0.01Hz. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Choose a validated value; the map does not define a complete usable example (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"fFreqHigh3EE","value":"<new-value>","confirmed":true,"commissioning_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `fFreqHigh3EE` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 184 - wVLowCutTime1EE: Low Grid Voltage First Order Protection Time
+
+Operating requirement: commissioning_only. Fresh standby/stopped state and commissioning_interlock.
+Map default: ; map range: 0~5000; map unit: 20ms. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Range-boundary illustration; not a recommended operating setting (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"wVLowCutTime1EE","value":0,"confirmed":true,"commissioning_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `wVLowCutTime1EE` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 185 - wVHighCutTime1EE: High grid voltage first-order protection time
+
+Operating requirement: commissioning_only. Fresh standby/stopped state and commissioning_interlock.
+Map default: ; map range: 0~5000; map unit: 20ms. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Range-boundary illustration; not a recommended operating setting (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"wVHighCutTime1EE","value":0,"confirmed":true,"commissioning_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `wVHighCutTime1EE` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 186 - udFLowCutTime1EE: Low Grid Frequency First Order Protection Time
+
+Operating requirement: commissioning_only. Fresh standby/stopped state and commissioning_interlock.
+Map default: ; map range: 0~5000; map unit: 20ms. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Range-boundary illustration; not a recommended operating setting (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"udFLowCutTime1EE","value":0,"confirmed":true,"commissioning_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `udFLowCutTime1EE` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 187 - udFHighCutTime1EE: High Grid Frequency First Order Protection Time
+
+Operating requirement: commissioning_only. Fresh standby/stopped state and commissioning_interlock.
+Map default: ; map range: 0~5000; map unit: 20ms. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Range-boundary illustration; not a recommended operating setting (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"udFHighCutTime1EE","value":0,"confirmed":true,"commissioning_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `udFHighCutTime1EE` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 188 - wVLowCutTime2EE: Low Grid Voltage Second Order Protection Time
+
+Operating requirement: commissioning_only. Fresh standby/stopped state and commissioning_interlock.
+Map default: ; map range: 0~5000; map unit: 20ms. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Range-boundary illustration; not a recommended operating setting (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"wVLowCutTime2EE","value":0,"confirmed":true,"commissioning_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `wVLowCutTime2EE` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 189 - wVHighCutTime2EE: High Grid Voltage Second Order Protection Time
+
+Operating requirement: commissioning_only. Fresh standby/stopped state and commissioning_interlock.
+Map default: ; map range: 0~5000; map unit: 20ms. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Range-boundary illustration; not a recommended operating setting (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"wVHighCutTime2EE","value":0,"confirmed":true,"commissioning_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `wVHighCutTime2EE` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 190 - udFLowCutTime2EE: Low Grid Frequency Second Order Protection Time
+
+Operating requirement: commissioning_only. Fresh standby/stopped state and commissioning_interlock.
+Map default: ; map range: 0~5000; map unit: 20ms. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Range-boundary illustration; not a recommended operating setting (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"udFLowCutTime2EE","value":0,"confirmed":true,"commissioning_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `udFLowCutTime2EE` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 191 - udFHighCutTime2EE: High Grid Frequency Second Order Protection Time
+
+Operating requirement: commissioning_only. Fresh standby/stopped state and commissioning_interlock.
+Map default: ; map range: 0~5000; map unit: 20ms. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Range-boundary illustration; not a recommended operating setting (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"udFHighCutTime2EE","value":0,"confirmed":true,"commissioning_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `udFHighCutTime2EE` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 192 - wVLowCutTime3EE: Low grid voltage third-order protection time
+
+Operating requirement: commissioning_only. Fresh standby/stopped state and commissioning_interlock.
+Applicable models: Single-phase temporarily not supported.
+Map default: ; map range: 0~5000; map unit: 20ms. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Range-boundary illustration; not a recommended operating setting (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"wVLowCutTime3EE","value":0,"confirmed":true,"commissioning_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `wVLowCutTime3EE` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 193 - wVHighCutTime3EE: High grid voltage third-order protection time
+
+Operating requirement: commissioning_only. Fresh standby/stopped state and commissioning_interlock.
+Applicable models: Single-phase temporarily not supported.
+Map default: ; map range: 0~5000; map unit: 20ms. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Range-boundary illustration; not a recommended operating setting (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"wVHighCutTime3EE","value":0,"confirmed":true,"commissioning_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `wVHighCutTime3EE` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 194 - udFLowCutTime3EE: Low Grid Frequency Third Order Protection Time
+
+Operating requirement: commissioning_only. Fresh standby/stopped state and commissioning_interlock.
+Applicable models: Single-phase temporarily not supported.
+Map default: ; map range: 0~5000; map unit: 20ms. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Range-boundary illustration; not a recommended operating setting (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"udFLowCutTime3EE","value":0,"confirmed":true,"commissioning_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `udFLowCutTime3EE` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 195 - udFHighCutTime3EE: High Grid Frequency Third Order Protection Time
+
+Operating requirement: commissioning_only. Fresh standby/stopped state and commissioning_interlock.
+Applicable models: Single-phase temporarily not supported.
+Map default: ; map range: 0~5000; map unit: 20ms. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Range-boundary illustration; not a recommended operating setting (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"udFHighCutTime3EE","value":0,"confirmed":true,"commissioning_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `udFHighCutTime3EE` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 196 - 10MinAVLimit: Voltage protection for ten minutes
+
+Operating requirement: commissioning_only. Fresh standby/stopped state and commissioning_interlock.
+Map default: ; map range: 200~2900; map unit: 0.1V. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Range-boundary illustration; not a recommended operating setting (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"10MinAVLimit","value":20,"confirmed":true,"commissioning_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `10MinAVLimit` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 197 - U10minTime: 10 Minute Average Voltage Protection Time
+
+Operating requirement: commissioning_only. Fresh standby/stopped state and commissioning_interlock.
+Map default: ; map range: 0~5000; map unit: 20ms. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Range-boundary illustration; not a recommended operating setting (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"U10minTime","value":0,"confirmed":true,"commissioning_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `U10minTime` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 198 - Time start: Connection time
+
+Operating requirement: commissioning_only. Fresh standby/stopped state and commissioning_interlock.
+Applicable models: Single-phase temporarily not supported.
+Map default: ; map range: 30~900; map unit: 1s. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Range-boundary illustration; not a recommended operating setting (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"Time start","value":30,"confirmed":true,"commissioning_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `Time start` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 199 - RestartDelayTime: Reconnection time
+
+Operating requirement: commissioning_only. Fresh standby/stopped state and commissioning_interlock.
+Map default: ; map range: 30~900; map unit: 1s. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Range-boundary illustration; not a recommended operating setting (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"RestartDelayTime","value":30,"confirmed":true,"commissioning_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `RestartDelayTime` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 200 - PowerStartSlope: Load rate
+
+Operating requirement: commissioning_only. Fresh standby/stopped state and commissioning_interlock.
+Map default: ; map range: 1-30000; map unit: 0.1Pn%/min. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Choose a validated value; the map does not define a complete usable example (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"PowerStartSlope","value":"<new-value>","confirmed":true,"commissioning_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `PowerStartSlope` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
+
+### Setter 201 - PowerRestartSlopeEE: Restart Load Rate
+
+Operating requirement: commissioning_only. Fresh standby/stopped state and commissioning_interlock.
+Map default: ; map range: 1-30000; map unit: 0.1Pn%/min. These source fields retain the map notation; example payloads use the firmware application scale.
+
+Confirmation command (terminal 1):
+
+```bash
+mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"
+```
+
+Setter example - Choose a validated value; the map does not define a complete usable example (terminal 2):
+
+```bash
+COMMAND_ID=$(date +%s%N)
+printf 'Request ID: %s\n' "$COMMAND_ID"
+mosquitto_pub -h "$BROKER" -p "$PORT" -q 1 -t "$BASE/command" -m '{"command_id":"'"$COMMAND_ID"'","operation":"set","name":"PowerRestartSlopeEE","value":"<new-value>","confirmed":true,"commissioning_interlock":true}'
+```
+
+Confirmation: match the printed ID and `name` = `PowerRestartSlopeEE` in `/result`. Inspect `outcome` and the returned `value`; receiving the command at the broker alone is not inverter confirmation.
 <!-- END GENERATED COMPLETE COMMAND CATALOG -->

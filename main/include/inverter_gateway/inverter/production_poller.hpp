@@ -23,7 +23,7 @@ public:
 
 private:
     bool due(std::size_t index, const PollRequest &request, std::int64_t now_ms) const;
-    void read_request(std::size_t index, const PollRequest &request,
+    bool read_request(std::size_t index, const PollRequest &request,
                       std::int64_t now_ms, std::uint16_t enabled_features);
     void emit(const PollRequest &request, const std::uint16_t *values,
               std::uint16_t count, std::int64_t timestamp_ms,
@@ -31,7 +31,7 @@ private:
     void update_state(const PollRequest &request, const std::uint16_t *values,
                       std::uint16_t count);
 
-    static constexpr std::size_t maximum_requests = 32;
+    static constexpr std::size_t maximum_requests = poll_plan_capacity;
     protocol::ModbusRtuClient &client_;
     std::uint8_t member_id_;
     std::uint8_t connected_pv_inputs_;
@@ -39,6 +39,11 @@ private:
     network::RuntimeMessageSink &sink_;
     std::array<std::int64_t, maximum_requests> last_poll_ms_{};
     std::array<bool, maximum_requests> completed_once_{};
+    std::array<bool, maximum_requests> batch_disabled_{};
+    std::size_t next_poll_index_ = 0;
+    bool last_poll_was_critical_ = false;
+    std::size_t power_cursor_ = 0;
+    bool background_turn_ = false;
     InverterStateSnapshot state_{};
     std::int64_t state_updated_ms_ = 0;
     std::uint32_t sequence_ = 0;

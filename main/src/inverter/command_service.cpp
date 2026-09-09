@@ -50,6 +50,20 @@ LocalCommandResult CommandService::execute(const LocalCommandRequest &request,
         return execute_inverter_enabled(request, state);
     case LocalOperation::set_overload_restart_enabled:
         return execute_feature_bit(request, state, 1);
+    case LocalOperation::set_eco_mode_enabled:
+        return execute_feature_bit(request, state, 0);
+    case LocalOperation::set_overtemperature_restart_enabled:
+        return execute_feature_bit(request, state, 2);
+    case LocalOperation::set_input_change_reminder_enabled:
+        return execute_feature_bit(request, state, 3);
+    case LocalOperation::set_output_split_phase_enabled:
+        return execute_feature_bit(request, state, 4);
+    case LocalOperation::set_generator_auto_input_enabled:
+        return execute_feature_bit(request, state, 5);
+    case LocalOperation::set_dual_channel_load_enabled:
+        return execute_feature_bit(request, state, 6);
+    case LocalOperation::set_grid_feedback_enabled:
+        return execute_feature_bit(request, state, 7);
     case LocalOperation::set_overload_to_bypass_enabled:
         if (!state.fresh) {
             auto result = make_base_result(request, WriteGuard::standby_required,

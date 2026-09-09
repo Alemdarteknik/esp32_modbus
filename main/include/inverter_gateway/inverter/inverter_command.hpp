@@ -22,6 +22,13 @@ enum class LocalOperation : std::uint8_t {
     set_overload_restart_enabled,
     set_overload_to_bypass_enabled,
     set_battery_type,
+    set_eco_mode_enabled,
+    set_overtemperature_restart_enabled,
+    set_input_change_reminder_enabled,
+    set_output_split_phase_enabled,
+    set_generator_auto_input_enabled,
+    set_dual_channel_load_enabled,
+    set_grid_feedback_enabled,
 };
 
 enum class WriteGuard : std::uint8_t {

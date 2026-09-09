@@ -1,6 +1,7 @@
 param(
     [string]$CatalogSource = (Join-Path $PSScriptRoot '..\main\src\inverter\aohai_register_catalog.generated.cpp'),
-    [string]$ApiDocument = (Join-Path $PSScriptRoot '..\doc\MQTT_Register_Command_API.md')
+    [string]$ApiDocument = (Join-Path $PSScriptRoot '..\doc\MQTT_Register_Command_API.md'),
+    [string]$RegisterMap = (Join-Path $PSScriptRoot '..\doc\AOHAI_Modbus_RTU_V2.14_Register_Map.md')
 )
 
 $ErrorActionPreference = 'Stop'
@@ -45,7 +46,7 @@ function Get-Selector {
 
 function Get-ReadCommand {
     param($Row, $Rows)
-    $topic = '<prefix>/<site-id>/inverter/<member-id>/command'
+    $topic = '<prefix>/<device-id>/inverter/<member-id>/command'
     $category = if ($Row.Space -eq 'holding') { 'configuration' } else { 'input_data' }
     $payload = [ordered]@{ command_id = '<unique-command-id>'; operation = 'get'; category = $category }
     $selector = Get-Selector $Row $Rows
@@ -57,7 +58,7 @@ function Get-ReadCommand {
 
 function Get-WriteCommand {
     param($Row, $Rows, [AllowNull()]$ApplicationValue = $null)
-    $topic = '<prefix>/<site-id>/inverter/<member-id>/command'
+    $topic = '<prefix>/<device-id>/inverter/<member-id>/command'
     $payload = [ordered]@{ command_id = '<unique-command-id>'; operation = 'set' }
     $selector = Get-Selector $Row $Rows
     if ($null -eq $selector) { throw "No public selector for holding $($Row.Address)" }
@@ -74,12 +75,16 @@ function Get-WriteCommand {
 
 function Get-DocumentedOptions {
     param($Row)
-    if ([string]::IsNullOrWhiteSpace($Row.Notes)) { return @() }
+    # These comments describe bit positions, not mutually exclusive choices.
+    if ($Row.Name -in @('flcdEn', 'unAFCICtrlReg')) { return @() }
+    if ($Row.Name -eq 'OnOffSet') {
+        return @([pscustomobject]@{Value=0; Label='Off'}, [pscustomobject]@{Value=1; Label='On'}, [pscustomobject]@{Value=165; Label='Restart (TBD in map; not validated)'})
+    }
     $found = [System.Collections.Generic.List[object]]::new()
     $seen = @{}
     $matches = [regex]::Matches(
         $Row.Notes,
-        '(?i)(?:^|;\s*)(0x[0-9a-f]+|\d+)\s*:\s*([^;]+)')
+        '(?i)(?:^|;\s*)(0x[0-9a-f]+|\d+)\s*[:.]\s*([^;]+)')
     foreach ($match in $matches) {
         $token = $match.Groups[1].Value
         $number = if ($token.StartsWith('0x', [System.StringComparison]::OrdinalIgnoreCase)) {
@@ -94,7 +99,19 @@ function Get-DocumentedOptions {
             Label = $match.Groups[2].Value.Trim()
         })
     }
-    return @($found)
+    if ($Row.Range -match '^\s*\d+(\s*,\s*\d+)+\s*$') {
+        foreach ($token in $Row.Range.Split(',')) {
+            $number = [int64]$token.Trim()
+            if (-not $seen.ContainsKey($number)) {
+                $found.Add([pscustomobject]@{Value=$number; Label="Documented choice $number"})
+            }
+        }
+    }
+    if ($found.Count -eq 0 -and $Row.Range -match '^0\s*~\s*1$') {
+        $found.Add([pscustomobject]@{Value=0; Label='Value 0 (see description)'})
+        $found.Add([pscustomobject]@{Value=1; Label='Value 1 (see description)'})
+    }
+    return $found.ToArray()
 }
 
 function Get-ApplicationOptionValue {
@@ -139,16 +156,30 @@ foreach ($line in Get-Content -LiteralPath $CatalogSource) {
 }
 if ($rows.Count -ne 687) { throw "Expected 687 register descriptors; parsed $($rows.Count)" }
 
+# Cross-check every writable source row and use its complete English comments.
+$mapWritable = @{}
+foreach ($line in Get-Content -LiteralPath $RegisterMap) {
+    if ($line -notmatch '^\| H(\d+) \|') { continue }
+    $address = [int]$Matches[1]
+    $cells = $line.Split('|') | ForEach-Object { $_.Trim() }
+    if ($cells[4] -notin @('R/W', 'W')) { continue }
+    $mapWritable[$address] = $cells
+    $row = $rows | Where-Object { $_.Space -eq 'holding' -and $_.Address -eq $address } | Select-Object -First 1
+    if ($null -eq $row -or $row.Access -notin @('read_write', 'write_only')) { throw "Writable map row missing from catalog: $address" }
+    $row.Notes = ($cells[10] -replace '<br\s*/?>', '; ') -replace '\uFF1A', ':' -replace '\uFF1B', ';'
+    $row.Models = $cells[11]
+}
+
 $output = [System.Collections.Generic.List[string]]::new()
 $output.Add($beginMarker)
 $output.Add('## Complete generated Mosquitto command catalog')
 $output.Add('')
-$output.Add('This section is generated from the internal catalog. Replace `<broker>`, `<prefix>`, `<site-id>`, and `<member-id>`. Every displayed `command_id` is illustrative and must be replaced by a fresh globally unique positive ID before each publication. Replace `<new-value>` with the intended application-level JSON value: a boolean, an engineering-unit number, a documented mode number, or a one/two-character string as appropriate. MQTT clients never send Modbus addresses, register spaces, raw words, scaling values, or expected register values.')
+$output.Add('This section is generated from the firmware catalog and checked against every writable row of `AOHAI_Modbus_RTU_V2.14_Register_Map.md`. Replace `<broker>`, `<prefix>`, `<device-id>`, and `<member-id>`. Use a fresh positive numeric command ID for each request. Replace `<new-value>` with the intended application value. The detailed setter recipes below include concrete examples, confirmation subscriptions and source limitations. Commands do not contain Modbus addresses.')
 $output.Add('')
 $output.Add('Add `-u "<username>" -P "<password>"` when authentication is enabled. Subscribe to command results before publishing. Use the `live`, `alert/#`, and `snapshot/#` subscriptions documented above for asynchronous data:')
 $output.Add('')
 $output.Add('```bash')
-$output.Add('mosquitto_sub -h "<broker>" -q 1 -t "<prefix>/<site-id>/inverter/<member-id>/result"')
+$output.Add('mosquitto_sub -h "<broker>" -q 1 -t "<prefix>/<device-id>/inverter/<member-id>/result"')
 $output.Add('```')
 $output.Add('')
 $output.Add('### GETTERS - read data from the inverter')
@@ -261,6 +292,114 @@ $output.Add('|---|---|---|---|---|---|')
 foreach ($row in $blocked) {
     $reason = if ([string]::IsNullOrWhiteSpace($row.Notes)) { $row.Models } else { $row.Notes }
     $output.Add("| $(Escape-Markdown $row.Name) | $(Escape-Markdown $row.Description) | $($row.Domain) | $($row.Access) | $($row.Guard) | $(Escape-Markdown $reason) |")
+}
+$output.Add('')
+$output.Add('## Detailed setter and confirmation recipes')
+$output.Add('')
+$output.Add("Coverage: $($mapWritable.Count) writable map rows; $($settable.Count) named setters allowed by firmware; $($blocked.Count) blocked rows listed above. Each allowed setter has a recipe below. Availability still depends on the inverter model and operating state.")
+$output.Add('')
+$output.Add('These are individual examples, not a script to execute in sequence. A documented default is an illustration, not a recommended installation setting. Where the map supplies no usable value, the example deliberately retains `<new-value>`; it must be replaced after model-specific validation. Number ranges are not discrete lists: choose a valid value within the documented range. Values described as TBD, reserved, unused or unsupported retain those limitations even when firmware exposes their name.')
+$output.Add('')
+$output.Add('### Terminal setup and confirmation meaning')
+$output.Add('')
+$output.Add('In each Linux/Terminus terminal, set these variables. These examples use your local broker and inverter; change MEMBER for a parallel slave. MQTT authentication options can be added to both commands if required.')
+$output.Add('')
+$output.Add('```bash')
+$output.Add('BROKER=localhost')
+$output.Add('PORT=1883')
+$output.Add('DEVICE=INV-44B176CDC70C')
+$output.Add('MEMBER=0')
+$output.Add('BASE="inverter/$DEVICE/inverter/$MEMBER"')
+$output.Add('```')
+$output.Add('')
+$output.Add('Start the confirmation subscription in terminal 1 BEFORE publishing from terminal 2. Keep it running for subsequent setters. The subscription only listens; it never writes to the inverter. Match the returned `command_id` with the printed request ID. `confirmed:true` in the request is your authorization, not a success result. Only a returned `outcome:"confirmed"` indicates successful read-back. A write-only action can return `sent_unverifiable`; verify its actual effect separately. Errors such as `state_not_allowed`, `communication_error` or an interlock requirement are not success. Malformed or duplicate requests may only be logged by firmware and produce no result.')
+$output.Add('')
+$output.Add('Illustrative confirmed result (additional fields may be present):')
+$output.Add('')
+$output.Add('```json')
+$output.Add('{"member_id":0,"command_id":"123456789","operation":"set","name":"DspBeepOnOff","outcome":"confirmed","value":1}')
+$output.Add('```')
+$output.Add('')
+$output.Add('The setting snapshot is also refreshed after a confirmed setter and contains `updated_by_command_id`. To watch it:')
+$output.Add('')
+$output.Add('```bash')
+$output.Add('mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/snapshot/#"')
+$output.Add('```')
+$output.Add('')
+$output.Add('Commands below use `date +%s%N` to generate numeric IDs for manual Linux testing. Production servers should allocate IDs uniquely across concurrent clients. Do not publish setter commands as retained messages.')
+
+$recipeCount = 0
+foreach ($row in $settable) {
+    $recipeCount++
+    $options = @(Get-DocumentedOptions $row)
+    $output.Add('')
+    $output.Add("### Setter $recipeCount - $(Escape-Markdown $row.Name): $(Escape-Markdown $row.Description)")
+    $output.Add('')
+    $output.Add("Operating requirement: $($row.Guard). $($guardDescriptions[$row.Guard])")
+    if ($row.Models) { $output.Add("Applicable models: $(Escape-Markdown $row.Models).") }
+    if ($row.Notes) { $output.Add("Map comments: $(Escape-Markdown $row.Notes).") }
+    $output.Add("Map default: $(Escape-Markdown $row.Default); map range: $(Escape-Markdown $row.Range); map unit: $(Escape-Markdown $row.Unit). These source fields retain the map notation; example payloads use the firmware application scale.")
+    if ($row.Name -eq 'flcdEn') {
+        $output.Add('This is a combined flag field, not a mode selector. The listed numbers are bit positions. A named write replaces the whole flag field; there is currently no named per-flag setter here that preserves other flags automatically. Do not send a bit position as if it enabled that feature. A validated complete value is required.')
+    }
+    if ($row.Name -match '^PeriodTime(Start|End)') {
+        $output.Add('The map packs hour and minute together. The current named API does not accept an HH:MM string or convert ordinary elapsed minutes. The zero example means midnight only; other times require a validated complete encoding. A friendly time setter is not implemented.')
+    }
+    if ($row.Name -eq 'ubLeadAcid_BatSubType') {
+        $output.Add('Source conflict: the range says 0 through 8, but the comments also list 9 (LIT). That extra choice is documented, not guaranteed accepted by the model or firmware validation.')
+    }
+    $output.Add('')
+    $output.Add('Confirmation command (terminal 1):')
+    $output.Add('')
+    $output.Add('```bash')
+    $output.Add('mosquitto_sub -h "$BROKER" -p "$PORT" -q 1 -v -t "$BASE/result"')
+    $output.Add('```')
+
+    $examples = @()
+    if ($options.Count -gt 0) {
+        $examples = @($options | ForEach-Object {
+            [pscustomobject]@{ Label=$_.Label; Value=(Get-ApplicationOptionValue $_ $options) }
+        })
+    } else {
+        $value = $null
+        $label = 'Choose a validated value; the map does not define a complete usable example'
+        $defaultText = $row.Default.Trim()
+        if ($row.Name -eq 'Year') { $value = 2026; $label = 'Example calendar year 2026' }
+        elseif ($row.DataType -eq 'ascii') { $value = 'AB'; $label = 'Illustrative two-character fragment AB (service operation)' }
+        elseif ($defaultText -match '^(-?\d+(?:\.\d+)?)(A|V|W)?$') {
+            $number = [double]::Parse($Matches[1], [Globalization.CultureInfo]::InvariantCulture)
+            $suffix = $Matches[2]
+            $scale = [double]::Parse($row.Scale, [Globalization.CultureInfo]::InvariantCulture)
+            $value = if ($suffix -or ($number -gt 0 -and $number -lt 1)) { $number } else { $number * $scale }
+            $label = 'Example using the documented default converted to the current API scale'
+        }
+        elseif ($row.Range -match '^(-?\d+)\s*~\s*(-?\d+)$') {
+            $number = [double]::Parse($Matches[1], [Globalization.CultureInfo]::InvariantCulture)
+            $value = $number * [double]::Parse($row.Scale, [Globalization.CultureInfo]::InvariantCulture)
+            $label = 'Range-boundary illustration; not a recommended operating setting'
+        }
+        $examples = @([pscustomobject]@{Label=$label; Value=$value})
+    }
+    foreach ($example in $examples) {
+        $output.Add('')
+        $output.Add("Setter example - $(Escape-Markdown $example.Label) (terminal 2):")
+        $output.Add('')
+        $output.Add('```bash')
+        $output.Add('COMMAND_ID=$(date +%s%N)')
+        $output.Add('printf ''Request ID: %s\n'' "$COMMAND_ID"')
+        $command = Get-WriteCommand $row $rows $example.Value
+        $command = $command.Replace('mosquitto_pub -h "<broker>"', 'mosquitto_pub -h "$BROKER" -p "$PORT"')
+        $command = $command.Replace('<prefix>/<device-id>/inverter/<member-id>/command', '$BASE/command')
+        # Close the single-quoted JSON for expansion of the generated ID only.
+        $command = $command.Replace('<unique-command-id>', '''"$COMMAND_ID"''')
+        $output.Add($command)
+        $output.Add('```')
+    }
+    $output.Add('')
+    $output.Add("Confirmation: match the printed ID and ``name`` = ``$($row.Name)`` in ``/result``. Inspect ``outcome`` and the returned ``value``; receiving the command at the broker alone is not inverter confirmation.")
+}
+if ($recipeCount -ne $settable.Count -or $mapWritable.Count -ne ($settable.Count + $blocked.Count)) {
+    throw 'Writable map coverage mismatch; do not publish an incomplete reference.'
 }
 $output.Add($endMarker)
 

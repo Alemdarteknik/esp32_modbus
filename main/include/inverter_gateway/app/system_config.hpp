@@ -24,7 +24,7 @@ struct SavedPeer {
 
 struct SystemConfig {
     static constexpr std::uint32_t magic_value = 0x49564757; // IVGW
-    static constexpr std::uint16_t current_schema_version = 3;
+    static constexpr std::uint16_t current_schema_version = 4;
 
     std::uint32_t magic = magic_value;
     std::uint16_t schema_version = current_schema_version;
@@ -38,6 +38,7 @@ struct SystemConfig {
     char mqtt_password[max_mqtt_text_length + 1]{};
     char mqtt_topic_prefix[max_mqtt_text_length + 1]{"inverter"};
     std::array<SavedPeer, max_saved_peers> peers{};
+    float output_rated_power_kw = 12.0F; // User-requested default; select actual nameplate in setup.
 };
 
 enum class ConfigValidation : std::uint8_t {

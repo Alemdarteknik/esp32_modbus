@@ -56,6 +56,11 @@ void ProductionPoller::reset()
 {
     last_poll_ms_.fill(0);
     completed_once_.fill(false);
+    batch_disabled_.fill(false);
+    next_poll_index_ = 0;
+    last_poll_was_critical_ = false;
+    power_cursor_ = 0;
+    background_turn_ = false;
     state_ = {};
     state_updated_ms_ = 0;
     sequence_ = 0;
@@ -74,9 +79,79 @@ void ProductionPoller::run_due(std::uint16_t enabled_features)
 {
     const auto plan = default_poll_plan();
     const std::int64_t now_ms = esp_timer_get_time() / 1000;
-    for (std::size_t index = 0; index < plan.size && index < maximum_requests; ++index) {
+    if (plan.size == 0 || plan.size > maximum_requests) {
+        ESP_LOGE(tag, "Invalid polling plan size: %u", static_cast<unsigned>(plan.size));
+        return;
+    }
+    // Keep state fresh, but reserve alternate transactions for other requests.
+    if (!last_poll_was_critical_) {
+        for (std::size_t index = 0; index < plan.size; ++index) {
+            const auto &request = plan.data[index];
+            if (request.cadence == PollCadence::critical &&
+                poll_request_is_enabled(request, enabled_features) && due(index, request, now_ms)) {
+                last_poll_was_critical_ = true;
+                read_request(index, request, now_ms, enabled_features);
+                return;
+            }
+        }
+    }
+    // Repeat the essential power group, granting one rotating background read
+    // per completed pass. Merely reordering the full plan did not refresh it.
+    constexpr std::uint16_t power_addresses[] = {
+        40, 320, 250, 286, 332, 334, 336, 338, 340, 342, 349, 351
+    };
+    constexpr auto power_count = sizeof(power_addresses) / sizeof(power_addresses[0]);
+    if (!background_turn_) {
+        while (power_cursor_ < power_count) {
+            const auto address = power_addresses[power_cursor_++];
+            for (std::size_t index = 0; index < plan.size; ++index) {
+                const auto &request = plan.data[index];
+                if (request.space == RegisterSpace::input && request.first_register == address &&
+                    poll_request_is_enabled(request, enabled_features) && due(index, request, now_ms)) {
+                    last_poll_was_critical_ = false;
+                    // Try only adjacent documented power pairs, never reserved gaps.
+                    if (!batch_disabled_[index] &&
+                        (address == 332 || address == 336 || address == 340 || address == 349)) {
+                        auto combined = request;
+                        combined.register_count = 4;
+                        if (read_request(index, combined, now_ms, enabled_features)) {
+                            for (std::size_t other = 0; other < plan.size; ++other) {
+                                if (plan.data[other].space == RegisterSpace::input &&
+                                    plan.data[other].first_register == address + 2) {
+                                    last_poll_ms_[other] = last_poll_ms_[index];
+                                    completed_once_[other] = true;
+                                }
+                            }
+                            if (power_cursor_ < power_count && power_addresses[power_cursor_] == address + 2)
+                                ++power_cursor_;
+                            return;
+                        }
+                        batch_disabled_[index] = true;
+                        // Retry this pair individually on the next scheduler call,
+                        // allowing critical status handling between transactions.
+                        last_poll_ms_[index] = 0;
+                        --power_cursor_;
+                        return;
+                    }
+                    read_request(index, request, now_ms, enabled_features);
+                    return;
+                }
+            }
+        }
+        power_cursor_ = 0;
+        background_turn_ = true;
+    }
+    background_turn_ = false;
+    for (std::size_t offset = 0; offset < plan.size; ++offset) {
+        const std::size_t index = (next_poll_index_ + offset) % plan.size;
         const auto &request = plan.data[index];
+        const bool power_request = request.space == RegisterSpace::input &&
+            std::find(std::begin(power_addresses), std::end(power_addresses), request.first_register) !=
+                std::end(power_addresses);
+        if (power_request || request.cadence == PollCadence::critical) continue;
         if (poll_request_is_enabled(request, enabled_features) && due(index, request, now_ms)) {
+            next_poll_index_ = (index + 1) % plan.size;
+            last_poll_was_critical_ = request.cadence == PollCadence::critical;
             read_request(index, request, now_ms, enabled_features);
             return;
         }
@@ -88,13 +163,15 @@ bool ProductionPoller::due(std::size_t index, const PollRequest &request,
 {
     if (request.cadence == PollCadence::on_demand) return false;
     if (request.cadence == PollCadence::boot_once || request.cadence == PollCadence::setup_once) {
-        return !completed_once_[index];
+        return !completed_once_[index] &&
+               (last_poll_ms_[index] == 0 ||
+                now_ms - last_poll_ms_[index] >= app::normal_poll_interval_ms);
     }
     return last_poll_ms_[index] == 0 ||
            now_ms - last_poll_ms_[index] >= cadence_interval_ms(request.cadence);
 }
 
-void ProductionPoller::read_request(std::size_t index, const PollRequest &request,
+bool ProductionPoller::read_request(std::size_t index, const PollRequest &request,
                                     std::int64_t, std::uint16_t enabled_features)
 {
     std::array<std::uint16_t, 125> values{};
@@ -109,7 +186,7 @@ void ProductionPoller::read_request(std::size_t index, const PollRequest &reques
     } else if (request.space == RegisterSpace::input && request.first_register == 252) {
         register_count = static_cast<std::uint16_t>(2U * connected_pv_inputs_);
     }
-    if (register_count == 0 || register_count > values.size()) return;
+    if (register_count == 0 || register_count > values.size()) return false;
     const bool success = request.space == RegisterSpace::holding
                              ? client_.read_holding(request.first_register, register_count,
                                                     values.data(), values.size())
@@ -121,11 +198,12 @@ void ProductionPoller::read_request(std::size_t index, const PollRequest &reques
         ESP_LOGW(tag, "%s poll failed (%u:%u+%u)", request.name,
                  static_cast<unsigned>(request.space), request.first_register,
                  register_count);
-        return;
+        return false;
     }
     completed_once_[index] = true;
     update_state(request, values.data(), register_count);
     emit(request, values.data(), register_count, completed_at_ms, enabled_features);
+    return true;
 }
 
 void ProductionPoller::emit(const PollRequest &request, const std::uint16_t *values,

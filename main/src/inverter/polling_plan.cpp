@@ -19,30 +19,46 @@ constexpr PollRequest requests[] = {
     {RegisterSpace::holding, 182, 1, PollCadence::normal, feature_none, "source-priority"},
 
     {RegisterSpace::input, 0, 40, PollCadence::critical, feature_none, "core-status-faults"},
+    // Consecutive essential measurements; retain short independent reads for model compatibility.
     {RegisterSpace::input, 40, 28, PollCadence::fast, feature_none, "grid-eps-pv1-pv2"},
+    {RegisterSpace::input, 250, 2, PollCadence::fast, feature_pv, "pv-total-power"},
+    {RegisterSpace::input, 286, 2, PollCadence::fast, feature_none, "ac-active-total"},
+    {RegisterSpace::input, 332, 2, PollCadence::fast, feature_none, "eps-apparent-r"},
+    {RegisterSpace::input, 334, 2, PollCadence::fast, feature_none, "eps-active-r"},
+    {RegisterSpace::input, 336, 2, PollCadence::fast, feature_three_phase, "eps-apparent-s"},
+    {RegisterSpace::input, 338, 2, PollCadence::fast, feature_three_phase, "eps-active-s"},
+    {RegisterSpace::input, 340, 2, PollCadence::fast, feature_three_phase, "eps-apparent-t"},
+    {RegisterSpace::input, 342, 2, PollCadence::fast, feature_three_phase, "eps-active-t"},
+    {RegisterSpace::input, 349, 2, PollCadence::fast, feature_battery, "battery-discharge-power"},
+    {RegisterSpace::input, 351, 2, PollCadence::fast, feature_battery, "battery-charge-power"},
+    {RegisterSpace::input, 125, 8, PollCadence::fast, feature_battery, "battery"},
+    {RegisterSpace::input, 133, 38, PollCadence::fast, feature_battery | feature_bms, "bms"},
     {RegisterSpace::input, 68, 28, PollCadence::normal, feature_extended_pv, "pv3-pv16"},
     {RegisterSpace::input, 96, 2, PollCadence::normal, feature_generator, "generator-r-electrical"},
     {RegisterSpace::input, 98, 4, PollCadence::normal, feature_generator | feature_three_phase, "generator-st-electrical"},
     {RegisterSpace::input, 102, 1, PollCadence::normal, feature_generator, "generator-frequency"},
     {RegisterSpace::input, 106, 3, PollCadence::normal, feature_none, "fan-and-runtime"},
     {RegisterSpace::input, 109, 16, PollCadence::on_demand, feature_service, "dsp-debug"},
-    {RegisterSpace::input, 125, 8, PollCadence::fast, feature_battery, "battery"},
-    {RegisterSpace::input, 133, 38, PollCadence::fast, feature_battery | feature_bms, "bms"},
     {RegisterSpace::input, 171, 5, PollCadence::slow, feature_battery, "battery-counters"},
     {RegisterSpace::input, 186, 10, PollCadence::on_demand, feature_service, "bms-debug"},
-    {RegisterSpace::input, 250, 2, PollCadence::fast, feature_pv, "pv-total-power"},
     {RegisterSpace::input, 252, 32, PollCadence::fast, feature_pv, "pv-channel-power"},
     // FSC variants can reject a wide request when it contains an unsupported
     // phase-specific register. Keep live power-flow measurements independent.
-    {RegisterSpace::input, 284, 12, PollCadence::fast, feature_none, "ac-output-power-r"},
+    {RegisterSpace::input, 284, 2, PollCadence::fast, feature_none, "ac-apparent-total"},
+    {RegisterSpace::input, 288, 2, PollCadence::fast, feature_none, "ac-reactive-total"},
+    {RegisterSpace::input, 290, 2, PollCadence::fast, feature_none, "ac-apparent-r"},
+    {RegisterSpace::input, 292, 2, PollCadence::fast, feature_none, "ac-active-r"},
+    {RegisterSpace::input, 294, 2, PollCadence::fast, feature_none, "ac-reactive-r"},
+    {RegisterSpace::input, 298, 2, PollCadence::fast, feature_three_phase, "ac-active-s"},
+    {RegisterSpace::input, 304, 2, PollCadence::fast, feature_three_phase, "ac-active-t"},
     {RegisterSpace::input, 314, 2, PollCadence::fast, feature_none, "power-to-user-r"},
     {RegisterSpace::input, 320, 2, PollCadence::fast, feature_none, "total-power-to-user"},
     {RegisterSpace::input, 322, 2, PollCadence::fast, feature_none, "power-to-grid-r"},
     {RegisterSpace::input, 328, 2, PollCadence::fast, feature_none, "total-power-to-grid"},
-    {RegisterSpace::input, 330, 6, PollCadence::fast, feature_none, "local-load-and-eps-power"},
-    {RegisterSpace::input, 344, 3, PollCadence::fast, feature_none, "load-percent-and-system-power"},
+    {RegisterSpace::input, 330, 2, PollCadence::fast, feature_none, "local-load-power"},
+    {RegisterSpace::input, 344, 1, PollCadence::fast, feature_three_phase, "load-percent"},
+    {RegisterSpace::input, 345, 2, PollCadence::on_demand, feature_none, "system-generation-power"},
     {RegisterSpace::input, 347, 2, PollCadence::fast, feature_none, "self-consumption-power"},
-    {RegisterSpace::input, 349, 4, PollCadence::fast, feature_battery, "battery-charge-discharge-power"},
     {RegisterSpace::input, 353, 2, PollCadence::fast, feature_battery, "ac-battery-charge-power"},
     {RegisterSpace::input, 355, 2, PollCadence::fast, feature_none, "extra-power-to-grid"},
     {RegisterSpace::input, 357, 2, PollCadence::normal, feature_generator, "generator-r-apparent-power"},
@@ -60,6 +76,9 @@ constexpr PollRequest requests[] = {
     {RegisterSpace::input, 423, 8, PollCadence::slow, feature_none, "energy-flow-counters"},
     {RegisterSpace::input, 450, 49, PollCadence::fast, feature_parallel, "parallel-system"},
 };
+
+static_assert(sizeof(requests) / sizeof(requests[0]) <= poll_plan_capacity,
+              "Polling plan exceeds scheduler storage");
 
 } // namespace
 
