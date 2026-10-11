@@ -10,8 +10,11 @@
 #include "driver/gpio.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
+#include "freertos/semphr.h"
 #include "freertos/task.h"
+#include "inverter_gateway/app/json_memory.hpp"
 #include "inverter_gateway/app/monitor_output.hpp"
+#include "inverter_gateway/app/ota_update.hpp"
 #include "inverter_gateway/app/project_config.hpp"
 #include "inverter_gateway/app/rgb_debug.hpp"
 #include "inverter_gateway/app/system_config.hpp"
@@ -41,6 +44,7 @@ public:
     explicit UniversalRuntime(inverter_gateway::app::SystemConfig &config) : config_(config)
     {
         command_queue_ = xQueueCreate(8, sizeof(inverter_gateway::network::RoutedCommand));
+        ota_admission_lock_ = xSemaphoreCreateMutexStatic(&ota_admission_storage_);
     }
 
     ~UniversalRuntime() override
@@ -59,7 +63,7 @@ public:
             last_data_ms_.store(static_cast<std::uint32_t>(esp_timer_get_time() / 1000));
         }
         if (message.source_member_id == config_.profile.logical_member_id) {
-            local_inverter_seen_ = true;
+            local_reply_ms_.store(static_cast<std::uint32_t>(esp_timer_get_time() / 1000));
         }
         if (inverter_gateway::app::role_is_espnow_member(config_.profile.device_role)) {
             if (mesh_ != nullptr) mesh_->send_telemetry(message);
@@ -80,24 +84,39 @@ public:
         const std::uint8_t local_id = config_.profile.logical_member_id;
         if (inverter_gateway::app::role_has_local_inverter(config_.profile.device_role) &&
             command.target_member_id == local_id && command_queue_ != nullptr) {
-            if (xQueueSend(command_queue_, &command, 0) != pdTRUE) {
-                const std::uint64_t command_id =
-                    command.kind == inverter_gateway::network::RemoteCommandKind::semantic
-                        ? command.request.command_id
-                        : command.register_request.command_id;
-                ESP_LOGW(tag, "Command queue full; rejected command %" PRIu64,
-                         command_id);
-            }
+            xSemaphoreTake(ota_admission_lock_, portMAX_DELAY);
+            const bool unavailable = !local_inverter_available();
+            const char *reason = ota_maintenance_.load() ? "OTA restarting" :
+                unavailable ? "Inverter unavailable" : "Command queue full";
+            const bool accepted = !ota_maintenance_.load() && !unavailable &&
+                xQueueSend(command_queue_, &command, 0) == pdTRUE;
+            // Track queued AND executing setters. Getters and rejected requests
+            // must not postpone firmware checks or the write-quiet interval.
+            if (accepted && command_is_write(command)) ++pending_write_count_;
+            xSemaphoreGive(ota_admission_lock_);
+            if (!accepted) reject_command(command, reason, unavailable);
         } else if (inverter_gateway::app::role_is_espnow_coordinator(config_.profile.device_role) &&
                    mesh_ != nullptr) {
             const esp_err_t result = mesh_->send_command(command);
             if (result != ESP_OK) {
                 ESP_LOGW(tag, "Could not route command to member %u: %s",
                          command.target_member_id, esp_err_to_name(result));
+                on_command_result(inverter_gateway::network::CoordinatorLink::command_route_failure(
+                    command, false));
             }
         } else if (config_.profile.device_role == inverter_gateway::app::DeviceRole::internet_gateway &&
                    coordinator_link_ != nullptr) {
-            coordinator_link_->send_command(command);
+            const auto result = coordinator_link_->send_command(command);
+            if (result != ESP_OK) {
+                ESP_LOGW(tag, "Coordinator link did not accept command for member %u: %s",
+                         command.target_member_id, esp_err_to_name(result));
+                on_command_result(inverter_gateway::network::CoordinatorLink::command_route_failure(
+                    command, false));
+            }
+        } else {
+            ESP_LOGW(tag, "No route for command to member %u", command.target_member_id);
+            on_command_result(inverter_gateway::network::CoordinatorLink::command_route_failure(
+                command, false));
         }
     }
 
@@ -113,13 +132,159 @@ public:
         }
     }
 
-    bool receive_command(inverter_gateway::network::RoutedCommand &command)
+    void reject_command(const inverter_gateway::network::RoutedCommand &command,
+                        const char *reason, bool unavailable)
     {
-        return command_queue_ != nullptr &&
-               xQueueReceive(command_queue_, &command, 0) == pdTRUE;
+        const auto id = command.kind == inverter_gateway::network::RemoteCommandKind::semantic
+            ? command.request.command_id : command.register_request.command_id;
+        ESP_LOGW(tag, "%s; rejected command %" PRIu64, reason, id);
+        inverter_gateway::network::RoutedCommandResult rejected{};
+        rejected.source_member_id = config_.profile.logical_member_id;
+        rejected.kind = command.kind;
+        rejected.result.command_id = id;
+        rejected.result.operation = command.request.operation;
+        rejected.result.outcome = unavailable
+            ? inverter_gateway::inverter::CommandOutcome::state_unavailable
+            : inverter_gateway::inverter::CommandOutcome::rejected;
+        rejected.register_result.command_id = id;
+        rejected.register_result.space = command.register_request.space;
+        rejected.register_result.first_register = command.register_request.first_register;
+        rejected.register_result.register_count = command.register_request.register_count;
+        rejected.register_result.named_request = command.register_request.named_request;
+        rejected.register_result.outcome = unavailable
+            ? inverter_gateway::inverter::RegisterCommandOutcome::state_unavailable
+            : inverter_gateway::inverter::RegisterCommandOutcome::state_not_allowed;
+        on_command_result(rejected);
     }
 
-    bool local_inverter_seen() const { return local_inverter_seen_; }
+    bool local_inverter_available() const
+    {
+        const auto last = local_reply_ms_.load();
+        const auto now = static_cast<std::uint32_t>(esp_timer_get_time() / 1000);
+        return transport_ready_.load() &&
+            !inverter_gateway::transport::UsbRs485::disconnected() && last != 0 &&
+            now - last < inverter_gateway::app::command_link_max_age_ms;
+    }
+
+    // Bus-owner only. Never carry queued commands into a new USB session.
+    void set_transport_ready(bool ready)
+    {
+        xSemaphoreTake(ota_admission_lock_, portMAX_DELAY);
+        transport_ready_.store(ready);
+        if (!ready) local_reply_ms_.store(0);
+        xSemaphoreGive(ota_admission_lock_);
+        if (!ready && command_queue_ != nullptr) {
+            inverter_gateway::network::RoutedCommand command{};
+            while (xQueueReceive(command_queue_, &command, 0) == pdTRUE) {
+                reject_command(command, "Inverter disconnected before execution", true);
+                complete_command(command);
+            }
+        }
+    }
+
+    bool receive_command(inverter_gateway::network::RoutedCommand &command)
+    {
+        while (command_queue_ != nullptr && xQueueReceive(command_queue_, &command, 0) == pdTRUE) {
+            if (local_inverter_available()) return true;
+            reject_command(command, "Inverter unavailable before execution", true);
+            complete_command(command);
+        }
+        return false;
+    }
+
+    // Bus-owner only, exactly once for each accepted command after execution
+    // or rejection. Unknown write outcomes still require a full quiet period.
+    void complete_command(const inverter_gateway::network::RoutedCommand &command)
+    {
+        if (!command_is_write(command)) return;
+        xSemaphoreTake(ota_admission_lock_, portMAX_DELAY);
+        if (pending_write_count_ != 0) --pending_write_count_;
+        last_write_completed_ms_ = static_cast<std::uint32_t>(esp_timer_get_time() / 1000);
+        write_completion_seen_ = true;
+        xSemaphoreGive(ota_admission_lock_);
+    }
+
+    // Called only by the Modbus owner, outside any transaction or command.
+    void ota_bus_boundary()
+    {
+        while (true) {
+            bus_heartbeat_ms_.store(static_cast<std::uint32_t>(esp_timer_get_time() / 1000));
+            xSemaphoreTake(ota_admission_lock_, portMAX_DELAY);
+            if (!ota_maintenance_.load() || pending_write_count_ != 0) {
+                bus_parked_.store(false);
+                xSemaphoreGive(ota_admission_lock_);
+                return;
+            }
+            // Admission closes only when there are no accepted writes. Finish
+            // the in-flight read first, then reject queued getters here rather
+            // than allowing a getter flood to delay activation indefinitely.
+            inverter_gateway::network::RoutedCommand command{};
+            const bool queued = command_queue_ != nullptr &&
+                xQueueReceive(command_queue_, &command, 0) == pdTRUE;
+            bus_parked_.store(!queued);
+            xSemaphoreGive(ota_admission_lock_);
+            if (queued) {
+                reject_command(command, "OTA restarting; queued inquiry cancelled", false);
+                continue;
+            }
+            vTaskDelay(pdMS_TO_TICKS(25));
+        }
+    }
+
+    bool ota_healthy() const
+    {
+        const auto now = static_cast<std::uint32_t>(esp_timer_get_time() / 1000);
+        const auto last = bus_heartbeat_ms_.load();
+        return last != 0 && now - last < 15000 && command_queue_ != nullptr &&
+            mqtt_ != nullptr && mqtt_->ota_publisher_healthy();
+    }
+
+    const char *ota_download_blocker() const
+    {
+        if (!ota_healthy()) return "runtime_unhealthy";
+        if (!mqtt_->connected()) return "mqtt_disconnected";
+        xSemaphoreTake(ota_admission_lock_, portMAX_DELAY);
+        const auto now = static_cast<std::uint32_t>(esp_timer_get_time() / 1000);
+        const char *blocker = write_blocker_locked(now);
+        xSemaphoreGive(ota_admission_lock_);
+        return blocker;
+    }
+
+    bool ota_quiesce()
+    {
+        if (ota_download_blocker() != nullptr) return false;
+        xSemaphoreTake(ota_admission_lock_, portMAX_DELAY);
+        const auto now = static_cast<std::uint32_t>(esp_timer_get_time() / 1000);
+        const bool quiet = !ota_maintenance_.load() && write_blocker_locked(now) == nullptr;
+        if (quiet) {
+            bus_parked_.store(false);
+            ota_maintenance_.store(true);
+        }
+        xSemaphoreGive(ota_admission_lock_);
+        if (!quiet) return false;
+        for (unsigned count = 0; count < 400; ++count) {
+            if (bus_parked_.load()) {
+                // Best effort only: incoming rejected getters can keep adding
+                // results. Do not require a perpetually empty MQTT outbox.
+                // The outbox query takes the MQTT API mutex, so it is not a
+                // bounded readiness probe. Give the publisher a fixed grace.
+                vTaskDelay(pdMS_TO_TICKS(2000));
+                return true;
+            }
+            vTaskDelay(pdMS_TO_TICKS(25));
+        }
+        ota_resume();
+        return false;
+    }
+
+    void ota_resume()
+    {
+        xSemaphoreTake(ota_admission_lock_, portMAX_DELAY);
+        ota_maintenance_.store(false);
+        bus_parked_.store(false);
+        xSemaphoreGive(ota_admission_lock_);
+    }
+    bool local_inverter_seen() const { return local_inverter_available(); }
     inverter_gateway::app::RgbDebugState rgb_state(bool station_ready) const
     {
         using namespace inverter_gateway::app;
@@ -144,12 +309,37 @@ public:
     }
 
 private:
+    static bool command_is_write(const inverter_gateway::network::RoutedCommand &command)
+    {
+        using inverter_gateway::network::RemoteCommandKind;
+        return command.kind == RemoteCommandKind::semantic ||
+               command.kind == RemoteCommandKind::write_registers;
+    }
+
+    // Caller holds ota_admission_lock_. Timestamp subtraction tolerates wrap.
+    const char *write_blocker_locked(std::uint32_t now) const
+    {
+        if (pending_write_count_ != 0) return "write_pending";
+        if (write_completion_seen_ && now - last_write_completed_ms_ < 30000U)
+            return "write_quiet_period";
+        return nullptr;
+    }
+
+    StaticSemaphore_t ota_admission_storage_{};
+    SemaphoreHandle_t ota_admission_lock_ = nullptr;
+    std::atomic_bool ota_maintenance_{false};
+    std::atomic_bool bus_parked_{false};
+    unsigned pending_write_count_ = 0;
+    std::uint32_t last_write_completed_ms_ = 0;
+    bool write_completion_seen_ = false;
+    std::atomic<std::uint32_t> bus_heartbeat_ms_{0};
     inverter_gateway::app::SystemConfig &config_;
     QueueHandle_t command_queue_ = nullptr;
     inverter_gateway::network::EspNowMesh *mesh_ = nullptr;
     inverter_gateway::network::MqttBridge *mqtt_ = nullptr;
     inverter_gateway::network::CoordinatorLink *coordinator_link_ = nullptr;
-    std::atomic_bool local_inverter_seen_{false};
+    std::atomic_bool transport_ready_{false};
+    std::atomic<std::uint32_t> local_reply_ms_{0};
     std::atomic<std::uint32_t> last_data_ms_{0};
 };
 
@@ -197,6 +387,8 @@ std::uint16_t enabled_features(const inverter_gateway::app::SystemConfig &config
     using inverter_gateway::transport::UsbRs485;
     ESP_ERROR_CHECK(UsbRs485::install(inverter_gateway::app::usb_buffer_size));
     while (true) {
+        runtime.set_transport_ready(false);
+        runtime.ota_bus_boundary();
         UsbRs485::begin_connection_session();
         std::unique_ptr<CdcAcmDevice> device =
             UsbRs485::open(inverter_gateway::app::usb_open_timeout_ms,
@@ -232,7 +424,9 @@ std::uint16_t enabled_features(const inverter_gateway::app::SystemConfig &config
         inverter_gateway::inverter::RegisterCommandService register_commands(client);
         std::int64_t last_task_diagnostics_ms = 0;
 
+        runtime.set_transport_ready(true);
         while (!UsbRs485::disconnected()) {
+            runtime.ota_bus_boundary();
             inverter_gateway::network::RoutedCommand command{};
             if (runtime.receive_command(command)) {
                 auto state = poller->state();
@@ -247,7 +441,15 @@ std::uint16_t enabled_features(const inverter_gateway::app::SystemConfig &config
                         command.register_request, state,
                         command.kind == inverter_gateway::network::RemoteCommandKind::write_registers);
                 }
+                const bool write_attempted =
+                    command.kind == inverter_gateway::network::RemoteCommandKind::semantic
+                        ? routed_result.result.write_was_sent
+                        : command.kind == inverter_gateway::network::RemoteCommandKind::write_registers &&
+                          routed_result.register_result.modbus_write.status !=
+                              inverter_gateway::protocol::ModbusWriteStatus::invalid_argument;
+                if (write_attempted) poller->invalidate_state_after_write();
                 runtime.on_command_result(routed_result);
+                runtime.complete_command(command);
             }
             if (runtime.telemetry_transport_ready()) {
                 poller->run_due(enabled_features(config));
@@ -261,6 +463,7 @@ std::uint16_t enabled_features(const inverter_gateway::app::SystemConfig &config
             }
             vTaskDelay(pdMS_TO_TICKS(inverter_gateway::app::inverter_loop_delay_ms));
         }
+        runtime.set_transport_ready(false);
         ESP_LOGW(tag, "USB-RS485 adapter disconnected");
         device.reset();
         vTaskDelay(pdMS_TO_TICKS(inverter_gateway::app::usb_reconnect_delay_ms));
@@ -389,6 +592,8 @@ void provisioning_button_task(void *argument)
 
 extern "C" void app_main(void)
 {
+    inverter_gateway::app::initialize_json_memory();
+    inverter_gateway::app::arm_ota_boot_trial();
     const esp_err_t nvs_result = nvs_flash_init();
     if (nvs_result != ESP_OK) {
         ESP_LOGE(tag, "NVS initialization failed: %s", esp_err_to_name(nvs_result));
@@ -536,6 +741,15 @@ extern "C" void app_main(void)
     inverter_gateway::app::start_rgb_debug(rgb_status, &rgb_context);
     if (inverter_gateway::app::role_has_local_inverter(config.profile.device_role)) {
         start_local_inverter_task(config, runtime);
+    }
+    if (config.profile.device_role == inverter_gateway::app::DeviceRole::standalone_combined) {
+        inverter_gateway::app::start_ota_update({
+            &runtime,
+            [](void *p) { return static_cast<UniversalRuntime *>(p)->ota_healthy(); },
+            [](void *p) { return static_cast<UniversalRuntime *>(p)->ota_download_blocker(); },
+            [](void *p) { return static_cast<UniversalRuntime *>(p)->ota_quiesce(); },
+            [](void *p) { static_cast<UniversalRuntime *>(p)->ota_resume(); }
+        });
     }
     idle_forever();
 }

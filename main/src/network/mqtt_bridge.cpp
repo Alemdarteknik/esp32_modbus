@@ -23,10 +23,14 @@
 #include "esp_mac.h"
 #include "esp_random.h"
 #include "inverter_gateway/app/project_config.hpp"
+#include "inverter_gateway/app/json_memory.hpp"
+#include "inverter_gateway/app/memory_budget.hpp"
 #include "inverter_gateway/app/rgb_debug.hpp"
 #include "inverter_gateway/inverter/inverter_command.hpp"
 #include "inverter_gateway/inverter/register_catalog.hpp"
 #include "inverter_gateway/inverter/register_value.hpp"
+#include "inverter_gateway/protocol/modbus_rtu.hpp"
+#include "inverter_gateway/transport/usb_rs485.hpp"
 
 namespace inverter_gateway::network {
 namespace {
@@ -35,6 +39,9 @@ constexpr char tag[] = "mqtt_bridge";
 constexpr std::size_t mqtt_outbox_limit_bytes = 64U * 1024U;
 std::atomic<std::uint32_t> mqtt_enqueue_failures{0};
 std::atomic<std::uint32_t> telemetry_queue_drops{0};
+std::atomic<std::uint32_t> live_json_failures{0};
+std::atomic<std::uint32_t> live_publish_deferrals{0};
+std::atomic<std::uint32_t> result_queue_drops{0};
 
 // Only for literal keys and strings owned by the static register catalog.
 // Borrowing immutable metadata avoids duplicating it for every live reading.
@@ -109,14 +116,6 @@ bool uses_tls(const char *uri)
            (std::strncmp(uri, "mqtts://", 8) == 0 ||
             std::strncmp(uri, "wss://", 6) == 0);
 }
-
-enum class OutboundType : std::uint8_t { telemetry, command_result };
-
-struct OutboundMessage {
-    OutboundType type;
-    TelemetryMessage telemetry{};
-    RoutedCommandResult command_result{};
-};
 
 bool parse_operation(const char *name, inverter::LocalOperation &operation)
 {
@@ -392,7 +391,7 @@ esp_err_t MqttBridge::start()
     ESP_LOGW(tag, "Starting MQTT connection to %s (authentication %s)",
              config_.mqtt_uri,
              config_.mqtt_username[0] != '\0' ? "enabled" : "disabled");
-    publish_queue_ = xQueueCreate(32, sizeof(OutboundMessage));
+    publish_queue_ = xQueueCreate(32, sizeof(TelemetryMessage));
     if (publish_queue_ == nullptr) return ESP_ERR_NO_MEM;
     esp_mqtt_client_config_t mqtt_config{};
     mqtt_config.broker.address.uri = config_.mqtt_uri;
@@ -438,8 +437,27 @@ esp_err_t MqttBridge::start()
     esp_err_t result = esp_mqtt_client_register_event(
         client_, static_cast<esp_mqtt_event_id_t>(ESP_EVENT_ANY_ID), event_callback, this);
     if (result == ESP_OK) {
-        result_queue_ = xQueueCreate(8, sizeof(OutboundMessage));
+        result_queue_ = xQueueCreate(8, sizeof(RoutedCommandResult));
         if (result_queue_ == nullptr) result = ESP_ERR_NO_MEM;
+    }
+    if (result == ESP_OK) {
+        live_json_capacity_ = app::mqtt_live_buffer_psram_bytes;
+        live_json_buffer_ = static_cast<char *>(heap_caps_malloc(
+            live_json_capacity_, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+        const bool external = live_json_buffer_ != nullptr;
+        if (!external) {
+            live_json_capacity_ = app::mqtt_live_buffer_internal_bytes;
+            live_json_buffer_ = static_cast<char *>(heap_caps_malloc(
+                live_json_capacity_, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+        }
+        if (live_json_buffer_ == nullptr) {
+            ESP_LOGE(tag, "Cannot reserve live JSON buffer (%u bytes); MQTT startup aborted",
+                     static_cast<unsigned>(live_json_capacity_));
+            result = ESP_ERR_NO_MEM;
+        } else {
+            ESP_LOGW(tag, "Reserved live JSON buffer: %u bytes in %s",
+                     static_cast<unsigned>(live_json_capacity_), external ? "PSRAM" : "internal RAM");
+        }
     }
     if (result == ESP_OK &&
         xTaskCreate(publisher_task, "mqtt_publish", 6144, this, 4,
@@ -471,6 +489,10 @@ void MqttBridge::stop()
         vQueueDelete(result_queue_);
         result_queue_ = nullptr;
     }
+    // The only user of this buffer (publisher_task_) has been stopped above.
+    heap_caps_free(live_json_buffer_);
+    live_json_buffer_ = nullptr;
+    live_json_capacity_ = 0;
 }
 
 void MqttBridge::event_callback(void *argument, esp_event_base_t,
@@ -933,10 +955,7 @@ void MqttBridge::publish_telemetry(const TelemetryMessage &message)
 {
     last_telemetry_ms_ = static_cast<std::uint32_t>(esp_timer_get_time() / 1000);
     if (publish_queue_ == nullptr) return;
-    OutboundMessage outbound{};
-    outbound.type = OutboundType::telemetry;
-    outbound.telemetry = message;
-    if (xQueueSend(publish_queue_, &outbound, 0) != pdTRUE) {
+    if (xQueueSend(publish_queue_, &message, 0) != pdTRUE) {
         app::rgb_debug_publish_error();
         ESP_LOGW(tag, "MQTT publish queue full; telemetry dropped");
         ++telemetry_queue_drops;
@@ -1017,8 +1036,17 @@ void MqttBridge::publish_live(const TelemetryMessage &message)
     // every incoming Modbus block while memory is constrained.
     cache.last_publish_ms = cache.timestamp_ms;
 
+    // Keep refreshing the member cache above, but do not build another large
+    // tree while a previous MQTT send is backed up or OTA is opening TLS.
+    app::MemoryWorkGuard memory_work;
+    if (!memory_work || esp_mqtt_client_get_outbox_size(client_) > 8192) {
+        ++live_publish_deferrals;
+        return;
+    }
+    const app::JsonAllocationWatch allocations;
     cJSON *root = cJSON_CreateObject();
     if (root == nullptr) {
+        ++live_json_failures;
         app::rgb_debug_publish_error();
         ESP_LOGW(tag, "Could not allocate live JSON object");
         return;
@@ -1490,6 +1518,7 @@ void MqttBridge::publish_live(const TelemetryMessage &message)
             cJSON_Delete(root);
             app::rgb_debug_publish_error();
             ESP_LOGW(tag, "Live JSON metadata allocation failed");
+            ++live_json_failures;
             return;
         }
         const bool next_seen = address + 1 < input_point_count &&
@@ -1516,10 +1545,13 @@ void MqttBridge::publish_live(const TelemetryMessage &message)
     const std::size_t capacity = json_capacity(root) + 5;
     const auto free_before = heap_caps_get_free_size(MALLOC_CAP_8BIT);
     const auto largest_before = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
-    char *json = static_cast<char *>(heap_caps_malloc(capacity, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
-    if (json == nullptr) json = static_cast<char *>(heap_caps_malloc(capacity, MALLOC_CAP_8BIT));
-    const bool serialized = json != nullptr &&
-        cJSON_PrintPreallocated(root, json, static_cast<int>(capacity), false);
+    char *json = live_json_buffer_;
+    // Never grow/reallocate while the JSON tree is alive. One publisher task
+    // serializes members sequentially, so all share this reserved buffer.
+    // The size estimate allows 64 bytes per number; the bounded printer is
+    // authoritative and may fit even when that conservative estimate does not.
+    const bool serialized = json != nullptr && allocations.ok() &&
+        cJSON_PrintPreallocated(root, json, static_cast<int>(live_json_capacity_), false);
     // Release all JSON nodes before enqueue copies the serialized payload.
     cJSON_Delete(root);
     char topic[192]{};
@@ -1534,17 +1566,18 @@ void MqttBridge::publish_live(const TelemetryMessage &message)
             last_live_enqueued_ms_ = received_now;
         }
     } else {
+        ++live_json_failures;
         app::rgb_debug_publish_error();
-        ESP_LOGW(tag, "Live JSON %s failed: requested=%u free_before=%u largest_before=%u free_after=%u largest_after=%u outbox=%d",
-                 json == nullptr ? "allocation" : "serialization",
+        ESP_LOGW(tag, "Live JSON %s failed: requested=%u reserved=%u free_before=%u largest_before=%u free_after=%u largest_after=%u outbox=%d",
+                 json == nullptr ? "buffer unavailable" : !allocations.ok() ? "tree allocation" : "serialization/capacity",
                  static_cast<unsigned>(capacity),
+                 static_cast<unsigned>(live_json_capacity_),
                  static_cast<unsigned>(free_before),
                  static_cast<unsigned>(largest_before),
                  static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_8BIT)),
                  static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)),
                  esp_mqtt_client_get_outbox_size(client_));
     }
-    heap_caps_free(json);
 }
 
 void MqttBridge::publish_snapshot(const TelemetryMessage &message)
@@ -1718,11 +1751,9 @@ void MqttBridge::publish_alert_changes(const TelemetryMessage &message)
 void MqttBridge::publish_command_result(const RoutedCommandResult &message)
 {
     if (result_queue_ == nullptr) return;
-    OutboundMessage outbound{};
-    outbound.type = OutboundType::command_result;
-    outbound.command_result = message;
-    if (xQueueSend(result_queue_, &outbound, 0) != pdTRUE) {
-        ESP_LOGW(tag, "MQTT publish queue full; command result dropped");
+    if (xQueueSend(result_queue_, &message, 0) != pdTRUE) {
+        ++result_queue_drops;
+        ESP_LOGW(tag, "MQTT result queue full; command result dropped");
     }
 }
 
@@ -1737,10 +1768,18 @@ void MqttBridge::publish_command_result_now(const RoutedCommandResult &message)
     std::snprintf(command_id, sizeof(command_id), "%llu",
                   static_cast<unsigned long long>(id));
     cJSON_AddStringToObject(root, "command_id", command_id);
+    const auto route_status = message.kind == RemoteCommandKind::semantic
+        ? message.result.modbus_write.status : message.register_result.modbus_write.status;
+    const bool route_uncertain = route_status == protocol::ModbusWriteStatus::routing_uncertain;
+    const bool route_not_sent = route_status == protocol::ModbusWriteStatus::routing_not_sent;
+    if (route_uncertain || route_not_sent)
+        cJSON_AddStringToObject(root, "routing_status", route_uncertain ? "uncertain" : "not_sent");
     if (message.kind == RemoteCommandKind::semantic) {
         cJSON_AddStringToObject(root, "operation", inverter::operation_name(message.result.operation));
         cJSON_AddStringToObject(root, "outcome", inverter::command_outcome_name(message.result.outcome));
-        cJSON_AddBoolToObject(root, "write_sent", message.result.write_was_sent);
+        // Forwarding failure cannot establish whether the remote inverter wrote.
+        if (route_uncertain) cJSON_AddNullToObject(root, "write_sent");
+        else cJSON_AddBoolToObject(root, "write_sent", message.result.write_was_sent);
     } else {
         const auto &result = message.register_result;
         cJSON_AddStringToObject(root, "operation",
@@ -1751,8 +1790,10 @@ void MqttBridge::publish_command_result_now(const RoutedCommandResult &message)
                                            ? "read_registers" : "write_registers"));
         cJSON_AddStringToObject(root, "outcome",
                                 inverter::register_command_outcome_name(result.outcome));
-        cJSON_AddStringToObject(root, "write_guard",
-                                inverter::write_guard_name(result.strongest_guard));
+        // The remote write policy was never evaluated for a routing failure.
+        if (route_uncertain || route_not_sent) cJSON_AddNullToObject(root, "write_guard");
+        else cJSON_AddStringToObject(root, "write_guard",
+                                     inverter::write_guard_name(result.strongest_guard));
         if (result.named_request) {
             const auto *descriptor = inverter::find_register(
                 result.space, result.first_register);
@@ -1795,7 +1836,7 @@ void MqttBridge::publish_command_result_now(const RoutedCommandResult &message)
                                      result.result_values.data());
             }
         }
-        if (!result.modbus_write.ok() &&
+        if (!route_uncertain && !route_not_sent && !result.modbus_write.ok() &&
             result.modbus_write.status != protocol::ModbusWriteStatus::invalid_argument) {
             cJSON_AddNumberToObject(root, "modbus_status",
                                     static_cast<int>(result.modbus_write.status));
@@ -1864,14 +1905,23 @@ void MqttBridge::publish_health()
     const auto now = static_cast<std::uint32_t>(esp_timer_get_time() / 1000);
     const auto telemetry = last_telemetry_ms_.load();
     const auto live = last_live_enqueued_ms_.load();
-    char payload[768]{};
+    const auto usb = transport::UsbRs485::stats();
+    const auto modbus = protocol::modbus_rtu_stats();
+    char payload[1024]{};
     const int size = std::snprintf(payload, sizeof(payload),
         "{\"uptime_ms\":%llu,\"reset_reason\":%d,\"heap_free_bytes\":%u,"
         "\"heap_minimum_bytes\":%u,\"heap_largest_block_bytes\":%u,"
         "\"publisher_stack_free_bytes\":%u,\"outbox_bytes\":%d,"
         "\"publish_queue_depth\":%u,\"telemetry_seen\":%s,\"telemetry_age_ms\":%u,"
         "\"live_enqueued\":%s,\"live_enqueue_age_ms\":%u,"
-        "\"mqtt_disconnect_count\":%u,\"enqueue_failures\":%u,\"telemetry_queue_drops\":%u}",
+        "\"mqtt_disconnect_count\":%u,\"enqueue_failures\":%u,\"telemetry_queue_drops\":%u,"
+        "\"live_json_failures\":%u,\"live_publish_deferrals\":%u,\"result_queue_drops\":%u,"
+        "\"json_allocation_failures\":%u,\"heap_internal_free_bytes\":%u,"
+        "\"heap_internal_largest_block_bytes\":%u,\"heap_psram_free_bytes\":%u,"
+        "\"usb_rx_dropped_bytes\":%u,\"usb_rx_overflow_events\":%u,"
+        "\"usb_disconnect_count\":%u,\"usb_reconnect_count\":%u,"
+        "\"modbus_crc_errors\":%u,\"modbus_timeouts\":%u,"
+        "\"modbus_incomplete_responses\":%u,\"modbus_rx_overflow_failures\":%u}",
         static_cast<unsigned long long>(esp_timer_get_time() / 1000),
         static_cast<int>(esp_reset_reason()),
         static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_8BIT)),
@@ -1884,7 +1934,22 @@ void MqttBridge::publish_health()
         live ? "true" : "false", static_cast<unsigned>(live ? now - live : 0U),
         static_cast<unsigned>(reconnect_count_.load()),
         static_cast<unsigned>(mqtt_enqueue_failures.load()),
-        static_cast<unsigned>(telemetry_queue_drops.load()));
+        static_cast<unsigned>(telemetry_queue_drops.load()),
+        static_cast<unsigned>(live_json_failures.load()),
+        static_cast<unsigned>(live_publish_deferrals.load()),
+        static_cast<unsigned>(result_queue_drops.load()),
+        static_cast<unsigned>(app::json_allocation_failures()),
+        static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
+        static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
+        static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)),
+        static_cast<unsigned>(usb.rx_dropped_bytes),
+        static_cast<unsigned>(usb.rx_overflow_events),
+        static_cast<unsigned>(usb.disconnect_events),
+        static_cast<unsigned>(usb.reconnect_events),
+        static_cast<unsigned>(modbus.crc_errors),
+        static_cast<unsigned>(modbus.response_timeouts),
+        static_cast<unsigned>(modbus.incomplete_responses),
+        static_cast<unsigned>(modbus.receive_overflow_failures));
     char topic[192]{};
     make_topic(topic, sizeof(topic), config_.profile.logical_member_id, "health");
     if (size > 0 && static_cast<std::size_t>(size) < sizeof(payload)) {
@@ -1901,31 +1966,44 @@ void MqttBridge::publisher_task(void *argument)
         ESP_LOGE(tag, "MQTT startup failed; retrying");
         vTaskDelay(pdMS_TO_TICKS(app::mqtt_reconnect_interval_ms));
     }
-    OutboundMessage message{};
+    TelemetryMessage message{};
+    RoutedCommandResult command_result{};
     std::uint32_t last_health = 0;
     while (self != nullptr) {
         const auto now = static_cast<std::uint32_t>(esp_timer_get_time() / 1000);
+        self->publisher_heartbeat_ms_.store(now);
         if (self->connected_ && (last_health == 0 || now - last_health >= app::health_publish_interval_ms)) {
             self->publish_health();
             last_health = now;
         }
         // Do not wait indefinitely on one old sample while the queue fills.
         // Drain telemetry during outages; a new input sample refreshes live.
-        if (self->connected_ && xQueueReceive(self->result_queue_, &message, 0) == pdTRUE) {
-            self->publish_command_result_now(message.command_result);
-            continue;
+        // Result priority is bounded so a command flood cannot starve live data.
+        for (unsigned burst = 0; burst < 2 && self->connected_; ++burst) {
+            if (xQueueReceive(self->result_queue_, &command_result, 0) != pdTRUE) break;
+            self->publish_command_result_now(command_result);
         }
         if (xQueueReceive(self->publish_queue_, &message, pdMS_TO_TICKS(100)) != pdTRUE) continue;
-        if (!self->connected_ && message.type == OutboundType::telemetry) {
+        if (!self->connected_) {
             ++telemetry_queue_drops;
             continue;
         }
-        if (message.type == OutboundType::telemetry) {
-            self->publish_telemetry_now(message.telemetry);
-        } else {
-            self->publish_command_result_now(message.command_result);
-        }
+        self->publish_telemetry_now(message);
     }
+}
+
+bool MqttBridge::ota_publisher_healthy() const
+{
+    const auto last = publisher_heartbeat_ms_.load();
+    const auto now = static_cast<std::uint32_t>(esp_timer_get_time() / 1000);
+    return last != 0 && now - last < 15000;
+}
+
+bool MqttBridge::ota_results_drained() const
+{
+    return connected() && ota_publisher_healthy() && result_queue_ != nullptr &&
+        uxQueueMessagesWaiting(result_queue_) == 0 && client_ != nullptr &&
+        esp_mqtt_client_get_outbox_size(client_) == 0;
 }
 
 void MqttBridge::make_topic(char *destination, std::size_t capacity,

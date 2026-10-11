@@ -5,9 +5,13 @@
 #include <cstdio>
 #include <cstring>
 #include <memory>
+#include <new>
 
 #include "cJSON.h"
 #include "esp_event.h"
+#include "esp_app_desc.h"
+#include "esp_timer.h"
+#include "inverter_gateway/app/ota_update.hpp"
 #include "esp_check.h"
 #include "esp_log.h"
 #include "esp_mac.h"
@@ -97,6 +101,16 @@ input:focus,select:focus{outline:3px solid #0ea5e933;border-color:var(--blue)}bu
 
 <section class="card"><div class="step">Connection check</div><h2>Current status</h2><div id="status" class="status-grid"></div><small class="hint">When every required connection remains ready, setup finishes automatically and the ESP restarts with its setup Wi-Fi disabled.</small></section>
 
+<section class="card" aria-label="Firmware status"><h2>ESP firmware</h2>
+<div class="grid"><div><strong>Current version</strong><div id="firmware-version">Loading...</div></div><div><strong>Newer version offered</strong><div id="firmware-available">Unknown</div></div></div>
+<p id="firmware-state" class="badge wait" role="status" aria-live="polite">Loading firmware status...</p>
+<div class="grid"><div><strong>Current blocker</strong><div id="firmware-reason">Unavailable</div></div><div><strong>Current internal memory</strong><div id="firmware-memory">Unavailable</div></div></div>
+<p class="hint"><strong>Last update error</strong><br><span id="firmware-error">Unavailable</span></p>
+<p class="hint"><strong>Internal memory at last error</strong><br><span id="firmware-failure-memory">Unavailable</span></p>
+<small class="hint">Memory at the failed step is captured before cleanup. Required values show that step's memory budget; another kind of error can occur even when memory is sufficient.</small>
+<small class="hint">An earlier update error can remain while a check is postponed. A new actual check or reboot clears it; it is separate from the current blocker.</small>
+<small class="hint">Last check attempt: <span id="firmware-checked">Not checked</span>. Checks run on a schedule; opening this page does not start an update.</small></section>
+
 <script>
 const f=document.querySelector('#f'),statusBox=document.querySelector('#status'),message=document.querySelector('#message');
 const $=id=>document.getElementById(id);let loadedSsid='',wifiPasswordSaved=false,mqttPasswordSaved=false,mqttUriSaved=false,scanStarted=false,selectedNetworkSecure=false,statusRefreshMs=3000;
@@ -122,7 +136,30 @@ $('wifi_networks').onchange=e=>{if(!e.target.value)return;$('wifi_ssid').value=e
 $('scan').onclick=scanWifi;$('toggle_wifi_password').onclick=e=>togglePassword('wifi_password',e.currentTarget);$('mqtt_auth').onchange=updateAuth;$('battery_installed').onchange=updateEquipment;$('topology').onchange=()=>{setRoles();updateUi()};$('device_role').onchange=()=>updateUi();$('expected_inverter_count').oninput=memberOptions;
 async function load(){try{const c=await(await fetch('/api/config',{cache:'no-store'})).json();Object.keys(c).forEach(k=>{if(f.elements[k]&&typeof c[k]!=='boolean')f.elements[k].value=c[k]});const savedRating=Number(c.output_rated_power_kw);const ratingSelect=$('output_rated_power_kw');if(savedRating>0){if(![...ratingSelect.options].some(o=>Number(o.value)===savedRating))ratingSelect.add(new Option(savedRating+' kW (saved)',String(savedRating)));ratingSelect.value=String(savedRating)}else ratingSelect.value='12';if(c.connected_pv_inputs===undefined)$('connected_pv_inputs').value='2';$('battery_installed').checked=c.battery_installed!==false;$('bms_connected').checked=c.bms_connected!==false;$('generator_installed').checked=!!c.generator_installed;mqttUriSaved=!!c.mqtt_uri_set;$('mqtt_uri').value='';$('mqtt_port').value='1883';loadedSsid=c.wifi_ssid||'';wifiPasswordSaved=!!c.wifi_password_set;mqttPasswordSaved=!!c.mqtt_password_set;statusRefreshMs=Number(c.status_refresh_ms)||statusRefreshMs;$('monitor_output_enabled').checked=!!c.monitor_output_enabled;$('topology').value=c.topology&&c.topology!=='unknown'?c.topology:'standalone_single_phase';setRoles(c.device_role);$('mqtt_auth').checked=!!c.mqtt_username||mqttPasswordSaved;updateAuth();updateUi(c.device_role);if(loadedSsid)$('scan-message').textContent='Saved network loaded. Press Scan Wi-Fi to choose another network.';$('wifi-password-hint').textContent=wifiPasswordSaved?'Password saved. Leave blank to keep it.':'Enter the Wi-Fi password if required.';$('mqtt-password-hint').textContent=mqttPasswordSaved?'Password saved. Leave blank to keep it.':'MQTT password is optional.';$('mqtt-uri-hint').textContent=mqttUriSaved?'Server address saved. Leave blank to keep it, or enter a replacement.':'Enter the MQTT server IP address or hostname.'}catch(e){message.textContent='Could not load the saved setup. Please refresh the page.';setRoles();updateUi();updateAuth()}}
 function badge(label,ok,text){return `<div class="badge ${ok?'ok':'wait'}"><strong>${label}</strong><br>${text}</div>`}
-async function refreshStatus(){try{const x=await(await fetch('/api/status',{cache:'no-store'})).json(),role=$('device_role').value,usesMqtt=mqttRoles.includes(role),hasInverter=localRoles.includes(role),needsUart=role==='parallel_coordinator'||role==='internet_gateway',needsCoordinator=role==='parallel_member',needsMembers=role==='parallel_coordinator'||role==='coordinator_gateway_combined',linkOk=(!needsUart&&!needsCoordinator)||(needsUart&&x.coordinator_uart_connected)||(needsCoordinator&&x.espnow_coordinator_found),membersOk=!needsMembers||x.members_found>=x.members_expected,ready=x.validation==='valid'&&(!usesMqtt||(x.station_connected&&x.mqtt_connected))&&(!hasInverter||x.inverter_responding)&&linkOk&&membersOk;statusBox.innerHTML=badge('Installation ID',true,x.site_id)+badge('Configuration',x.validation==='valid',x.validation==='valid'?'Saved':friendlyError(x.validation))+badge('Wi-Fi',!usesMqtt||x.station_connected,usesMqtt?(x.station_connected?'Connected':'Waiting'):'Not required')+badge('MQTT',!usesMqtt||x.mqtt_connected,usesMqtt?(x.mqtt_connected?'Connected':'Waiting'):'Not required')+badge('Inverter',!hasInverter||x.inverter_responding,hasInverter?(x.inverter_responding?'Responding':'Waiting'):'Not required')+badge('Parallel nodes',membersOk,needsMembers?`${x.members_found}/${x.members_expected} found`:'Managed by master')+badge('Gateway link',linkOk,needsUart?(x.coordinator_uart_connected?'Gateway cable connected':'Waiting for gateway cable'):needsCoordinator?(x.espnow_coordinator_found?'Master ESP found':'Searching for master ESP'):'Not required');$('finalize').disabled=!ready}catch(e){statusBox.textContent='Status temporarily unavailable.'}}
+function renderFirmware(x){
+const nonnegative=v=>typeof v==='number'&&Number.isFinite(v)&&v>=0?v:null;
+const duration=ms=>{const seconds=Math.ceil(ms/1000);return seconds>=3600?Math.floor(seconds/3600)+' h '+Math.floor(seconds%3600/60)+' min':seconds>=60?Math.floor(seconds/60)+' min '+seconds%60+' s':seconds+' s'};
+const kib=bytes=>(bytes/1024).toFixed(1)+' KiB';
+$('firmware-version').textContent=x.firmware_version||'Unknown';
+const labels={task_failed:'Automatic updater could not start - check device logs and restart',disabled:'Automatic update checks are disabled',not_checked:'Not checked yet - waiting for the scheduled check',deferred:'Check postponed',checking:'Checking for a new version...',up_to_date:'Up to date at the last check',server_older:'Installed version is newer than the server version',incompatible:'Server firmware is not compatible with this device',release_blocked:'Newer release blocked after a previous update attempt',update_available:'Update available',downloading:'Update available - downloading...',waiting_to_restart:'Update downloaded - preparing a safe restart',restarting:'Restarting to install the update...',verifying:'New firmware is running its health checks',check_failed:'Update check or installation failed - will retry later',unsupported:'Automatic updates are not supported for this device role yet',setup_required:'Complete setup before checking for updates'};
+const state=$('firmware-state');state.textContent=labels[x.firmware_update_state]||'Update status unknown';state.className='badge '+(x.firmware_update_state==='up_to_date'?'ok':'wait');
+const checked=nonnegative(x.firmware_check_age_ms);
+$('firmware-available').textContent=x.firmware_available_version||(['up_to_date','server_older'].includes(x.firmware_update_state)?'None newer at the last check':checked===null?'Unknown - not checked yet':'Unknown - no compatible newer version confirmed');
+$('firmware-checked').textContent=checked===null?'Not checked since restart':duration(checked)+' ago';
+const reasons={startup_heap_low:'Waiting for enough internal memory to start HTTPS safely.',memory_work_busy:'Waiting for another memory-intensive operation to finish.',memory_busy_or_retry:'Waiting for memory availability or the next scheduled attempt.',awaiting_scheduled_retry:'No current blocker detected; waiting for the next scheduled attempt.',need_no_active_write:'Waiting for the current inverter transaction to finish.',wifi_unavailable:'Waiting for a Wi-Fi connection.',wifi_disconnected:'Waiting for a Wi-Fi connection.',mqtt_unavailable:'Waiting for MQTT to connect.',mqtt_disconnected:'Waiting for MQTT to connect.'};
+const reason=typeof x.firmware_update_reason==='string'?x.firmware_update_reason:null;
+$('firmware-reason').textContent=reason===null?'Unavailable':reason?(reasons[reason]||reason.replace(/_/g,' ')):'None reported';
+const free=nonnegative(x.firmware_internal_free_bytes),largest=nonnegative(x.firmware_internal_largest_block_bytes);
+$('firmware-memory').textContent=free===null||largest===null||(free===0&&largest===0)?'Unavailable':kib(free)+' free; largest block '+kib(largest);
+const failureStage=typeof x.firmware_failure_stage==='string'?x.firmware_failure_stage:null;
+let failureText=failureStage===null?'Unavailable':failureStage?'Stage: '+failureStage.replace(/_/g,' '):'None recorded';
+if(failureStage){if(typeof x.firmware_failure_error==='string'&&x.firmware_failure_error)failureText+=' | '+x.firmware_failure_error;if(typeof x.firmware_failure_code==='number'&&Number.isFinite(x.firmware_failure_code))failureText+=' (code '+x.firmware_failure_code+')';const http=nonnegative(x.firmware_failure_http_status);if(http!==null&&http>0)failureText+=' | HTTP '+http;}
+$('firmware-error').textContent=failureText;
+const failureFree=nonnegative(x.firmware_failure_internal_free_bytes),failureLargest=nonnegative(x.firmware_failure_internal_largest_block_bytes),requiredFree=nonnegative(x.firmware_failure_required_free_bytes),requiredLargest=nonnegative(x.firmware_failure_required_largest_block_bytes);
+const memoryValue=value=>value===null?'Unavailable':kib(value);
+$('firmware-failure-memory').textContent=failureStage===null?'Unavailable':failureStage?'Available: '+memoryValue(failureFree)+' free; largest block '+memoryValue(failureLargest)+' | Required: '+memoryValue(requiredFree)+' free; largest block '+memoryValue(requiredLargest):'None recorded';
+}
+async function refreshStatus(){try{const x=await(await fetch('/api/status',{cache:'no-store'})).json(),role=$('device_role').value,usesMqtt=mqttRoles.includes(role),hasInverter=localRoles.includes(role),needsUart=role==='parallel_coordinator'||role==='internet_gateway',needsCoordinator=role==='parallel_member',needsMembers=role==='parallel_coordinator'||role==='coordinator_gateway_combined',linkOk=(!needsUart&&!needsCoordinator)||(needsUart&&x.coordinator_uart_connected)||(needsCoordinator&&x.espnow_coordinator_found),membersOk=!needsMembers||x.members_found>=x.members_expected,ready=x.validation==='valid'&&(!usesMqtt||(x.station_connected&&x.mqtt_connected))&&(!hasInverter||x.inverter_responding)&&linkOk&&membersOk;renderFirmware(x);statusBox.innerHTML=badge('Installation ID',true,x.site_id)+badge('Configuration',x.validation==='valid',x.validation==='valid'?'Saved':friendlyError(x.validation))+badge('Wi-Fi',!usesMqtt||x.station_connected,usesMqtt?(x.station_connected?'Connected':'Waiting'):'Not required')+badge('MQTT',!usesMqtt||x.mqtt_connected,usesMqtt?(x.mqtt_connected?'Connected':'Waiting'):'Not required')+badge('Inverter',!hasInverter||x.inverter_responding,hasInverter?(x.inverter_responding?'Responding':'Waiting'):'Not required')+badge('Parallel nodes',membersOk,needsMembers?`${x.members_found}/${x.members_expected} found`:'Managed by master')+badge('Gateway link',linkOk,needsUart?(x.coordinator_uart_connected?'Gateway cable connected':'Waiting for gateway cable'):needsCoordinator?(x.espnow_coordinator_found?'Master ESP found':'Searching for master ESP'):'Not required');$('finalize').disabled=!ready}catch(e){renderFirmware({});statusBox.textContent='Status temporarily unavailable.';$('firmware-state').textContent='Firmware status unavailable. Reconnect to the ESP.';$('firmware-state').className='badge wait'}}
 f.onsubmit=async e=>{e.preventDefault();const problem=validateForm();if(problem){message.textContent=problem;return}message.textContent='Saving configuration...';$('save').disabled=true;const role=$('device_role').value,usesMqtt=mqttRoles.includes(role),ssid=$('wifi_ssid').value.trim();if(usesMqtt&&selectedNetworkSecure&&ssid!==loadedSsid&&!$('wifi_password').value){message.textContent='Enter the password for the selected secured Wi-Fi network.';$('save').disabled=false;return}const o={};o.replacement_confirmed=$('replacement_confirmed').checked;new FormData(f).forEach((v,k)=>o[k]=['expected_inverter_count','expected_member_count','logical_member_id','modbus_slave_address','espnow_channel','connected_pv_inputs','output_rated_power_kw'].includes(k)?Number(v):v);o.phase=f.elements.phase.value||'none';o.battery_installed=$('battery_installed').checked;o.bms_connected=o.battery_installed&&$('bms_connected').checked;o.generator_installed=$('generator_installed').checked;o.monitor_output_enabled=$('monitor_output_enabled').checked;o.clear_wifi_password=usesMqtt&&!selectedNetworkSecure&&ssid!==loadedSsid;o.clear_mqtt_credentials=usesMqtt&&!$('mqtt_auth').checked;if(!$('mqtt_auth').checked)o.mqtt_username='';if(!usesMqtt){o.wifi_ssid='';o.mqtt_uri='';o.mqtt_username='';o.clear_mqtt_credentials=true}const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),15000);try{const r=await fetch('/api/config',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(o),signal:controller.signal});const text=await r.text();if(!r.ok)throw new Error(text);message.textContent='Saved. The ESP is restarting to test the connections. Reconnect to this setup page in a few seconds.'}catch(err){message.textContent=err.name==='AbortError'?'The ESP did not answer in time. Stay connected to its Wi-Fi and try again.':'Could not save. '+friendlyError(err.message);$('save').disabled=false}finally{clearTimeout(timer)}};
 $('finalize').onclick=async()=>{message.textContent='Checking all required connections...';try{const r=await fetch('/api/finalize',{method:'POST'}),text=await r.text();if(!r.ok)throw new Error(text);message.textContent='Setup complete. The ESP is restarting in normal operation mode.'}catch(err){message.textContent='Setup is not ready. '+friendlyError(err.message)}};
 load().finally(()=>{refreshStatus();setInterval(refreshStatus,statusRefreshMs)});
@@ -170,13 +207,19 @@ bool normalize_mqtt_uri(char (&uri)[N])
     return true;
 }
 
-void send_json(httpd_req_t *request, cJSON *root)
+esp_err_t send_json(httpd_req_t *request, cJSON *root)
 {
-    char *body = cJSON_PrintUnformatted(root);
-    httpd_resp_set_type(request, "application/json");
-    httpd_resp_sendstr(request, body != nullptr ? body : "{}");
-    if (body != nullptr) cJSON_free(body);
+    char *body = root != nullptr ? cJSON_PrintUnformatted(root) : nullptr;
     cJSON_Delete(root);
+    if (body == nullptr) {
+        httpd_resp_set_status(request, "503 Service Unavailable");
+        httpd_resp_set_type(request, "text/plain");
+        return httpd_resp_sendstr(request, "Not enough memory to prepare the response. Try again.");
+    }
+    httpd_resp_set_type(request, "application/json");
+    const esp_err_t result = httpd_resp_sendstr(request, body);
+    cJSON_free(body);
+    return result;
 }
 
 esp_err_t send_conflict(httpd_req_t *request, const char *message)
@@ -546,8 +589,7 @@ esp_err_t WifiProvisioning::config_get_handler(httpd_req_t *request)
                           app::monitor_output_enabled());
     cJSON_AddNumberToObject(root, "status_refresh_ms",
                             app::setup_status_refresh_ms);
-    send_json(request, root);
-    return ESP_OK;
+    return send_json(request, root);
 }
 
 esp_err_t WifiProvisioning::receive_json(httpd_req_t *request, char *buffer,
@@ -721,7 +763,14 @@ esp_err_t WifiProvisioning::wifi_scan_handler(httpd_req_t *request)
     }
 
     bool reconnect_after_scan = false;
+    bool scan_results_pending = false;
     const auto finish_scan = [&]() {
+        // Only clear results owned by this completed scan, not a busy scan
+        // or connection attempt that prevented ours from starting.
+        if (scan_results_pending) {
+            esp_wifi_clear_ap_list();
+            scan_results_pending = false;
+        }
         self->scan_active_.store(false);
         if (reconnect_after_scan) {
             self->suppress_station_reconnect_.store(false);
@@ -762,9 +811,14 @@ esp_err_t WifiProvisioning::wifi_scan_handler(httpd_req_t *request)
             return send_scan_error("503 Service Unavailable",
                                    "Wi-Fi is busy connecting. Try Scan again.");
         }
+        if (result == ESP_ERR_NO_MEM) {
+            return send_scan_error("503 Service Unavailable",
+                                   "Not enough memory to start Wi-Fi scanning. Try again.");
+        }
         return send_scan_error("500 Internal Server Error",
                                "Could not start the Wi-Fi scan");
     }
+    scan_results_pending = true;
     std::uint16_t available = 0;
     result = esp_wifi_scan_get_ap_num(&available);
     if (result != ESP_OK) {
@@ -775,19 +829,34 @@ esp_err_t WifiProvisioning::wifi_scan_handler(httpd_req_t *request)
     }
     std::uint16_t count = std::min<std::uint16_t>(
         available, app::setup_wifi_scan_max_results);
-    auto records = std::make_unique<wifi_ap_record_t[]>(count == 0 ? 1 : count);
+    std::unique_ptr<wifi_ap_record_t[]> records;
     if (count != 0) {
+        records.reset(new (std::nothrow) wifi_ap_record_t[count]);
+        if (!records) {
+            return send_scan_error("503 Service Unavailable",
+                                   "Not enough memory for Wi-Fi scan results. Try again.");
+        }
         result = esp_wifi_scan_get_ap_records(&count, records.get());
         if (result != ESP_OK) {
             ESP_LOGW(tag, "Could not read Wi-Fi scan records: %s",
                      esp_err_to_name(result));
-            return send_scan_error("500 Internal Server Error",
+            records.reset();
+            return send_scan_error(result == ESP_ERR_NO_MEM ?
+                                       "503 Service Unavailable" : "500 Internal Server Error",
                                    "Could not read the Wi-Fi scan results");
         }
+        // The bulk getter releases the complete driver-owned scan list.
+        scan_results_pending = false;
     }
 
     cJSON *root = cJSON_CreateObject();
-    cJSON *networks = cJSON_AddArrayToObject(root, "networks");
+    cJSON *networks = root != nullptr ? cJSON_AddArrayToObject(root, "networks") : nullptr;
+    if (root == nullptr || networks == nullptr) {
+        records.reset();
+        cJSON_Delete(root);
+        return send_scan_error("503 Service Unavailable",
+                               "Not enough memory for Wi-Fi scan results. Try again.");
+    }
     for (std::uint16_t index = 0; index < count; ++index) {
         const char *ssid = reinterpret_cast<const char *>(records[index].ssid);
         if (ssid[0] == '\0') continue;
@@ -801,16 +870,23 @@ esp_err_t WifiProvisioning::wifi_scan_handler(httpd_req_t *request)
         }
         if (duplicate) continue;
         cJSON *network = cJSON_CreateObject();
-        cJSON_AddStringToObject(network, "ssid", ssid);
-        cJSON_AddNumberToObject(network, "rssi", records[index].rssi);
-        cJSON_AddNumberToObject(network, "channel", records[index].primary);
-        cJSON_AddBoolToObject(network, "secure",
-                              records[index].authmode != WIFI_AUTH_OPEN);
-        cJSON_AddItemToArray(networks, network);
+        if (network == nullptr ||
+            cJSON_AddStringToObject(network, "ssid", ssid) == nullptr ||
+            cJSON_AddNumberToObject(network, "rssi", records[index].rssi) == nullptr ||
+            cJSON_AddNumberToObject(network, "channel", records[index].primary) == nullptr ||
+            cJSON_AddBoolToObject(network, "secure",
+                                  records[index].authmode != WIFI_AUTH_OPEN) == nullptr ||
+            !cJSON_AddItemToArray(networks, network)) {
+            cJSON_Delete(network);
+            cJSON_Delete(root);
+            records.reset();
+            return send_scan_error("503 Service Unavailable",
+                                   "Not enough memory for Wi-Fi scan results. Try again.");
+        }
     }
+    records.reset();
     finish_scan();
-    send_json(request, root);
-    return ESP_OK;
+    return send_json(request, root);
 }
 
 esp_err_t WifiProvisioning::finalize_handler(httpd_req_t *request)
@@ -952,6 +1028,37 @@ esp_err_t WifiProvisioning::status_handler(httpd_req_t *request)
                                                 peer.logical_member_id != 0xff;
                                      });
     cJSON *root = cJSON_CreateObject();
+    const auto firmware = app::ota_status();
+    const std::int64_t firmware_now_ms = esp_timer_get_time() / 1000;
+    const char *update_state = firmware.state;
+    if (std::strcmp(update_state, "verifying") != 0) {
+        if (self->config_.profile.device_role != app::DeviceRole::standalone_combined)
+            update_state = "unsupported";
+        else if (!self->config_.provisioned) update_state = "setup_required";
+    }
+    cJSON_AddStringToObject(root, "firmware_version", esp_app_get_description()->version);
+    cJSON_AddStringToObject(root, "firmware_update_state", update_state);
+    cJSON_AddStringToObject(root, "firmware_update_reason", firmware.reason != nullptr ? firmware.reason : "");
+    const char *failure_stage = firmware.failure_stage != nullptr ? firmware.failure_stage : "";
+    cJSON_AddStringToObject(root, "firmware_failure_stage", failure_stage);
+    cJSON_AddNumberToObject(root, "firmware_failure_code", firmware.failure_code);
+    cJSON_AddNumberToObject(root, "firmware_failure_http_status", firmware.failure_http_status);
+    cJSON_AddStringToObject(root, "firmware_failure_error",
+        failure_stage[0] != '\0' ? esp_err_to_name(firmware.failure_code) : "");
+    cJSON_AddNumberToObject(root, "firmware_failure_internal_free_bytes", firmware.failure_internal_free_bytes);
+    cJSON_AddNumberToObject(root, "firmware_failure_internal_largest_block_bytes", firmware.failure_internal_largest_block_bytes);
+    cJSON_AddNumberToObject(root, "firmware_failure_required_free_bytes", firmware.failure_required_free_bytes);
+    cJSON_AddNumberToObject(root, "firmware_failure_required_largest_block_bytes", firmware.failure_required_largest_block_bytes);
+    cJSON_AddNumberToObject(root, "firmware_internal_free_bytes", firmware.internal_free_bytes);
+    cJSON_AddNumberToObject(root, "firmware_internal_largest_block_bytes", firmware.internal_largest_block_bytes);
+    if (firmware.available_version[0])
+        cJSON_AddStringToObject(root, "firmware_available_version", firmware.available_version);
+    else cJSON_AddNullToObject(root, "firmware_available_version");
+    if (firmware.last_check_ms > 0)
+        cJSON_AddNumberToObject(root, "firmware_check_age_ms",
+            std::max<std::int64_t>(0, firmware_now_ms - firmware.last_check_ms));
+    else cJSON_AddNullToObject(root, "firmware_check_age_ms");
+
     cJSON_AddStringToObject(root, "site_id", self->config_.site_id);
     cJSON_AddBoolToObject(root, "provisioned", self->config_.provisioned);
     cJSON_AddStringToObject(root, "validation", app::config_validation_name(app::validate_config(self->config_)));
@@ -982,8 +1089,7 @@ esp_err_t WifiProvisioning::status_handler(httpd_req_t *request)
     cJSON_AddBoolToObject(root, "inverter_responding",
                           self->inverter_ready_probe_ != nullptr &&
                           self->inverter_ready_probe_(self->inverter_ready_context_));
-    send_json(request, root);
-    return ESP_OK;
+    return send_json(request, root);
 }
 
 void WifiProvisioning::reboot_task(void *)

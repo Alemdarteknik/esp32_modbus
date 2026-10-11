@@ -66,6 +66,23 @@ void ProductionPoller::reset()
     sequence_ = 0;
 }
 
+void ProductionPoller::invalidate_state_after_write()
+{
+    // Even a timeout can mean that the inverter accepted the write. Never
+    // authorize the next guarded command using the pre-write operating state.
+    state_ = {};
+    state_updated_ms_ = 0;
+    last_poll_was_critical_ = false;
+    const auto plan = default_poll_plan();
+    for (std::size_t index = 0; index < plan.size && index < maximum_requests; ++index) {
+        const auto &request = plan.data[index];
+        if (request.space == RegisterSpace::input && request.first_register == 0 &&
+            request.cadence == PollCadence::critical) {
+            last_poll_ms_[index] = 0;
+        }
+    }
+}
+
 InverterStateSnapshot ProductionPoller::state() const
 {
     auto result = state_;

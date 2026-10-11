@@ -1,5 +1,74 @@
 # MQTT Streams, Getters and Setters - Complete Mosquitto CLI Reference
 
+## Communication reliability: version 1.0.6
+
+Command request formats and MQTT `live` payloads are unchanged. Version 1.0.6
+adds local USB/Modbus health counters and explicit coordinator-routing failure
+metadata. See [1.0.6 release notes](Firmware_Reliability_1.0.6.md).
+The proposed broader OTA retry rewrite remains unintegrated: initial checks remain
+1-61 minutes, local deferrals 5-10 minutes, and attempts including network failures
+6-7 hours apart. `tools/ota_retry_policy.hpp` is an offline proposal, not firmware.
+
+## ESP firmware OTA
+
+Version 1.0.8 separates connection and streaming memory reserves and adds four
+local HTTP failure-memory fields. MQTT command/live formats, retry timing, write
+protection and polling remain unchanged. A device whose installed updater keeps
+failing the memory guard needs a physical 1.0.8 baseline; publishing a newer
+binary alone does not fix that installed updater.
+
+Version 1.0.7 fixes bounded HTTP chunked firmware downloads and adds local
+last-failure diagnostics. MQTT command/live formats, scheduling and write
+admission are unchanged. Original pre-fix 1.0.5/1.0.6 builds require a USB baseline or a
+server response with the exact positive Content-Length to obtain this fix; see
+[OTA bootstrap requirements](OTA_Updates.md#devices-stuck-on-an-older-updater).
+
+Version 1.0.5: getters no longer postpone scheduled update checks. Accepted
+semantic setters/register writes remain protected until completion/rejection
+plus a 30-second quiet interval. At activation, new requests and queued getters
+are rejected while an in-flight transaction is allowed to finish. Confirmation
+delivery is best-effort; never blindly retry a write. Live fields, command
+schemas, power calculations and polling intervals are unchanged.
+The local status API additionally exposes `firmware_update_reason`,
+`firmware_internal_free_bytes`, and `firmware_internal_largest_block_bytes`.
+These describe current conditions, not the exact historical failed preflight.
+
+Version 1.0.7 adds `firmware_failure_stage`, `firmware_failure_code`,
+`firmware_failure_http_status` and `firmware_failure_error` to the read-only local
+HTTP `/api/status` response, not MQTT `live`. They describe the last failed update
+attempt, separate from the current blocker. Stage/error are empty and code/HTTP
+are zero when cleared. A new actual check or reboot clears them; a locally
+postponed check can retain the previous failure. HTTP 200 is response context and
+can accompany a later image/read/flash error. The webpage labels these as
+**Last update error** and shows unavailable when older firmware omits the fields.
+No MQTT check/update trigger or persistent failure history is added.
+
+Version 1.0.8 adds `firmware_failure_internal_free_bytes`,
+`firmware_failure_internal_largest_block_bytes`,
+`firmware_failure_required_free_bytes` and
+`firmware_failure_required_largest_block_bytes` to the same local `/api/status`
+response. The card labels these **Internal memory at last error** and compares
+available free/largest-block bytes with the active requirements before cleanup.
+Current memory can be higher after TLS is released. The values describe the
+active budget even when a nonmemory error caused the failure; they do not by
+themselves identify its cause. They clear to zero with the failure record at a
+new actual check or reboot and survive local postponements. Missing older fields
+show unavailable, not zero; no recorded stage displays **None recorded**.
+
+When the local inverter is unavailable, commands return `STATE_UNAVAILABLE`
+(semantic) or `state_unavailable` (register commands). They are not queued for
+later execution and do not extend the OTA quiet period. USB connection alone is
+not sufficient: a recent successful poll is required. Pending commands are
+discarded with rejection results when the USB session ends. MQTT delivery remains
+best-effort; never blindly retry a write whose result was lost.
+
+[OTA updates](OTA_Updates.md) are an opt-in standalone HTTPS feature, not an
+inverter setter. No new MQTT update command is defined in this version. Existing
+live payloads are unchanged. During the short activation window, new local
+commands are rejected without sending an inverter write (`rejected` for semantic
+commands, `state_not_allowed` for register commands); delivery of a result before
+reboot is best-effort. Never blindly replay a write after a missing confirmation.
+
 ## Power timing correction
 
 ### Last-known display values
@@ -21,6 +90,20 @@ MQTT topics and field names are unchanged. Power calculations require source sam
 This document lists every possible MQTT getter that reads data from the inverter and every permitted MQTT setter that writes a setting or command to the inverter. Each executable catalog row has its own `mosquitto_pub` command. The safety classes remain defined in `AOHAI_Modbus_RTU_V2.14_Register_Classes.md`.
 
 ## Document map
+
+Runtime optimization keeps the live payload and command formats unchanged.
+Health reports add `live_json_failures`, `live_publish_deferrals`,
+`result_queue_drops`, `json_allocation_failures`, `heap_internal_free_bytes`,
+`heap_internal_largest_block_bytes`, and `heap_psram_free_bytes`. Their meanings
+and limitations are in [Production readiness](Production_Readiness.md#health-subscription).
+Version 1.0.6 also adds `usb_rx_dropped_bytes`, `usb_rx_overflow_events`,
+`usb_disconnect_count`, `usb_reconnect_count`, `modbus_crc_errors`,
+`modbus_timeouts`, `modbus_incomplete_responses`, and
+`modbus_rx_overflow_failures`. These are per-boot, saturating uint32 counters
+for the Internet-facing ESP's own USB/Modbus path, not per-slave counters.
+After an attempted inverter write, the cached operating state is invalidated;
+a following guarded command may report state unavailable until a fresh status
+read succeeds. Do not blindly retry a write after a missing result.
 
 Production hardening details and remaining release gates: [Production_Readiness.md](Production_Readiness.md). The Internet-facing gateway also publishes `<prefix>/<device-id>/inverter/<member-id>/health` every 30 seconds (QoS 0, not retained), independent of inverter-read success. Subscribe using `mosquitto_sub -v -t 'inverter/INV-44B176CDC70C/inverter/0/health'`. Its memory, stack, queue and age fields are documented in that guide.
 
@@ -225,6 +308,54 @@ MQTT -> gateway/coordinator -> optional UART -> optional ESP-NOW
      -> result returns to MQTT over the reverse route
 ```
 
+The separate gateway/coordinator UART queue rejects commands while offline and
+rechecks an observed-link generation and five-second local queue age before
+forwarding. Queued commands invalidated by an observed disconnect, local expiry,
+or generation change are not replayed into a later link session. The transfer
+has a bounded deadline; partial transmission or failed completion is uncertain.
+Neither case automatically retries a write.
+
+This does not add a remote execution deadline, peer boot/session nonce, durable
+result delivery or exactly-once execution. A short unobserved peer restart may
+not invalidate the local generation. Commands already forwarded cannot be recalled;
+normal results still arrive asynchronously. Treat a missing result as unknown.
+
+### Routing failure result fields
+
+`routing_status` is optional and appears for routing failures only. Existing
+successful result fields are unchanged; do not require this field on every result.
+
+| `routing_status` | Semantic operation result | Named register getter/setter result |
+|---|---|---|
+| `not_sent` | `outcome: "REJECTED"`, `write_sent: false` | `outcome: "state_not_allowed"`, `write_guard: null` |
+| `uncertain` | `outcome: "UNKNOWN"`, `write_sent: null` | `outcome: "communication_error"`, `write_guard: null` |
+
+`write_sent: null` means the gateway cannot establish whether the remote inverter
+wrote; it must not be interpreted as false. The register-result null guard means
+the gateway did not obtain a remote guard evaluation; it does not grant permission.
+These routing failures do not fabricate `modbus_status` or `modbus_exception`.
+
+Example semantic result for uncertain forwarding:
+
+```json
+{
+  "member_id": 1,
+  "command_id": "920010",
+  "operation": "set_buzzer_enabled",
+  "outcome": "UNKNOWN",
+  "routing_status": "uncertain",
+  "write_sent": null
+}
+```
+
+For local USB admission, client status `receive_busy` is numeric 12. It means
+the RX drain overlapped incoming data and no write was transmitted. Semantic
+results set `write_sent: false`; catalog results can include `modbus_status: 12`.
+This is a client diagnostic, not an inverter exception. A receive overflow after
+transmission is different: the write may have happened, but its confirmation is
+rejected. Never automatically repeat a setter to compensate for either a missing
+confirmation or an uncertain result; first obtain current state and reassess.
+
 Command topic:
 
 ```text
@@ -239,6 +370,7 @@ Published topics:
 <prefix>/<device-id>/inverter/<member-id>/result
 <prefix>/<device-id>/inverter/<member-id>/snapshot/<domain>/<name>/<description>
 <prefix>/<device-id>/inverter/<member-id>/availability
+<prefix>/<device-id>/inverter/<member-id>/health
 ```
 
 `member-id` is `0` for the standalone/coordinator inverter and `1...N` for parallel members.
@@ -251,6 +383,7 @@ In a parallel installation, the Internet-facing ESP publishes every inverter und
 | `result` | Correlated response to a named getter or setter | QoS 1, not retained |
 | `snapshot/#` | Serial/model/firmware and current configuration | QoS 1, retained per named item; refreshed after a confirmed setter |
 | `availability` | Device `online`/`offline` state | QoS 1, retained |
+| `health` | Internet-facing ESP memory, queue, timing and local USB/Modbus diagnostics | QoS 0, not retained; every 30 seconds while connected |
 
 `mosquitto_pub` sends a getter or setter. `mosquitto_sub` receives the asynchronous streams and the correlated result. A retained snapshot or alert-state message is delivered immediately when a new subscriber connects.
 
@@ -656,10 +789,10 @@ Getter lifecycle:
 ```text
 server publishes get on command
 -> selected ESP reads the inverter
--> ESP publishes exactly one result with the same command_id
+-> ESP attempts to publish a result with the same command_id
 ```
 
-A getter response is not retained. Subscribe to `result` before publishing the getter. Use `snapshot/#` when the server needs retained identity/configuration immediately after connecting; use a getter when it needs a fresh on-demand read.
+A getter response is not retained and delivery is best-effort, not exactly-once. Subscribe to `result` before publishing the getter. Use `snapshot/#` when the server needs retained identity/configuration immediately after connecting; use a getter when it needs a fresh on-demand read.
 
 ## Setter command: write a setting or command to the inverter
 

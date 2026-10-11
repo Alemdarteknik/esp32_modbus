@@ -1,12 +1,14 @@
 #include "inverter_gateway/protocol/modbus_rtu.hpp"
 
 #include <cstdio>
+#include <atomic>
 
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/stream_buffer.h"
 #include "freertos/task.h"
 #include "inverter_gateway/app/monitor_output.hpp"
+#include "inverter_gateway/diagnostics/bounded_counter.hpp"
 #include "inverter_gateway/transport/usb_rs485.hpp"
 
 namespace inverter_gateway::protocol {
@@ -14,6 +16,10 @@ namespace {
 
 constexpr char tag[] = "modbus_rtu";
 constexpr std::size_t maximum_response_size = 256;
+std::atomic<std::uint32_t> crc_errors{0};
+std::atomic<std::uint32_t> response_timeouts{0};
+std::atomic<std::uint32_t> incomplete_responses{0};
+std::atomic<std::uint32_t> receive_overflow_failures{0};
 
 void print_hex_frame(const char *label, const std::uint8_t *frame, std::size_t length)
 {
@@ -25,6 +31,37 @@ void print_hex_frame(const char *label, const std::uint8_t *frame, std::size_t l
 }
 
 } // namespace
+
+ModbusRtuStats modbus_rtu_stats()
+{
+    return {crc_errors.load(std::memory_order_relaxed),
+            response_timeouts.load(std::memory_order_relaxed),
+            incomplete_responses.load(std::memory_order_relaxed),
+            receive_overflow_failures.load(std::memory_order_relaxed)};
+}
+
+bool ModbusRtuClient::prepare_receive_transaction()
+{
+    receive_overflow_reported_ = false;
+    if (!transport::UsbRs485::prepare_receive_transaction(receive_generation_)) {
+        receive_overflowed();
+        ESP_LOGW(tag, "USB RX changed while draining; request not transmitted");
+        return false;
+    }
+    return true;
+}
+
+bool ModbusRtuClient::receive_overflowed()
+{
+    if (!transport::UsbRs485::receive_overflow_since(receive_generation_)) return false;
+    if (!receive_overflow_reported_) {
+        receive_overflow_reported_ = true;
+        diagnostics::add_saturating(receive_overflow_failures);
+        transport::UsbRs485::clear_receive_buffer();
+        ESP_LOGW(tag, "USB RX overflow invalidated the Modbus transaction");
+    }
+    return true;
+}
 
 std::uint16_t calculate_modbus_crc(const std::uint8_t *data, std::size_t length)
 {
@@ -114,7 +151,7 @@ ModbusWriteResult ModbusRtuClient::write_single(std::uint16_t register_address,
     request[6] = static_cast<std::uint8_t>(crc);
     request[7] = static_cast<std::uint8_t>(crc >> 8U);
 
-    transport::UsbRs485::clear_receive_buffer();
+    if (!prepare_receive_transaction()) return {ModbusWriteStatus::receive_busy, 0};
     print_hex_frame("TX: ", request, sizeof(request));
     const esp_err_t err = device_.tx_blocking(request, sizeof(request), 1000);
     if (err != ESP_OK) {
@@ -150,7 +187,7 @@ ModbusWriteResult ModbusRtuClient::write_multiple(
     request[payload_size + 1] = static_cast<std::uint8_t>(crc >> 8U);
     const std::size_t frame_size = payload_size + 2;
 
-    transport::UsbRs485::clear_receive_buffer();
+    if (!prepare_receive_transaction()) return {ModbusWriteStatus::receive_busy, 0};
     print_hex_frame("TX: ", request, frame_size);
     const esp_err_t err = device_.tx_blocking(request, frame_size, 1000);
     if (err != ESP_OK) {
@@ -172,14 +209,17 @@ ModbusWriteResult ModbusRtuClient::receive_write_single_response(
         static_cast<std::uint8_t>(ModbusFunction::write_single_register);
 
     while ((xTaskGetTickCount() - start_tick) < timeout_ticks) {
+        if (receive_overflowed()) return {ModbusWriteStatus::receive_overflow, 0};
         if (transport::UsbRs485::disconnected()) {
             return {ModbusWriteStatus::disconnected, 0};
         }
         const TickType_t elapsed = xTaskGetTickCount() - start_tick;
         const TickType_t remaining = timeout_ticks > elapsed ? timeout_ticks - elapsed : 0;
         std::uint8_t byte = 0;
-        if (xStreamBufferReceive(transport::UsbRs485::receive_stream(), &byte, 1,
-                                 remaining) != 1) {
+        const auto received = xStreamBufferReceive(transport::UsbRs485::receive_stream(), &byte, 1,
+                                                   remaining);
+        if (receive_overflowed()) return {ModbusWriteStatus::receive_overflow, 0};
+        if (received != 1) {
             break;
         }
 
@@ -203,15 +243,21 @@ ModbusWriteResult ModbusRtuClient::receive_write_single_response(
         if (expected_length != 0 && received_length == expected_length) break;
     }
 
-    if (received_length == 0) return {ModbusWriteStatus::timeout, 0};
+    if (receive_overflowed()) return {ModbusWriteStatus::receive_overflow, 0};
+    if (received_length == 0) {
+        diagnostics::add_saturating(response_timeouts);
+        return {ModbusWriteStatus::timeout, 0};
+    }
     print_hex_frame("RX: ", response, received_length);
     if (expected_length == 0 || received_length != expected_length) {
+        diagnostics::add_saturating(incomplete_responses);
         return {ModbusWriteStatus::malformed_response, 0};
     }
 
     const std::uint16_t received_crc = response[received_length - 2] |
         (static_cast<std::uint16_t>(response[received_length - 1]) << 8U);
     if (received_crc != calculate_modbus_crc(response, received_length - 2)) {
+        diagnostics::add_saturating(crc_errors);
         return {ModbusWriteStatus::crc_error, 0};
     }
     if ((response[1] & 0x80U) != 0) {
@@ -225,6 +271,7 @@ ModbusWriteResult ModbusRtuClient::receive_write_single_response(
     if (echoed_address != register_address || echoed_value != value) {
         return {ModbusWriteStatus::echo_mismatch, 0};
     }
+    if (receive_overflowed()) return {ModbusWriteStatus::receive_overflow, 0};
     return {ModbusWriteStatus::success, 0};
 }
 
@@ -239,14 +286,17 @@ ModbusWriteResult ModbusRtuClient::receive_write_multiple_response(
     constexpr std::uint8_t function =
         static_cast<std::uint8_t>(ModbusFunction::write_multiple_registers);
     while ((xTaskGetTickCount() - start_tick) < timeout_ticks) {
+        if (receive_overflowed()) return {ModbusWriteStatus::receive_overflow, 0};
         if (transport::UsbRs485::disconnected()) {
             return {ModbusWriteStatus::disconnected, 0};
         }
         const TickType_t elapsed = xTaskGetTickCount() - start_tick;
         const TickType_t remaining = timeout_ticks > elapsed ? timeout_ticks - elapsed : 0;
         std::uint8_t byte = 0;
-        if (xStreamBufferReceive(transport::UsbRs485::receive_stream(), &byte, 1,
-                                 remaining) != 1) break;
+        const auto received = xStreamBufferReceive(transport::UsbRs485::receive_stream(), &byte, 1,
+                                                   remaining);
+        if (receive_overflowed()) return {ModbusWriteStatus::receive_overflow, 0};
+        if (received != 1) break;
         if (received_length == 0) {
             if (byte == slave_address_) response[received_length++] = byte;
             continue;
@@ -266,14 +316,20 @@ ModbusWriteResult ModbusRtuClient::receive_write_multiple_response(
         response[received_length++] = byte;
         if (expected_length != 0 && received_length == expected_length) break;
     }
-    if (received_length == 0) return {ModbusWriteStatus::timeout, 0};
+    if (receive_overflowed()) return {ModbusWriteStatus::receive_overflow, 0};
+    if (received_length == 0) {
+        diagnostics::add_saturating(response_timeouts);
+        return {ModbusWriteStatus::timeout, 0};
+    }
     print_hex_frame("RX: ", response, received_length);
     if (expected_length == 0 || received_length != expected_length) {
+        diagnostics::add_saturating(incomplete_responses);
         return {ModbusWriteStatus::malformed_response, 0};
     }
     const std::uint16_t received_crc = response[received_length - 2] |
         (static_cast<std::uint16_t>(response[received_length - 1]) << 8U);
     if (received_crc != calculate_modbus_crc(response, received_length - 2)) {
+        diagnostics::add_saturating(crc_errors);
         return {ModbusWriteStatus::crc_error, 0};
     }
     if ((response[1] & 0x80U) != 0) {
@@ -286,6 +342,7 @@ ModbusWriteResult ModbusRtuClient::receive_write_multiple_response(
     if (echoed_first != first_register || echoed_count != register_count) {
         return {ModbusWriteStatus::echo_mismatch, 0};
     }
+    if (receive_overflowed()) return {ModbusWriteStatus::receive_overflow, 0};
     return {ModbusWriteStatus::success, 0};
 }
 
@@ -307,11 +364,7 @@ bool ModbusRtuClient::send_read_request(ModbusFunction function,
     request[6] = static_cast<std::uint8_t>(crc);
     request[7] = static_cast<std::uint8_t>(crc >> 8U);
 
-    const std::size_t stale_bytes = transport::UsbRs485::clear_receive_buffer();
-    if (stale_bytes != 0) {
-        ESP_LOGW(tag, "Discarded %u stale byte(s) before request",
-                 static_cast<unsigned>(stale_bytes));
-    }
+    if (!prepare_receive_transaction()) return false;
     print_hex_frame("TX: ", request, sizeof(request));
 
     const esp_err_t err = device_.tx_blocking(request, sizeof(request), 1000);
@@ -336,6 +389,7 @@ bool ModbusRtuClient::receive_read_response(ModbusFunction expected_function,
     const std::uint8_t expected_function_code = static_cast<std::uint8_t>(expected_function);
 
     while ((xTaskGetTickCount() - start_tick) < timeout_ticks) {
+        if (receive_overflowed()) return false;
         if (transport::UsbRs485::disconnected()) {
             ESP_LOGE(tag, "USB-RS485 adapter disconnected during request");
             return false;
@@ -344,8 +398,10 @@ bool ModbusRtuClient::receive_read_response(ModbusFunction expected_function,
         const TickType_t elapsed = xTaskGetTickCount() - start_tick;
         const TickType_t remaining = timeout_ticks > elapsed ? timeout_ticks - elapsed : 0;
         std::uint8_t value = 0;
-        if (xStreamBufferReceive(transport::UsbRs485::receive_stream(), &value, 1,
-                                 remaining) != 1) {
+        const auto received = xStreamBufferReceive(transport::UsbRs485::receive_stream(), &value, 1,
+                                                   remaining);
+        if (receive_overflowed()) return false;
+        if (received != 1) {
             break;
         }
 
@@ -391,11 +447,13 @@ bool ModbusRtuClient::receive_read_response(ModbusFunction expected_function,
         }
     }
 
+    if (receive_overflowed()) return false;
     if (ignored_noise_bytes != 0) {
         ESP_LOGW(tag, "Ignored %u byte(s) before valid Modbus header",
                  static_cast<unsigned>(ignored_noise_bytes));
     }
     if (received_length == 0) {
+        diagnostics::add_saturating(response_timeouts);
         ESP_LOGE(tag, "No valid %02X %02X response before timeout", slave_address_,
                  expected_function_code);
         return false;
@@ -403,6 +461,7 @@ bool ModbusRtuClient::receive_read_response(ModbusFunction expected_function,
 
     print_hex_frame("RX: ", response, received_length);
     if (expected_length == 0 || received_length != expected_length) {
+        diagnostics::add_saturating(incomplete_responses);
         ESP_LOGE(tag, "Incomplete response: received %u byte(s), expected %u",
                  static_cast<unsigned>(received_length),
                  static_cast<unsigned>(expected_length));
@@ -414,6 +473,7 @@ bool ModbusRtuClient::receive_read_response(ModbusFunction expected_function,
     const std::uint16_t calculated_crc = calculate_modbus_crc(response,
                                                                received_length - 2);
     if (received_crc != calculated_crc) {
+        diagnostics::add_saturating(crc_errors);
         ESP_LOGE(tag, "CRC mismatch: received 0x%04X, calculated 0x%04X",
                  received_crc, calculated_crc);
         return false;
@@ -434,12 +494,13 @@ bool ModbusRtuClient::receive_read_response(ModbusFunction expected_function,
         return false;
     }
 
+    if (receive_overflowed()) return false;
     for (std::uint16_t index = 0; index < response_register_count; ++index) {
         const std::size_t data_index = 3 + index * 2;
         destination[index] = (static_cast<std::uint16_t>(response[data_index]) << 8U) |
                              response[data_index + 1];
     }
-    return true;
+    return !receive_overflowed();
 }
 
 } // namespace inverter_gateway::protocol

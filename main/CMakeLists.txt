@@ -2,6 +2,9 @@ idf_component_register(
     SRCS
         "main.cpp"
         "src/app/monitor_output.cpp"
+        "src/app/json_memory.cpp"
+        "src/app/memory_budget.cpp"
+        "src/app/ota_update.cpp"
         "src/app/rgb_debug.cpp"
         "src/app/system_config.cpp"
         "src/inverter/aohai_register_catalog.generated.cpp"
@@ -37,4 +40,7 @@ idf_component_register(
         mdns
         mqtt
         nvs_flash
+        esp_http_client
+        bootloader_support
+        app_update
 )

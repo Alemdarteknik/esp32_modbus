@@ -21,6 +21,8 @@ public:
     esp_err_t start();
     void stop();
     bool connected() const { return connected_.load(); }
+    bool ota_publisher_healthy() const;
+    bool ota_results_drained() const;
     void publish_telemetry(const TelemetryMessage &message);
     void publish_command_result(const RoutedCommandResult &result);
 
@@ -75,10 +77,14 @@ private:
     RuntimeMessageSink &sink_;
     esp_mqtt_client_handle_t client_ = nullptr;
     std::atomic_bool connected_{false};
+    std::atomic<std::uint32_t> publisher_heartbeat_ms_{0};
     QueueHandle_t publish_queue_ = nullptr;
     QueueHandle_t result_queue_ = nullptr;
     char hardware_client_id_[32]{};
     TaskHandle_t publisher_task_ = nullptr;
+    // Owned by this bridge, used only by mqtt_publish; enqueue copies its data.
+    char *live_json_buffer_ = nullptr;
+    std::size_t live_json_capacity_ = 0;
     char availability_topic_[192]{};
     std::array<std::uint64_t, 32> recent_command_ids_{};
     std::size_t next_command_id_slot_ = 0;

@@ -25,6 +25,10 @@ enum class ModbusWriteStatus : std::uint8_t {
     crc_error,
     exception_response,
     echo_mismatch,
+    receive_overflow,
+    routing_not_sent,
+    routing_uncertain,
+    receive_busy, // RX changed during pre-TX draining; no bytes were transmitted.
 };
 
 struct ModbusWriteResult {
@@ -35,6 +39,15 @@ struct ModbusWriteResult {
 };
 
 std::uint16_t calculate_modbus_crc(const std::uint8_t *data, std::size_t length);
+
+struct ModbusRtuStats {
+    std::uint32_t crc_errors; // Complete matched frames with a bad CRC.
+    std::uint32_t response_timeouts; // Deadline without a matched frame header.
+    std::uint32_t incomplete_responses; // Matched partial frame at deadline.
+    std::uint32_t receive_overflow_failures; // At most once per guarded transaction/admission.
+};
+// Per-boot saturating totals across local reads/writes; individual atomic loads.
+ModbusRtuStats modbus_rtu_stats();
 
 class ModbusRtuClient {
 public:
@@ -67,6 +80,8 @@ private:
     ModbusWriteResult receive_write_multiple_response(std::uint16_t first_register,
                                                        std::uint16_t register_count);
     void wait_for_command_slot();
+    bool prepare_receive_transaction();
+    bool receive_overflowed();
 
     CdcAcmDevice &device_;
     std::uint8_t slave_address_;
@@ -74,6 +89,8 @@ private:
     TickType_t minimum_command_gap_ticks_;
     TickType_t last_command_tick_ = 0;
     bool command_has_been_sent_ = false;
+    std::uint32_t receive_generation_ = 0;
+    bool receive_overflow_reported_ = false;
 };
 
 } // namespace inverter_gateway::protocol

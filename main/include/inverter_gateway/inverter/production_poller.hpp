@@ -18,6 +18,8 @@ public:
                      std::uint8_t phase_assignment,
                      network::RuntimeMessageSink &sink);
     void reset();
+    // Bus-owner only; force fresh operating state after any attempted write.
+    void invalidate_state_after_write();
     void run_due(std::uint16_t enabled_features);
     InverterStateSnapshot state() const;
 

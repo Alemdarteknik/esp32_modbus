@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <atomic>
 #include <cstdint>
 
 #include "esp_err.h"
@@ -40,7 +41,7 @@ private:
 
     app::SystemConfig &config_;
     RuntimeMessageSink &sink_;
-    std::uint32_t sequence_ = 0;
+    std::atomic<std::uint32_t> sequence_{0};
     bool started_ = false;
     QueueHandle_t receive_queue_ = nullptr;
     TaskHandle_t worker_task_ = nullptr;

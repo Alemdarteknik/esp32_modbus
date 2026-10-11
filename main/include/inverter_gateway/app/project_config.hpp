@@ -10,6 +10,27 @@
 
 namespace inverter_gateway::app {
 
+// OTA opt-in for bench testing first. HTTPS trust only; signing not provisioned.
+inline constexpr bool ota_enabled = true;
+inline constexpr char ota_download_url[] = "https://stock.alemdarteknik.com/download";
+inline constexpr std::uint32_t ota_check_interval_ms = 6 * 60 * 60 * 1000;
+inline constexpr std::uint32_t ota_jitter_ms = 60 * 60 * 1000;
+inline constexpr std::uint32_t ota_download_timeout_ms = 15 * 60 * 1000;
+// Internal-memory admission BEFORE creating the HTTPS connection.
+inline constexpr std::size_t ota_minimum_free_heap = 64000;
+inline constexpr std::size_t ota_minimum_largest_block = 32768;
+// Once TLS/HTTP buffers exist, retain operating headroom instead of demanding
+// room for a second handshake. These are guards, not reserved allocations or
+// a hardware-validated guarantee that concurrent workloads always fit.
+inline constexpr std::size_t ota_stream_minimum_free_heap = 32768;
+inline constexpr std::size_t ota_stream_minimum_largest_block = 8192;
+static_assert(ota_stream_minimum_free_heap >= ota_stream_minimum_largest_block &&
+              ota_stream_minimum_largest_block >= 8192);
+static_assert(ota_minimum_free_heap >= ota_stream_minimum_free_heap &&
+              ota_minimum_largest_block >= ota_stream_minimum_largest_block &&
+              ota_minimum_free_heap >= ota_minimum_largest_block);
+static_assert(ota_check_interval_ms > 0 && ota_jitter_ms > 0);
+
 // Serial monitor
 inline constexpr bool serial_monitor_output_default = false;
 
@@ -34,6 +55,8 @@ inline constexpr std::uint32_t usb_open_timeout_ms = 1000;
 inline constexpr std::uint32_t usb_reconnect_delay_ms = 250;
 inline constexpr std::uint32_t usb_configure_retry_ms = 500;
 inline constexpr std::uint32_t inverter_loop_delay_ms = 50;
+// Require a recent successful poll before accepting inverter commands.
+inline constexpr std::uint32_t command_link_max_age_ms = 15000;
 // ESP-IDF task stack sizes are bytes. Leave affinity to the SMP scheduler.
 inline constexpr std::uint32_t inverter_task_stack_bytes = 8192;
 inline constexpr unsigned inverter_task_priority = 4;
@@ -55,6 +78,14 @@ inline constexpr std::uint32_t mqtt_reconnect_interval_ms = 5000;
 inline constexpr std::uint32_t mqtt_startup_jitter_ms = 15000;
 inline constexpr std::uint32_t mqtt_reconnect_jitter_ms = 30000;
 inline constexpr std::uint32_t mqtt_live_publish_interval_ms = 5000;
+// Reserve before TLS/JSON allocation. PSRAM is used only when available.
+// Internal fallback covers the observed ~27 KiB live payload, with headroom.
+inline constexpr std::size_t mqtt_live_buffer_internal_bytes = 32U * 1024U;
+inline constexpr std::size_t mqtt_live_buffer_psram_bytes = 48U * 1024U;
+static_assert(mqtt_live_buffer_internal_bytes >= 32U * 1024U &&
+              mqtt_live_buffer_internal_bytes <= 48U * 1024U);
+static_assert(mqtt_live_buffer_psram_bytes >= mqtt_live_buffer_internal_bytes &&
+              mqtt_live_buffer_psram_bytes <= 48U * 1024U);
 inline constexpr bool mqtt_require_secure_credentials = false; // Enable for authenticated TLS fleet deployments.
 static_assert(mqtt_live_publish_interval_ms > 0 && mqtt_reconnect_interval_ms > 0);
 static_assert(mqtt_startup_jitter_ms < 60000 && mqtt_reconnect_jitter_ms < 60000);

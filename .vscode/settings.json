@@ -33,5 +33,6 @@
     "--query-driver=**",
     "--compile-commands-dir=c:\\Users\\Administrator\\Documents\\Espressif\\esp32_modbus\\build"
   ],
-  "idf.flashType": "UART"
+  "idf.flashType": "UART",
+  "idf.port": "COM25"
 }

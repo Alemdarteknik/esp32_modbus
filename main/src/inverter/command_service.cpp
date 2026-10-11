@@ -264,8 +264,11 @@ LocalCommandResult CommandService::write_and_verify(
     result.previous_value = previous_value;
     result.previous_value_valid = previous_value_valid;
     result.requested_register_value = register_value;
-    result.write_was_sent = true;
     result.modbus_write = client_.write_single(register_address, register_value);
+    // Other transport failures can occur after a partial send; preserve their
+    // existing attempted-write semantics rather than claiming nothing was sent.
+    result.write_was_sent = result.modbus_write.status != protocol::ModbusWriteStatus::receive_busy &&
+                            result.modbus_write.status != protocol::ModbusWriteStatus::invalid_argument;
 
     if (!result.modbus_write.ok()) {
         switch (result.modbus_write.status) {
@@ -274,6 +277,7 @@ LocalCommandResult CommandService::write_and_verify(
             result.outcome = CommandOutcome::rejected;
             break;
         case protocol::ModbusWriteStatus::transmit_failed:
+        case protocol::ModbusWriteStatus::receive_busy:
         case protocol::ModbusWriteStatus::invalid_argument:
             result.outcome = CommandOutcome::communication_error;
             break;

@@ -1,5 +1,9 @@
 #include "inverter_gateway/transport/usb_rs485.hpp"
 
+#include <algorithm>
+#include <atomic>
+#include "inverter_gateway/diagnostics/bounded_counter.hpp"
+
 #include "esp_intr_alloc.h"
 #include "esp_log.h"
 #include "freertos/event_groups.h"
@@ -19,14 +23,34 @@ constexpr char tag[] = "usb_rs485";
 
 StreamBufferHandle_t rx_stream;
 EventGroupHandle_t usb_events;
+std::atomic<std::uint32_t> rx_overflow_generation{0};
+std::atomic<std::uint32_t> rx_callback_sequence{0};
+std::atomic<std::uint32_t> rx_dropped_bytes{0};
+std::atomic<std::uint32_t> rx_overflow_events{0};
+std::atomic<std::uint32_t> disconnect_events{0};
+std::atomic<std::uint32_t> reconnect_events{0};
+bool opened_before = false; // Only the bus task opens a device.
 
 bool handle_rx(const std::uint8_t *data, std::size_t data_len, void *)
 {
-    const std::size_t stored = xStreamBufferSend(rx_stream, data, data_len, 0);
+    rx_callback_sequence.fetch_add(1, std::memory_order_acq_rel);
+    // Single producer/single consumer: the reader can only increase space.
+    // Announce an overflow BEFORE publishing any bytes from its callback;
+    // announcing it after Send would race acceptance of a valid frame prefix.
+    const std::size_t accepted = std::min(data_len, xStreamBufferSpacesAvailable(rx_stream));
+    if (accepted != data_len) {
+        rx_overflow_generation.fetch_add(1, std::memory_order_release);
+        diagnostics::add_saturating(rx_overflow_events);
+    }
+    const std::size_t stored = accepted == 0 ? 0 :
+        xStreamBufferSend(rx_stream, data, accepted, 0);
     if (stored != data_len) {
+        diagnostics::add_saturating(rx_dropped_bytes,
+            static_cast<std::uint32_t>(data_len - stored));
         ESP_LOGW(tag, "USB receive buffer full; dropped %u byte(s)",
                  static_cast<unsigned>(data_len - stored));
     }
+    rx_callback_sequence.fetch_add(1, std::memory_order_release);
     return true;
 }
 
@@ -34,6 +58,7 @@ void handle_device_event(const cdc_acm_host_dev_event_data_t *event, void *)
 {
     switch (event->type) {
     case CDC_ACM_HOST_DEVICE_DISCONNECTED:
+        diagnostics::add_saturating(disconnect_events);
         xEventGroupSetBits(usb_events, device_disconnected_bit);
         break;
     case CDC_ACM_HOST_ERROR:
@@ -106,7 +131,12 @@ std::unique_ptr<CdcAcmDevice> UsbRs485::open(std::uint32_t connection_timeout_ms
         .data_cb = handle_rx,
         .user_arg = nullptr,
     };
-    return std::unique_ptr<CdcAcmDevice>(VCP::open(&config));
+    std::unique_ptr<CdcAcmDevice> device(VCP::open(&config));
+    if (device) {
+        if (opened_before) diagnostics::add_saturating(reconnect_events);
+        opened_before = true;
+    }
+    return device;
 }
 
 esp_err_t UsbRs485::configure(CdcAcmDevice &device, std::uint32_t baud)
@@ -139,12 +169,39 @@ std::size_t UsbRs485::clear_receive_buffer()
 {
     std::uint8_t scratch[64];
     std::size_t discarded = 0;
-    std::size_t received = 0;
-    do {
-        received = xStreamBufferReceive(rx_stream, scratch, sizeof(scratch), 0);
+    if (rx_stream == nullptr) return 0;
+    // Bound the drain to the current occupancy; a noisy producer must not
+    // trap the bus task here. Never reset a stream while its producer runs.
+    const std::size_t pending = xStreamBufferBytesAvailable(rx_stream);
+    while (discarded < pending) {
+        const auto received = xStreamBufferReceive(rx_stream, scratch,
+            std::min(sizeof(scratch), pending - discarded), 0);
+        if (received == 0) break;
         discarded += received;
-    } while (received != 0);
+    }
     return discarded;
+}
+
+bool UsbRs485::prepare_receive_transaction(std::uint32_t &generation)
+{
+    const auto before = rx_callback_sequence.load(std::memory_order_acquire);
+    generation = rx_overflow_generation.load(std::memory_order_acquire);
+    clear_receive_buffer();
+    const auto after = rx_callback_sequence.load(std::memory_order_acquire);
+    return (before & 1U) == 0 && before == after && !receive_overflow_since(generation);
+}
+
+bool UsbRs485::receive_overflow_since(std::uint32_t generation)
+{
+    return rx_overflow_generation.load(std::memory_order_acquire) != generation;
+}
+
+UsbRs485Stats UsbRs485::stats()
+{
+    return {rx_dropped_bytes.load(std::memory_order_relaxed),
+            rx_overflow_events.load(std::memory_order_relaxed),
+            disconnect_events.load(std::memory_order_relaxed),
+            reconnect_events.load(std::memory_order_relaxed)};
 }
 
 StreamBufferHandle_t UsbRs485::receive_stream()

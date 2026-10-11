@@ -10,6 +10,7 @@
 #include "freertos/semphr.h"
 #include "freertos/queue.h"
 #include "inverter_gateway/app/system_config.hpp"
+#include "inverter_gateway/network/coordinator_command_policy.hpp"
 #include "inverter_gateway/network/runtime_messages.hpp"
 
 namespace inverter_gateway::network {
@@ -23,21 +24,35 @@ public:
     esp_err_t send_telemetry(const TelemetryMessage &message);
     esp_err_t send_command(const RoutedCommand &command);
     esp_err_t send_command_result(const RoutedCommandResult &result);
+    // Synthesizes a routing result for the requested member, not this gateway.
+    static RoutedCommandResult command_route_failure(const RoutedCommand &command,
+                                                     bool uncertain);
 
 private:
+    struct SendResult {
+        esp_err_t error;
+        coordinator_policy::SendDisposition disposition;
+    };
     static void worker_task(void *argument);
     void run();
-    esp_err_t send(std::uint8_t type, const void *payload, std::uint16_t size);
+    SendResult send(std::uint8_t type, const void *payload, std::uint16_t size,
+                    const coordinator_policy::Ticket *ticket = nullptr);
     esp_err_t enqueue(std::uint8_t type, const void *payload, std::uint16_t size);
     void dispatch(std::uint8_t type, const std::uint8_t *payload, std::uint16_t size);
+    void report_command_failure(const RoutedCommand &command, bool uncertain,
+                                const char *reason);
+    void note_receive();
+    bool accept_received_command();
 
     app::SystemConfig &config_;
     RuntimeMessageSink &sink_;
     TaskHandle_t task_ = nullptr;
     SemaphoreHandle_t send_mutex_ = nullptr;
     QueueHandle_t transmit_queue_ = nullptr;
-    std::atomic<TickType_t> last_receive_tick_{0};
-    bool started_ = false;
+    StaticSemaphore_t state_mutex_storage_{};
+    SemaphoreHandle_t state_mutex_ = nullptr;
+    mutable coordinator_policy::LinkSession session_{};
+    std::atomic_bool started_{false};
 };
 
 } // namespace inverter_gateway::network

@@ -2,6 +2,39 @@
 
 Firmware hardening is not a 1,000-device capacity certification. No broker load test has been performed.
 
+## Automatic firmware updates
+
+See [OTA updates](OTA_Updates.md). Version 1.0.8 retains automatic HTTPS updates
+for provisioned standalone Wi-Fi devices; a responding inverter is not required.
+Getters no longer reset the write-quiet gate. Existing random scheduling spreads
+startup checks over one hour, retries local postponements in 5-10 minutes, and
+spaces network attempts, including failures, by 6-7 hours. The first check is
+1-61 minutes after startup. The webpage does not force an immediate check.
+The narrow 1.0.7 fix accepts bounded chunked downloads and adds local last-failure
+diagnostics. Version 1.0.8 retains the connection guard of 64,000 free bytes and a
+32,768-byte largest block; after TLS opens and during transfer, separate guards
+require 32,768 free bytes and an 8,192-byte largest block. The local webpage shows
+failure-time available/required memory
+captured before cleanup, separately from current memory. These configurable
+guards need hardware measurements; they do not establish capacity or guarantee
+updates. The proposed broader retry rewrite is not integrated;
+`tools/ota_retry_policy.hpp` is an offline proposal only. Passing mocked
+actual-worker tests is not hardware update/rollback or fleet validation.
+
+This is not a fleet rollout controller. The shared latest-file endpoint has no
+per-device cohorts, kill switch or signed-release policy. Verify server TLS/download
+capacity, protect upload access, and use a controlled pilot before publishing to
+an endpoint used by all customers. ESP-NOW/parallel/gateway roles still use USB
+updates. Original pre-framing-fix 1.0.5/1.0.6 builds reject chunked responses: they
+need a one-time USB baseline or an HTTP 200 binary response with an exact positive
+Content-Length to download the fix at their next eligible scheduled check.
+Locally rebuilt firmware may retain an older version label while containing the
+framing fix; identify installed code from build provenance and diagnostics.
+The current updater blocked by `post_tls_memory` needs a physical 1.0.8 baseline.
+Changing the served binary or response framing cannot replace an updater that
+cannot pass its memory guard. Actual hardware OTA and rollback tests remain
+required after installation; no device flash or endpoint upload is included here.
+
 ## Connection and queue behavior
 
 - MQTT client ID is `ESP-` followed by the full station MAC. Topic identity remains the saved installation ID (internally `site_id`); existing topics do not change.
@@ -9,7 +42,8 @@ Firmware hardening is not a 1,000-device capacity certification. No broker load 
 - Clean sessions are explicit. Retained command rejection remains in place. Never retain command requests.
 - Live publication defaults to 5 seconds through `mqtt_live_publish_interval_ms`, independent of Modbus polling cadence. Payload contents are unchanged.
 - Command results have a separate bounded eight-entry RAM queue, serviced before queued telemetry when connected. The 64 KiB outbox reserves 8 KiB from ordinary publishes for result messages. This is priority, NOT durable or guaranteed result delivery. Full result queues, enqueue/allocation failures and resets can still lose results.
-- Existing startup health and snapshot messages remain unchanged. No new retained hardware/installation association topic was added.
+- Existing health fields and snapshot messages are preserved. Version 1.0.6 appends eight local USB/Modbus counters to health; see [reliability notes](Firmware_Reliability_1.0.6.md). No new retained hardware/installation association topic was added.
+- Separate coordinator-UART command queues reject offline admission, observed-generation changes and entries older than five seconds. They do not replay stale queued commands after an observed reconnect. Routing failures are not-sent or uncertain and do not automatically retry writes. This is not a recipient deadline, peer boot/session nonce, durable result journal or exactly-once guarantee; forwarded bytes cannot be recalled.
 
 ## Production security
 
@@ -33,4 +67,4 @@ Keep the ESP and installation ID. Review the supported register profile, rating,
 
 ## Validation before deployment
 
-Verify unique client IDs, restore an ID on a spare ESP with the original disconnected, check peer rediscovery, test incorrect credentials/certificates, and exercise full result queues and broker outages. Simulate at least 1,000 connections using realistic payload sizes and subscriber fan-out, including mass reconnects. Check reverse-proxy/WebSocket limits, broker RAM, bandwidth, file descriptors and ACL isolation. Compilation, device tests and load tests remain outstanding.
+Verify unique client IDs, restore an ID on a spare ESP with the original disconnected, check peer rediscovery, test incorrect credentials/certificates, and exercise full result queues and broker outages. Simulate at least 1,000 connections using realistic payload sizes and subscriber fan-out, including mass reconnects. Check reverse-proxy/WebSocket limits, broker RAM, bandwidth, file descriptors and ACL isolation. The version 1.0.5 ESP-IDF build and source/configuration checks pass; device tests and load tests remain outstanding.

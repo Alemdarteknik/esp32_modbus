@@ -205,12 +205,21 @@ void EspNowMesh::worker_task(void *argument)
 {
     auto *self = static_cast<EspNowMesh *>(argument);
     ReceivedPacket packet{};
+    const TickType_t announce_interval = std::max<TickType_t>(
+        1, pdMS_TO_TICKS(app::espnow_announce_interval_ms));
+    TickType_t last_announce = xTaskGetTickCount();
     while (self != nullptr && self->started_) {
+        const TickType_t elapsed = xTaskGetTickCount() - last_announce;
+        const TickType_t wait = elapsed < announce_interval ? announce_interval - elapsed : 0;
         if (xQueueReceive(self->receive_queue_, &packet,
-                          pdMS_TO_TICKS(app::espnow_announce_interval_ms)) == pdTRUE) {
+                          wait) == pdTRUE) {
             self->receive(packet.source, packet.data, packet.length);
-        } else {
+        }
+        // A busy receive queue must not suppress discovery announcements.
+        const TickType_t now = xTaskGetTickCount();
+        if (now - last_announce >= announce_interval) {
             self->announce();
+            last_announce = now;
         }
     }
     vTaskDelete(nullptr);
@@ -295,7 +304,8 @@ esp_err_t EspNowMesh::send_packet(const std::uint8_t *destination, std::uint8_t 
     if (sizeof(WireHeader) + payload_size > max_packet_size) return ESP_ERR_INVALID_SIZE;
     std::array<std::uint8_t, max_packet_size> packet{};
     const WireHeader header{wire_magic, wire_version, type,
-                            static_cast<std::uint16_t>(payload_size), ++sequence_,
+                            static_cast<std::uint16_t>(payload_size),
+                            sequence_.fetch_add(1, std::memory_order_relaxed) + 1U,
                             site_hash(config_.site_id)};
     std::memcpy(packet.data(), &header, sizeof(header));
     std::memcpy(packet.data() + sizeof(header), payload, payload_size);
@@ -316,6 +326,11 @@ void EspNowMesh::learn_peer(const std::uint8_t *mac, std::uint8_t member_id)
         if (peer.valid && (peer.logical_member_id == member_id || same_mac(peer.mac, mac))) {
             if (config_.provisioned && !same_mac(peer.mac, mac)) {
                 ESP_LOGW(tag, "Rejected MAC change for provisioned member %u", member_id);
+                return;
+            }
+            if (peer.logical_member_id == member_id && same_mac(peer.mac, mac)) {
+                // Repeated HELLOs refresh discovery, not persistent configuration.
+                ensure_peer(mac, config_.profile.espnow_channel);
                 return;
             }
             std::memcpy(peer.mac, mac, sizeof(peer.mac));

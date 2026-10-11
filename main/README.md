@@ -6,6 +6,60 @@ The gateway framework, networking, MQTT API, topology management, and Modbus RTU
 
 ## Implemented runtime
 
+Version 1.0.8 separates the OTA TLS connection budget (64,000 bytes free / 32,768
+largest block) from the reserve after TLS opens and during transfer (32,768 /
+8,192 bytes). The firmware card shows failure-time available and required memory
+separately from current memory, captured before cleanup. These configurable
+reserves need hardware validation with MQTT and OTA running together. The current
+memory-blocked device needs a physical 1.0.8 baseline before OTA validation;
+uploading the new binary alone cannot repair its installed updater.
+
+Version 1.0.7 adds bounded HTTP chunked firmware downloads and local last-update
+failure diagnostics. The firmware card separates the last failed step/error/HTTP
+response from the current blocker and current memory. OTA scheduling, admission,
+rollback, MQTT live fields and inverter polling are unchanged. Original pre-fix
+1.0.5/1.0.6 updaters need a USB baseline or a response with a correct Content-Length
+to install this fix; see [OTA updates](../doc/OTA_Updates.md).
+
+Version 1.0.6 adds USB/Modbus receive-overflow rejection, eight local communication
+health counters, and stale-queue protection for the separate coordinator UART
+link. Routing failures explicitly distinguish not-sent from uncertain commands;
+writes are never automatically retried. MQTT live payloads remain unchanged.
+See [1.0.6 reliability notes](../doc/Firmware_Reliability_1.0.6.md), including
+the local five-second command lifetime and remaining end-to-end limitations.
+The proposed broader OTA retry rewrite remains unintegrated. Version 1.0.8 changes
+memory admission and diagnostics; the schedule, write protection, rollback,
+HTTP/TLS settings, live payloads and polling are unchanged. Mocked host tests do
+not replace hardware tests.
+
+Version 1.0.5 fixes OTA starvation from ordinary MQTT getters and enables Octal
+PSRAM for the stated N16R8 board. Accepted writes remain protected through
+completion and a quiet period; restart waits for a bus transaction boundary.
+The bottom firmware card shows current memory, current blocker and last-failure diagnostics.
+See [OTA updates](../doc/OTA_Updates.md) for scheduling and the one-time recovery
+path for an older updater stuck before downloading. No fleet capacity claim is made.
+
+Latest optimization audit: [runtime review](../doc/Code_Review_2026-09-11.md).
+It reduces queue memory, bounds result priority, prevents incomplete live JSON on
+allocation failure, fixes low-memory scan handling, and avoids repeated NVS writes
+for unchanged ESP-NOW peers. Live topics, fields and power calculations are unchanged;
+additional failure/defer/internal-heap counters are available on `/health`.
+
+Live JSON uses a reserved, reusable serialization buffer (48 KiB in available
+PSRAM, otherwise 32 KiB internal RAM). Startup logs the actual allocation. This
+avoids allocating a large contiguous output block after constructing the JSON
+tree. MQTT fields and polling intervals are unchanged; oversized payloads are
+rejected with a capacity warning, never truncated.
+
+Offline inverter commands are rejected instead of accumulating until reconnect.
+This allows scheduled OTA on a provisioned standalone device without an inverter
+attached; task health, network, memory and transaction-boundary guards still apply.
+
+Opt-in standalone OTA and first USB migration: [OTA updates](../doc/OTA_Updates.md).
+This checkout enables downloads with `ota_enabled = true`; review that setting
+before release. Parallel OTA and release signing are not implemented. The live
+payload format is unchanged; hardware validation is still required.
+
 Production status and endurance-test procedure: [Production readiness](../doc/Production_Readiness.md). The firmware has reliability improvements but has not yet passed the release gates. Gateway `/health` telemetry reports memory, stack and queue state every 30 seconds.
 
 - First-installation Wi-Fi AP and English web configuration page
@@ -22,7 +76,7 @@ Production status and endurance-test procedure: [Production readiness](../doc/Pr
 
 The old `DiagnosticScanner` remains available as a diagnostic module, but `app_main` now uses `ProductionPoller`.
 
-The project targets a 2 MiB flash device and selects ESP-IDF's `Single factory app (large), no OTA` layout, which provides a 1,500 KiB factory partition. This firmware does not currently reserve OTA application slots.
+The project now selects 16 MiB flash and a custom dual-OTA layout with two 3 MiB application slots. Existing build artifacts may still contain the former 2 MiB factory-only layout until reconfigured. Follow the first USB migration procedure above; an application-only OTA upload cannot migrate the partition table or bootloader.
 
 ## Source layout
 
