@@ -3,9 +3,11 @@
 #include <cstring>
 #include <cstdio>
 #include <cmath>
+#include <cctype>
 
 #include "esp_mac.h"
 #include "inverter_gateway/app/project_config.hpp"
+#include "inverter_gateway/transport/uart_pin_policy.hpp"
 #include "nvs.h"
 
 namespace inverter_gateway::app {
@@ -107,6 +109,41 @@ ConfigValidation validate_config(const SystemConfig &config)
     if (config.profile.topology == SystemTopology::unknown) {
         return ConfigValidation::topology_missing;
     }
+    if (role_has_local_inverter(config.profile.device_role)) {
+        const auto &link = config.inverter_link;
+        if (link.protocol >= protocol::EnergyProtocol::count ||
+            !protocol::energy_protocol_info(link.protocol).implemented)
+            return ConfigValidation::inverter_protocol_invalid;
+        if (!protocol::energy_connection_supported(link.protocol, link.connection) ||
+            link.address == 0 || link.baud < 1200 || link.baud > 115200 || link.parity > 2 ||
+            (link.connection == protocol::EnergyConnection::usb_rs485 && link.parity != 0) ||
+            (link.protocol == protocol::EnergyProtocol::aohai_modbus && link.baud != inverter_baud))
+            return ConfigValidation::inverter_connection_invalid;
+        const bool uart = link.connection == protocol::EnergyConnection::uart_rs232 ||
+            link.connection == protocol::EnergyConnection::uart_rs485 ||
+            link.connection == protocol::EnergyConnection::uart_ttl;
+        if (uart && (link.uart_port != 2 ||
+            !transport::inverter_uart_pin_allowed(link.tx_pin, true) ||
+            !transport::inverter_uart_pin_allowed(link.rx_pin, false) || link.tx_pin == link.rx_pin ||
+            (link.connection == protocol::EnergyConnection::uart_rs485 &&
+            (!transport::inverter_uart_pin_allowed(link.direction_pin, true) ||
+             link.direction_pin == link.tx_pin || link.direction_pin == link.rx_pin))))
+            return ConfigValidation::inverter_connection_invalid;
+        if (!terminated(link.bluetooth_address, sizeof(link.bluetooth_address)))
+            return ConfigValidation::inverter_connection_invalid;
+        if (link.connection == protocol::EnergyConnection::bluetooth) {
+            if (std::strlen(link.bluetooth_address) != 17 || link.bluetooth_address_type > 1)
+                return ConfigValidation::inverter_connection_invalid;
+            bool all_zero = true, all_ff = true;
+            for (unsigned i=0;i<17;++i) {
+                const auto ch=static_cast<unsigned char>(link.bluetooth_address[i]);
+                if ((i%3==2 && ch!=':') || (i%3!=2 && !std::isxdigit(ch)))
+                    return ConfigValidation::inverter_connection_invalid;
+                if (i%3!=2) { all_zero &= ch=='0'; all_ff &= std::tolower(ch)=='f'; }
+            }
+            if (all_zero || all_ff) return ConfigValidation::inverter_connection_invalid;
+        }
+    }
     const InverterRole expected_inverter_role =
         config.profile.device_role == DeviceRole::parallel_member
             ? InverterRole::member
@@ -207,6 +244,8 @@ const char *config_validation_name(ConfigValidation result)
     case ConfigValidation::wifi_required: return "wifi_required";
     case ConfigValidation::mqtt_required: return "mqtt_required";
     case ConfigValidation::espnow_channel_invalid: return "espnow_channel_invalid";
+    case ConfigValidation::inverter_protocol_invalid: return "inverter_protocol_invalid";
+    case ConfigValidation::inverter_connection_invalid: return "inverter_connection_invalid";
     }
     return "unknown";
 }
@@ -295,10 +334,17 @@ esp_err_t ConfigStore::load(SystemConfig &config) const
     result = nvs_get_blob(handle, nvs_key, &candidate, &size);
     nvs_close(handle);
     if (result != ESP_OK) return result;
-    // Version 4 appends the rating; preserve all version 3 credentials and peers.
+    // Schema 4 appended rating; schema 5 appends the inverter link configuration.
     if (candidate.magic == SystemConfig::magic_value && candidate.schema_version == 3 &&
         size == offsetof(SystemConfig, output_rated_power_kw)) {
         candidate.output_rated_power_kw = 0.0F;
+        candidate.schema_version = 4;
+        size = offsetof(SystemConfig, inverter_link);
+    }
+    if (candidate.magic == SystemConfig::magic_value && candidate.schema_version == 4 &&
+        size == offsetof(SystemConfig, inverter_link)) {
+        candidate.inverter_link = {};
+        candidate.inverter_link.address = candidate.profile.modbus_slave_address;
         candidate.schema_version = SystemConfig::current_schema_version;
         size = sizeof(candidate);
     }

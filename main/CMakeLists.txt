@@ -22,10 +22,18 @@ idf_component_register(
         "src/network/mqtt_bridge.cpp"
         "src/network/wifi_provisioning.cpp"
         "src/protocol/modbus_rtu.cpp"
+        "src/protocol/energy_protocol.cpp"
+        "src/protocol/pi_protocols.cpp"
+        "src/protocol/bms_protocols.cpp"
         "src/transport/usb_rs485.cpp"
+        "src/transport/usb_serial_protocol.cpp"
+        "src/transport/uart_inverter.cpp"
+        "src/transport/usb_hid_inverter.cpp"
+        "src/transport/ble_inverter.cpp"
     INCLUDE_DIRS "include"
     PRIV_REQUIRES
         usb
+        bt
         esp_event
         esp_driver_gpio
         esp_driver_rmt

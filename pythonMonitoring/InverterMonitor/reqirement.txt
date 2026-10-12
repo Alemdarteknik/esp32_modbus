@@ -1,0 +1,5 @@
+# MQTT dependency pinned to the version installed in this project's .venv.
+paho-mqtt==1.6.1
+streamlit>=1.49,<2
+
+# tkinter is only needed for the legacy inverter_monitor.py desktop app.

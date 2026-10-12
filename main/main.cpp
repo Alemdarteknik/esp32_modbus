@@ -2,6 +2,8 @@
 #include <atomic>
 #include <memory>
 #include <new>
+#include <cstring>
+#include <cstdio>
 
 #include "esp_log.h"
 #include "esp_system.h"
@@ -26,9 +28,17 @@
 #include "inverter_gateway/network/coordinator_link.hpp"
 #include "inverter_gateway/network/mqtt_bridge.hpp"
 #include "inverter_gateway/network/runtime_messages.hpp"
+#include "inverter_gateway/network/protocol_command_history.hpp"
 #include "inverter_gateway/network/wifi_provisioning.hpp"
 #include "inverter_gateway/protocol/modbus_rtu.hpp"
 #include "inverter_gateway/transport/usb_rs485.hpp"
+#include "inverter_gateway/transport/energy_transport.hpp"
+#include "inverter_gateway/transport/uart_inverter.hpp"
+#include "inverter_gateway/transport/usb_hid_inverter.hpp"
+#include "inverter_gateway/transport/usb_serial_protocol.hpp"
+#include "inverter_gateway/transport/ble_inverter.hpp"
+#include "inverter_gateway/protocol/bms_protocols.hpp"
+#include "inverter_gateway/protocol/energy_poll_schedule.hpp"
 #include "nvs_flash.h"
 
 #if !CONFIG_IDF_TARGET_ESP32S3
@@ -44,12 +54,17 @@ public:
     explicit UniversalRuntime(inverter_gateway::app::SystemConfig &config) : config_(config)
     {
         command_queue_ = xQueueCreate(8, sizeof(inverter_gateway::network::RoutedCommand));
+        protocol_queue_ = xQueueCreate(8, sizeof(QueuedProtocolCommand));
+        if (inverter_gateway::app::role_has_local_inverter(config.profile.device_role) &&
+            config.inverter_link.protocol != inverter_gateway::protocol::EnergyProtocol::aohai_modbus)
+            protocol_history_.reset(new (std::nothrow) inverter_gateway::network::ProtocolCommandHistory);
         ota_admission_lock_ = xSemaphoreCreateMutexStatic(&ota_admission_storage_);
     }
 
     ~UniversalRuntime() override
     {
         if (command_queue_ != nullptr) vQueueDelete(command_queue_);
+        if (protocol_queue_ != nullptr) vQueueDelete(protocol_queue_);
     }
 
     void attach_mesh(inverter_gateway::network::EspNowMesh *mesh) { mesh_ = mesh; }
@@ -84,6 +99,10 @@ public:
         const std::uint8_t local_id = config_.profile.logical_member_id;
         if (inverter_gateway::app::role_has_local_inverter(config_.profile.device_role) &&
             command.target_member_id == local_id && command_queue_ != nullptr) {
+            if (config_.inverter_link.protocol != inverter_gateway::protocol::EnergyProtocol::aohai_modbus) {
+                reject_command(command, "Modbus command does not match selected protocol", false);
+                return;
+            }
             xSemaphoreTake(ota_admission_lock_, portMAX_DELAY);
             const bool unavailable = !local_inverter_available();
             const char *reason = ota_maintenance_.load() ? "OTA restarting" :
@@ -159,10 +178,13 @@ public:
 
     bool local_inverter_available() const
     {
+        if (!transport_ready_.load()) return false;
         const auto last = local_reply_ms_.load();
         const auto now = static_cast<std::uint32_t>(esp_timer_get_time() / 1000);
-        return transport_ready_.load() &&
-            !inverter_gateway::transport::UsbRs485::disconnected() && last != 0 &&
+        const bool usb_present = config_.inverter_link.protocol !=
+            inverter_gateway::protocol::EnergyProtocol::aohai_modbus ||
+            !inverter_gateway::transport::UsbRs485::disconnected();
+        return transport_ready_.load() && usb_present && last != 0 &&
             now - last < inverter_gateway::app::command_link_max_age_ms;
     }
 
@@ -178,6 +200,13 @@ public:
             while (xQueueReceive(command_queue_, &command, 0) == pdTRUE) {
                 reject_command(command, "Inverter disconnected before execution", true);
                 complete_command(command);
+            }
+        }
+        if (!ready && protocol_queue_ != nullptr) {
+            QueuedProtocolCommand queued{};
+            while (xQueueReceive(protocol_queue_, &queued, 0) == pdTRUE) {
+                reject_protocol_command(queued.command, "Device disconnected before execution", true);
+                complete_protocol_command(queued.command);
             }
         }
     }
@@ -204,6 +233,124 @@ public:
         xSemaphoreGive(ota_admission_lock_);
     }
 
+    void on_protocol_telemetry(const inverter_gateway::network::ProtocolTelemetryMessage &message) override
+    {
+        const auto now = static_cast<std::uint32_t>(esp_timer_get_time() / 1000);
+        if (!inverter_gateway::app::role_has_local_inverter(config_.profile.device_role) ||
+            message.source_member_id == config_.profile.logical_member_id) last_data_ms_.store(now);
+        if (message.source_member_id == config_.profile.logical_member_id) local_reply_ms_.store(now);
+        if (inverter_gateway::app::role_is_espnow_member(config_.profile.device_role)) {
+            if (mesh_) mesh_->send_protocol_telemetry(message);
+        } else if (mqtt_) mqtt_->publish_protocol_telemetry(message);
+        else if (coordinator_link_) coordinator_link_->send_protocol_telemetry(message);
+    }
+
+    void on_protocol_command_result(const inverter_gateway::network::ProtocolCommandResult &result) override
+    {
+        if (protocol_history_ && result.source_member_id == config_.profile.logical_member_id) {
+            xSemaphoreTake(ota_admission_lock_, portMAX_DELAY);
+            protocol_history_->complete(result);
+            xSemaphoreGive(ota_admission_lock_);
+        }
+        deliver_protocol_command_result(result);
+    }
+
+    void deliver_protocol_command_result(const inverter_gateway::network::ProtocolCommandResult &result)
+    {
+        if (inverter_gateway::app::role_is_espnow_member(config_.profile.device_role)) {
+            if (mesh_) mesh_->send_protocol_command_result(result);
+        } else if (mqtt_) mqtt_->publish_protocol_command_result(result);
+        else if (coordinator_link_) coordinator_link_->send_protocol_command_result(result);
+    }
+
+    void reject_protocol_command(const inverter_gateway::network::ProtocolCommand &command,
+                                 const char *reason, bool admitted = false)
+    {
+        inverter_gateway::network::ProtocolCommandResult result{};
+        result.command_id = command.command_id;
+        result.source_member_id = command.target_member_id;
+        result.protocol = command.protocol;
+        result.outcome = inverter_gateway::network::ProtocolCommandOutcome::not_sent;
+        std::snprintf(result.command, sizeof(result.command), "%.*s", 79, command.command);
+        std::snprintf(result.detail, sizeof(result.detail), "%s", reason);
+        if (admitted) on_protocol_command_result(result);
+        else deliver_protocol_command_result(result);
+    }
+
+    void on_protocol_command(const inverter_gateway::network::ProtocolCommand &command) override
+    {
+        using namespace inverter_gateway;
+        protocol::EnergyCommandInfo info{};
+        if (command.origin != network::RemoteCommandOrigin::mqtt || command.command_id == 0 ||
+            std::memchr(command.command, 0, sizeof(command.command)) == nullptr ||
+            !protocol::energy_command_info(command.protocol, command.command, info) ||
+            info.setter != command.write || (command.write && !command.confirmed)) {
+            reject_protocol_command(command, "Invalid protocol command or missing write confirmation");
+            return;
+        }
+        if (app::role_has_local_inverter(config_.profile.device_role) &&
+            command.target_member_id == config_.profile.logical_member_id) {
+            if (command.protocol != config_.inverter_link.protocol) {
+                reject_protocol_command(command, "Command protocol does not match device");
+                return;
+            }
+            xSemaphoreTake(ota_admission_lock_, portMAX_DELAY);
+            network::ProtocolCommandResult previous{};
+            if (protocol_history_ && protocol_history_->lookup(command, previous)) {
+                xSemaphoreGive(ota_admission_lock_);
+                deliver_protocol_command_result(previous);
+                return;
+            }
+            QueuedProtocolCommand queued{command, static_cast<std::uint32_t>(esp_timer_get_time() / 1000)};
+            const bool reserved = !ota_maintenance_.load() && local_inverter_available() &&
+                protocol_queue_ && uxQueueSpacesAvailable(protocol_queue_) != 0 &&
+                protocol_history_ && protocol_history_->reserve(command);
+            const bool accepted = reserved && xQueueSend(protocol_queue_, &queued, 0) == pdTRUE;
+            const bool settings_blocked = command.write && protocol_history_ && protocol_history_->writes_blocked();
+            if (accepted && command.write) ++pending_write_count_;
+            xSemaphoreGive(ota_admission_lock_);
+            if (!accepted) reject_protocol_command(command, settings_blocked
+                ? "Earlier setting outcome uncertain; reconnect device or restart UART node"
+                : "Device unavailable, restarting or queue full", reserved);
+        } else if (app::role_is_espnow_coordinator(config_.profile.device_role) && mesh_) {
+            if (mesh_->send_protocol_command(command) != ESP_OK)
+                reject_protocol_command(command, "Member route unavailable");
+        } else if (config_.profile.device_role == app::DeviceRole::internet_gateway && coordinator_link_) {
+            if (coordinator_link_->send_protocol_command(command) != ESP_OK)
+                reject_protocol_command(command, "Coordinator route unavailable");
+        } else reject_protocol_command(command, "No route to member");
+    }
+
+    bool receive_protocol_command(inverter_gateway::network::ProtocolCommand &command)
+    {
+        QueuedProtocolCommand queued{};
+        while (protocol_queue_ && xQueueReceive(protocol_queue_, &queued, 0) == pdTRUE) {
+            command = queued.command;
+            const auto age = static_cast<std::uint32_t>(esp_timer_get_time() / 1000) - queued.admitted_ms;
+            if (age < 5000 && local_inverter_available()) return true;
+            reject_protocol_command(command, "Device unavailable or queued command expired", true);
+            complete_protocol_command(command);
+        }
+        return false;
+    }
+
+    void complete_protocol_command(const inverter_gateway::network::ProtocolCommand &command)
+    {
+        if (!command.write) return;
+        xSemaphoreTake(ota_admission_lock_, portMAX_DELAY);
+        if (pending_write_count_ != 0) --pending_write_count_;
+        last_write_completed_ms_ = static_cast<std::uint32_t>(esp_timer_get_time() / 1000);
+        write_completion_seen_ = true;
+        xSemaphoreGive(ota_admission_lock_);
+    }
+
+    void new_protocol_connection_session()
+    {
+        xSemaphoreTake(ota_admission_lock_, portMAX_DELAY);
+        if (protocol_history_) protocol_history_->new_connection_session();
+        xSemaphoreGive(ota_admission_lock_);
+    }
+
     // Called only by the Modbus owner, outside any transaction or command.
     void ota_bus_boundary()
     {
@@ -221,10 +368,14 @@ public:
             inverter_gateway::network::RoutedCommand command{};
             const bool queued = command_queue_ != nullptr &&
                 xQueueReceive(command_queue_, &command, 0) == pdTRUE;
-            bus_parked_.store(!queued);
+            QueuedProtocolCommand protocol_command{};
+            const bool protocol_queued = protocol_queue_ != nullptr &&
+                xQueueReceive(protocol_queue_, &protocol_command, 0) == pdTRUE;
+            bus_parked_.store(!queued && !protocol_queued);
             xSemaphoreGive(ota_admission_lock_);
-            if (queued) {
-                reject_command(command, "OTA restarting; queued inquiry cancelled", false);
+            if (queued || protocol_queued) {
+                if (queued) reject_command(command, "OTA restarting; queued inquiry cancelled", false);
+                if (protocol_queued) reject_protocol_command(protocol_command.command, "OTA restarting; queued inquiry cancelled", true);
                 continue;
             }
             vTaskDelay(pdMS_TO_TICKS(25));
@@ -235,7 +386,7 @@ public:
     {
         const auto now = static_cast<std::uint32_t>(esp_timer_get_time() / 1000);
         const auto last = bus_heartbeat_ms_.load();
-        return last != 0 && now - last < 15000 && command_queue_ != nullptr &&
+        return last != 0 && now - last < 15000 && command_queue_ != nullptr && protocol_queue_ != nullptr &&
             mqtt_ != nullptr && mqtt_->ota_publisher_healthy();
     }
 
@@ -309,6 +460,10 @@ public:
     }
 
 private:
+    struct QueuedProtocolCommand {
+        inverter_gateway::network::ProtocolCommand command{};
+        std::uint32_t admitted_ms = 0;
+    };
     static bool command_is_write(const inverter_gateway::network::RoutedCommand &command)
     {
         using inverter_gateway::network::RemoteCommandKind;
@@ -335,6 +490,8 @@ private:
     std::atomic<std::uint32_t> bus_heartbeat_ms_{0};
     inverter_gateway::app::SystemConfig &config_;
     QueueHandle_t command_queue_ = nullptr;
+    QueueHandle_t protocol_queue_ = nullptr;
+    std::unique_ptr<inverter_gateway::network::ProtocolCommandHistory> protocol_history_;
     inverter_gateway::network::EspNowMesh *mesh_ = nullptr;
     inverter_gateway::network::MqttBridge *mqtt_ = nullptr;
     inverter_gateway::network::CoordinatorLink *coordinator_link_ = nullptr;
@@ -470,6 +627,242 @@ std::uint16_t enabled_features(const inverter_gateway::app::SystemConfig &config
     }
 }
 
+using UsbProtocolStream = inverter_gateway::transport::UsbSerialProtocol;
+
+struct ProtocolReceiveContext {
+    inverter_gateway::protocol::EnergyProtocol id;
+    const char *command;
+    std::size_t frame_size = 0;
+    std::size_t daly_expected_frames = 0;
+};
+
+inverter_gateway::transport::FrameDecision inspect_protocol_frame(
+    const std::uint8_t *data, std::size_t size, void *argument)
+{
+    using namespace inverter_gateway;
+    auto &context = *static_cast<ProtocolReceiveContext *>(argument);
+    const auto state = context.daly_expected_frames
+        ? protocol::daly_group_frame_state(context.command, data, size,
+            context.daly_expected_frames, context.frame_size)
+        : protocol::energy_frame_state(context.id, context.command, data, size, context.frame_size);
+    return state == protocol::FrameState::complete ? transport::FrameDecision::complete :
+        state == protocol::FrameState::invalid ? transport::FrameDecision::invalid :
+        transport::FrameDecision::incomplete;
+}
+
+[[noreturn]] void run_energy_inverter(inverter_gateway::app::SystemConfig &config,
+                                    UniversalRuntime &runtime)
+{
+    using namespace inverter_gateway;
+    const auto &link = config.inverter_link;
+    std::unique_ptr<transport::InverterByteTransport> link_transport;
+    UsbProtocolStream *serial_usb = nullptr;
+    esp_err_t installed = ESP_ERR_NO_MEM;
+    if (link.connection == protocol::EnergyConnection::usb_rs485) {
+        auto driver = std::unique_ptr<UsbProtocolStream>(new (std::nothrow) UsbProtocolStream);
+        if (driver) { installed = driver->install(link.baud); serial_usb = driver.get(); }
+        link_transport = std::move(driver);
+    } else if (link.connection == protocol::EnergyConnection::usb_hid) {
+        auto driver = std::unique_ptr<transport::UsbHid>(new (std::nothrow) transport::UsbHid);
+        transport::UsbHidInverterConfig options{};
+        options.vendor_id = link.usb_vid;
+        options.product_id = link.usb_pid;
+        if (driver) installed = driver->install(options);
+        link_transport = std::move(driver);
+    } else if (link.connection == protocol::EnergyConnection::bluetooth) {
+        auto driver = std::unique_ptr<transport::BleInverter>(new (std::nothrow) transport::BleInverter);
+        transport::BleInverterConfig options{};
+        std::memcpy(options.mac_address, link.bluetooth_address, sizeof(options.mac_address));
+        options.address_type = link.bluetooth_address_type;
+        if (driver) installed = driver->install(options);
+        link_transport = std::move(driver);
+    } else {
+        auto driver = std::unique_ptr<transport::UartInverter>(new (std::nothrow) transport::UartInverter);
+        transport::UartInverterConfig options{};
+        options.tx_pin = link.tx_pin;
+        options.rx_pin = link.rx_pin;
+        options.direction_pin = link.connection == protocol::EnergyConnection::uart_rs485 ? link.direction_pin : -1;
+        options.baud = link.baud;
+        options.parity = link.parity == 1 ? UART_PARITY_EVEN : link.parity == 2 ? UART_PARITY_ODD : UART_PARITY_DISABLE;
+        if (driver) installed = driver->install(options);
+        link_transport = std::move(driver);
+    }
+    auto response = std::unique_ptr<protocol::EnergyResponse>(new (std::nothrow) protocol::EnergyResponse);
+    auto receive = std::unique_ptr<std::uint8_t[]>(new (std::nothrow) std::uint8_t[transport::maximum_inverter_frame]);
+    if (installed != ESP_OK || !link_transport || !response || !receive) {
+        ESP_LOGE(tag, "Protocol transport could not start: %s", esp_err_to_name(installed));
+        while (true) { runtime.set_transport_ready(false); runtime.ota_bus_boundary(); vTaskDelay(pdMS_TO_TICKS(1000)); }
+    }
+    ESP_LOGI(tag, "Selected %s over %s", protocol::energy_protocol_info(link.protocol).name,
+             protocol::energy_connection_name(link.connection));
+    protocol::EnergyPollScheduler scheduler;
+    std::uint32_t sequence = 0;
+    std::uint32_t connection_session = link_transport->session_id();
+    scheduler.reset(link.protocol, connection_session, esp_timer_get_time() / 1000);
+    unsigned cell_count = 0, temperature_count = 0;
+    std::int64_t next_request_us = 0;
+    auto transact = [&](const char *command, bool &sent) -> protocol::CodecStatus {
+        protocol::EnergyCommandInfo command_info{};
+        if (!protocol::energy_command_info(link.protocol, command, command_info)) {
+            sent = false; return protocol::CodecStatus::invalid_command;
+        }
+        std::uint8_t request[128]{};
+        std::size_t request_size = 0;
+        auto status = protocol::energy_build_request(link.protocol, command, link.address,
+            request, sizeof(request), request_size);
+        if (status != protocol::CodecStatus::ok) { sent = false; return status; }
+        ProtocolReceiveContext context{link.protocol, command};
+        if (link.protocol == protocol::EnergyProtocol::daly || link.protocol == protocol::EnergyProtocol::daly40) {
+            if (std::strcmp(command, "cellVoltages") == 0) context.daly_expected_frames = (cell_count + 2) / 3;
+            if (std::strcmp(command, "cellTemperatures") == 0) context.daly_expected_frames = (temperature_count + 6) / 7;
+            if ((!std::strcmp(command, "cellVoltages") && !cell_count) ||
+                (!std::strcmp(command, "cellTemperatures") && !temperature_count)) {
+                sent = false; return protocol::CodecStatus::invalid_command;
+            }
+        }
+        std::size_t size = transport::maximum_inverter_frame;
+        while (esp_timer_get_time() < next_request_us) vTaskDelay(pdMS_TO_TICKS(10));
+        const auto error = link_transport->exchange(request, request_size, receive.get(), size, 2000,
+            {inspect_protocol_frame, &context, connection_session}, sent);
+        next_request_us = esp_timer_get_time() + 100000;
+        if (error != ESP_OK) return protocol::CodecStatus::invalid_frame;
+        status = protocol::energy_decode_response(link.protocol, command, link.address,
+            receive.get(), context.frame_size, *response);
+        if (status != protocol::CodecStatus::ok) return status;
+        // A setting ACK belongs to its command result. Only actual read
+        // observations establish device readiness and refresh telemetry.
+        if (command_info.setter) return status;
+        if (response->count == 0) return protocol::CodecStatus::invalid_frame;
+        if (context.daly_expected_frames) {
+            const bool cells = std::strcmp(command, "cellVoltages") == 0;
+            const char *prefix = cells ? "voltage_cell" : "battery_t";
+            const auto prefix_size = std::strlen(prefix);
+            const auto exact_count = cells ? cell_count : temperature_count;
+            std::size_t kept = 0;
+            for (std::size_t i = 0; i < response->count; ++i) {
+                const auto &field = response->fields[i];
+                unsigned index = 0;
+                const bool padding = std::strncmp(field.key, prefix, prefix_size) == 0 &&
+                    std::sscanf(field.key + prefix_size, "%u", &index) == 1 && index > exact_count;
+                if (!padding) response->fields[kept++] = field;
+            }
+            response->count = kept;
+        }
+        const auto current_sequence = ++sequence;
+        const auto sampled_ms = esp_timer_get_time() / 1000;
+        for (std::size_t offset = 0; offset < response->count || offset == 0; offset += 2) {
+            network::ProtocolTelemetryMessage message{};
+            message.timestamp_ms = sampled_ms;
+            message.sequence = current_sequence;
+            message.source_member_id = config.profile.logical_member_id;
+            message.protocol = link.protocol;
+            message.chunk_index = static_cast<std::uint8_t>(offset / 2);
+            message.chunk_count = static_cast<std::uint8_t>((response->count + 1) / 2);
+            if (!message.chunk_count) message.chunk_count = 1;
+            std::snprintf(message.command, sizeof(message.command), "%.15s", command);
+            for (unsigned i = 0; i < 2 && offset + i < response->count; ++i)
+                message.fields[message.field_count++] = response->fields[offset + i];
+            message.final_chunk = offset + message.field_count >= response->count;
+            runtime.on_protocol_telemetry(message);
+            if (message.final_chunk) break;
+            // Pace large BMS records for the 115200-baud coordinator cable
+            // and bounded radio queues shared by every protocol.
+            vTaskDelay(pdMS_TO_TICKS(25));
+        }
+        for (std::size_t i = 0; i < response->count; ++i) {
+            const auto &field = response->fields[i];
+            if (!field.numeric) continue;
+            if (std::strcmp(field.key, "number_of_cells") == 0 && field.value >= 0 && field.value <= 48) {
+                cell_count = static_cast<unsigned>(field.value);
+                scheduler.set_read_context_ready("cellVoltages", cell_count != 0, sampled_ms);
+            }
+            if (std::strcmp(field.key, "number_of_temperature_sensors") == 0 && field.value >= 0 && field.value <= 21) {
+                temperature_count = static_cast<unsigned>(field.value);
+                scheduler.set_read_context_ready("cellTemperatures", temperature_count != 0, sampled_ms);
+            }
+        }
+        return status;
+    };
+    while (true) {
+        runtime.ota_bus_boundary();
+        if (!link_transport->connected()) {
+            runtime.set_transport_ready(false);
+            cell_count = temperature_count = 0;
+            scheduler.set_read_context_ready("cellVoltages", false, esp_timer_get_time() / 1000);
+            scheduler.set_read_context_ready("cellTemperatures", false, esp_timer_get_time() / 1000);
+            if (serial_usb) serial_usb->reconnect();
+            if (!link_transport->connected()) { vTaskDelay(pdMS_TO_TICKS(100)); continue; }
+        }
+        const auto current_session = link_transport->session_id();
+        if (current_session != connection_session) {
+            runtime.set_transport_ready(false);
+            runtime.new_protocol_connection_session();
+            connection_session = current_session;
+            cell_count = temperature_count = 0;
+            scheduler.reset(link.protocol, connection_session, esp_timer_get_time() / 1000);
+        }
+        runtime.set_transport_ready(true);
+        // Run due background work before admitting the next queued command.
+        // Live readings retain priority over metadata and command bursts.
+        if (runtime.telemetry_transport_ready()) {
+            const auto now = static_cast<std::uint64_t>(esp_timer_get_time() / 1000);
+            if (const auto *poll = scheduler.next(now)) {
+                bool sent = false;
+                const auto status = transact(poll->command, sent);
+                scheduler.record(status == protocol::CodecStatus::ok,
+                    esp_timer_get_time() / 1000, status);
+                if (status != protocol::CodecStatus::ok)
+                    ESP_LOGD(tag, "%s %s: %s", protocol::energy_protocol_info(link.protocol).name,
+                        poll->command, protocol::codec_status_name(status));
+            }
+        }
+        network::ProtocolCommand command{};
+        if (runtime.receive_protocol_command(command)) {
+            bool sent = false;
+            auto status = transact(command.command, sent);
+            scheduler.observe(command.command, status == protocol::CodecStatus::ok,
+                              esp_timer_get_time() / 1000, status);
+            if (command.write && status == protocol::CodecStatus::ok && !response->acknowledged)
+                status = protocol::CodecStatus::invalid_frame;
+            network::ProtocolCommandResult result{};
+            result.command_id = command.command_id;
+            result.source_member_id = config.profile.logical_member_id;
+            result.protocol = link.protocol;
+            result.write_sent = command.write && sent;
+            result.outcome = status == protocol::CodecStatus::ok
+                ? (command.write ? network::ProtocolCommandOutcome::acknowledged : network::ProtocolCommandOutcome::completed)
+                : status == protocol::CodecStatus::rejected ? network::ProtocolCommandOutcome::rejected
+                : command.write && sent ? network::ProtocolCommandOutcome::uncertain
+                : sent ? network::ProtocolCommandOutcome::invalid_response : network::ProtocolCommandOutcome::not_sent;
+            std::snprintf(result.command, sizeof(result.command), "%s", command.command);
+            std::snprintf(result.detail, sizeof(result.detail), "%s", protocol::codec_status_name(status));
+            if (command.write && sent) {
+                // Invalidate earlier measurements and queued commands after a
+                // write, including an uncertain write. Reads may refresh state;
+                // a general ACK never asserts equality with the requested value.
+                runtime.set_transport_ready(false);
+                scheduler.refresh_live(esp_timer_get_time() / 1000);
+                scheduler.refresh_configuration(esp_timer_get_time() / 1000);
+                protocol::EnergyCommandInfo info{}, readback{};
+                if (status == protocol::CodecStatus::ok &&
+                    protocol::energy_command_info(link.protocol, command.command, info) &&
+                    info.readback_command &&
+                    protocol::energy_command_info(link.protocol, info.readback_command, readback) && !readback.setter) {
+                    bool read_sent = false;
+                    const auto observed = transact(info.readback_command, read_sent);
+                    scheduler.observe(info.readback_command, observed == protocol::CodecStatus::ok,
+                                      esp_timer_get_time() / 1000, observed);
+                    std::snprintf(result.detail, sizeof(result.detail), "acknowledged; readback %s",
+                        protocol::codec_status_name(observed));
+                }
+            }
+            runtime.on_protocol_command_result(result);
+            runtime.complete_protocol_command(command);
+        }
+        vTaskDelay(pdMS_TO_TICKS(25));
+    }
+}
+
 // app_main stays alive in idle_forever, so these references outlive this task.
 struct InverterTaskContext {
     inverter_gateway::app::SystemConfig *config;
@@ -479,7 +872,9 @@ struct InverterTaskContext {
 void inverter_task_entry(void *argument)
 {
     auto *context = static_cast<InverterTaskContext *>(argument);
-    run_local_inverter(*context->config, *context->runtime);
+    if (context->config->inverter_link.protocol == inverter_gateway::protocol::EnergyProtocol::aohai_modbus)
+        run_local_inverter(*context->config, *context->runtime);
+    run_energy_inverter(*context->config, *context->runtime);
 }
 
 void start_local_inverter_task(inverter_gateway::app::SystemConfig &config,

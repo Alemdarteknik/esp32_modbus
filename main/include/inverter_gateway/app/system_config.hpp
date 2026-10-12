@@ -6,6 +6,7 @@
 
 #include "esp_err.h"
 #include "inverter_gateway/app/device_profile.hpp"
+#include "inverter_gateway/protocol/energy_protocol.hpp"
 
 namespace inverter_gateway::app {
 
@@ -22,9 +23,25 @@ struct SavedPeer {
     bool valid = false;
 };
 
+struct InverterLinkConfig {
+    protocol::EnergyProtocol protocol = protocol::EnergyProtocol::aohai_modbus;
+    protocol::EnergyConnection connection = protocol::EnergyConnection::usb_rs485;
+    std::uint8_t address = 1;
+    std::uint8_t uart_port = 2;
+    std::uint32_t baud = 9600;
+    std::int8_t tx_pin = 4;
+    std::int8_t rx_pin = 5;
+    std::int8_t direction_pin = 6;
+    std::uint8_t parity = 0;
+    char bluetooth_address[18]{};
+    std::uint8_t bluetooth_address_type = 0;
+    std::uint16_t usb_vid = 0; // USB HID: zero allows automatic VID discovery.
+    std::uint16_t usb_pid = 0; // Each nonzero VID/PID is an optional match filter.
+};
+
 struct SystemConfig {
     static constexpr std::uint32_t magic_value = 0x49564757; // IVGW
-    static constexpr std::uint16_t current_schema_version = 4;
+    static constexpr std::uint16_t current_schema_version = 5;
 
     std::uint32_t magic = magic_value;
     std::uint16_t schema_version = current_schema_version;
@@ -39,7 +56,15 @@ struct SystemConfig {
     char mqtt_topic_prefix[max_mqtt_text_length + 1]{"inverter"};
     std::array<SavedPeer, max_saved_peers> peers{};
     float output_rated_power_kw = 12.0F; // User-requested default; select actual nameplate in setup.
+    // Append only: preserve the complete schema 3/4 credential/peer layout.
+    InverterLinkConfig inverter_link{};
 };
+
+// Historical NVS blobs store this exact layout. Catch accidental changes to
+// the preserved prefix before compiling a firmware that would lose setup.
+static_assert(sizeof(DeviceProfile) == 14 && sizeof(SavedPeer) == 8);
+static_assert(offsetof(SystemConfig, output_rated_power_kw) == 548);
+static_assert(offsetof(SystemConfig, inverter_link) == 552);
 
 enum class ConfigValidation : std::uint8_t {
     valid,
@@ -54,6 +79,8 @@ enum class ConfigValidation : std::uint8_t {
     wifi_required,
     mqtt_required,
     espnow_channel_invalid,
+    inverter_protocol_invalid,
+    inverter_connection_invalid,
 };
 
 ConfigValidation validate_config(const SystemConfig &config);

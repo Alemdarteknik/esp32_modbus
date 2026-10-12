@@ -1,8 +1,8 @@
-# Universal Modbus Inverter Gateway (AOHAI Profile)
+# Universal Inverter and BMS Gateway
 
 This component is one universal ESP32-S3 firmware for standalone, native three-phase, and multi-inverter installations. Its behavior is selected from a persistent NVS profile instead of by flashing different binaries.
 
-The gateway framework, networking, MQTT API, topology management, and Modbus RTU transport are vendor-neutral. The bundled inverter register profile currently implements AOHAI Modbus RTU V2.14. A different Modbus inverter can reuse the framework but must provide a matching register profile because Modbus does not standardize inverter register addresses or meanings.
+One runtime supplies Wi-Fi, MQTT, ESP-NOW, OTA and role management for every protocol. The existing AOHAI Modbus RTU V2.14 path is retained, and 25 additional PI, JK, Daly and VE.Direct profiles use separate protocol codecs with shared byte transports. See the [protocol capability and command reference](../docs/protocol-support.md) for supported monitoring and settings commands. These additions have automated tests and an ESP32-S3 build; individual inverter/BMS models still require hardware validation.
 
 ## Implemented runtime
 
@@ -109,24 +109,48 @@ Network callbacks never call Modbus directly. Commands enter a FreeRTOS queue an
 
 ## Provisioning
 
+The setup page has separate device-protocol and connection selectors for ESPs
+with a local inverter. The catalog contains AOHAI Modbus RTU and the 25 protocol
+IDs from `esp32-mppsolar`. The firmware reports compatible connections and defaults
+to the page. Serial profiles support the existing CH340/CH341 USB adapter or UART2
+with the appropriate external transceiver; PI profiles also support compatible
+USB HID with automatic discovery, and Bluetooth JK profiles require a configured BLE address. VE.Direct
+uses TTL UART. Both the webpage and configuration API reject incompatible pairs.
+For USB HID, select the device protocol and connect its cable: the ESP discovers
+compatible eight-byte HID bridges without requiring vendor/product IDs.
+Optional ID filters are under Advanced settings; zero means automatic detection.
+Readonly protocol replies establish readiness; settings acknowledgements do not
+refresh telemetry. See the protocol reference for descriptor and hub limits.
+NVS schemas 3 and 4 migrate to schema 5 while preserving credentials, roles, peers
+and the previous Modbus address. Older clients can omit the new settings.
+The selectors are hidden for a separate Internet Gateway with no local inverter.
+
 On an empty NVS, the ESP32 creates:
 
 - SSID: `INVERTER-xxxxxx`
-- Password: `inverter-setup`
+- Password: `12345678`
 - Page: `http://192.168.4.1`
 
 The access point advertises a captive-portal address and answers local DNS requests, so supported phones and computers can open the setup page automatically after joining it. If the operating system does not display its captive-portal window, open `http://192.168.4.1` manually.
 
 Saving the form stores a draft and restarts into discovery mode. Finalization stays blocked until all applicable checks pass:
 
-- the local inverter has answered Modbus, when this ESP has an inverter;
+- the local device has returned a valid response for its selected protocol;
 - the configured number of parallel members has been discovered;
 - a separate gateway has discovered its coordinator;
 - Wi-Fi and MQTT are connected for an MQTT-capable role.
 
-The setup page presents only settings relevant to the selected installation and device role. Each inverter-facing ESP records how many PV inputs are physically connected and whether a battery, BMS connection, and generator are installed. The poller omits unused equipment blocks where possible, and live MQTT output suppresses unconfigured equipment, three-phase-only values on single-phase inverters, and parallel-only values on standalone systems. Consolidated live MQTT payloads group status, inverter, PV, grid, output, load, battery/BMS, generator, energy, and parallel information. Power is expressed in kW/kVA/kvar and operating codes include readable text. It scans nearby Wi-Fi networks, fills the selected SSID automatically, treats MQTT username/password as optional, derives parallel member counts, and hides ESP-NOW controls outside applicable parallel inverter roles. The master generates a stable installation ID from its ESP32 MAC address; slaves learn it wirelessly and a separate Internet Gateway learns it through the coordinator cable. An ID override, Modbus address, and MQTT prefix remain under Advanced settings.
+The setup page presents only settings relevant to the selected installation and device role. Each inverter-facing ESP records how many PV inputs are physically connected and whether a battery, BMS connection, and generator are installed. For AOHAI, the poller omits unused equipment blocks where possible, and live MQTT output suppresses unconfigured equipment, three-phase-only values on single-phase inverters, and parallel-only values on standalone systems. Consolidated live MQTT payloads group status, inverter, PV, grid, output, load, battery/BMS, generator, energy, and parallel information. Power is expressed in kW/kVA/kvar and operating codes include readable text. It scans nearby Wi-Fi networks, fills the selected SSID automatically, treats MQTT username/password as optional, derives parallel member counts, and hides ESP-NOW controls outside applicable parallel inverter roles. The master generates a stable installation ID from its ESP32 MAC address; slaves learn it wirelessly and a separate Internet Gateway learns it through the coordinator cable. An ID override, Modbus address, and MQTT prefix remain under Advanced settings. Native protocol measurements use typed streaming topics described in the protocol reference; they do not invent AOHAI register values or a mixed-protocol aggregate.
 
 After setup, MQTT-capable devices continue serving the configuration page at `http://esp32.local` and at their assigned LAN IP address. The phone or computer must be connected to the same local Wi-Fi network. The setup access point remains disabled during normal operation.
+
+MQTT server addresses without a scheme use plain MQTT for a hostname alone and
+secure WebSockets for a hostname with a path. For example,
+`mqtt-esp.alemdarteknik.com/mqtt` becomes
+`wss://mqtt-esp.alemdarteknik.com/mqtt` on port 443. Enter a full `mqtt://`, `mqtts://`,
+`ws://` or `wss://` URL to specify the transport and port explicitly. A full URL
+controls its port; the separate Port field applies to addresses without a scheme.
+Leaving the saved server address blank retains it.
 
 Advanced settings also contains **Show detailed ESP serial-monitor output**. The choice is saved separately in NVS and controls information logs, Modbus TX/RX frames, and successful CRC messages. Warnings and errors always remain visible. Firmware defaults—including this setting, polling times, setup AP name/password, Modbus timing, BOOT-button timing, and coordinator-link settings—are centralized in `include/inverter_gateway/app/project_config.hpp`. ESP-IDF menuconfig can additionally force serial-monitor output on with `CONFIG_INVERTER_GATEWAY_MONITOR_OUTPUT_DEFAULT`.
 
@@ -254,7 +278,9 @@ Telemetry contains the register space, starting address, count, sequence, boot-r
 - A separate Internet Gateway exchanges framed, CRC-checked telemetry, commands, results, and heartbeats with the coordinator over UART1 (TX GPIO17, RX GPIO18, 115200 8N1).
 - All inverter-node ESP32s must share one 2.4 GHz ESP-NOW channel. The separate UART gateway is not part of that ESP-NOW radio group.
 
-ESP-NOW application encryption is not enabled yet. MQTT may use credentials, but certificate provisioning for verified TLS is also not implemented. Treat this networking layer as commissioning/test firmware until both are added.
+ESP-NOW application encryption is not enabled yet. MQTT supports username/password
+authentication and verifies TLS servers using the ESP certificate bundle for
+`mqtts://` and `wss://` connections.
 
 ## Safety boundary
 

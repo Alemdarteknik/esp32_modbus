@@ -12,6 +12,7 @@
 #include "mqtt_client.h"
 #include "inverter_gateway/app/system_config.hpp"
 #include "inverter_gateway/network/runtime_messages.hpp"
+#include "inverter_gateway/network/protocol_telemetry_cache.hpp"
 
 namespace inverter_gateway::network {
 
@@ -25,6 +26,8 @@ public:
     bool ota_results_drained() const;
     void publish_telemetry(const TelemetryMessage &message);
     void publish_command_result(const RoutedCommandResult &result);
+    void publish_protocol_telemetry(const ProtocolTelemetryMessage &message);
+    void publish_protocol_command_result(const ProtocolCommandResult &result);
 
 private:
     static constexpr std::size_t alert_point_count = 512;
@@ -66,6 +69,11 @@ private:
     static void publisher_task(void *argument);
     void publish_telemetry_now(const TelemetryMessage &message);
     void publish_command_result_now(const RoutedCommandResult &result);
+    void publish_protocol_telemetry_now(const ProtocolTelemetryMessage &message);
+    void publish_protocol_record_now(std::uint8_t member, ProtocolTelemetryCache::Record &record,
+                                     std::uint32_t now);
+    void publish_protocol_live_now(std::uint8_t member, std::uint32_t now);
+    void publish_protocol_command_result_now(const ProtocolCommandResult &result);
     void publish_live(const TelemetryMessage &message);
     void publish_snapshot(const TelemetryMessage &message);
     void publish_alert_changes(const TelemetryMessage &message);
@@ -80,6 +88,8 @@ private:
     std::atomic<std::uint32_t> publisher_heartbeat_ms_{0};
     QueueHandle_t publish_queue_ = nullptr;
     QueueHandle_t result_queue_ = nullptr;
+    QueueHandle_t protocol_publish_queue_ = nullptr;
+    QueueHandle_t protocol_result_queue_ = nullptr;
     char hardware_client_id_[32]{};
     TaskHandle_t publisher_task_ = nullptr;
     // Owned by this bridge, used only by mqtt_publish; enqueue copies its data.
@@ -92,6 +102,9 @@ private:
     std::atomic<std::uint32_t> last_live_enqueued_ms_{0};
     std::atomic<std::uint32_t> reconnect_count_{0};
     std::array<LiveCache, maximum_members> live_cache_{};
+    // Allocate only for observed native members. The large bounded cache uses
+    // the configured PSRAM-capable allocator, never the publisher task stack.
+    std::array<std::unique_ptr<ProtocolTelemetryCache>, maximum_members> native_cache_{};
     std::array<std::array<std::uint16_t, alert_point_count>, maximum_members>
         alert_values_{};
     std::array<std::array<bool, alert_point_count>, maximum_members> alert_seen_{};

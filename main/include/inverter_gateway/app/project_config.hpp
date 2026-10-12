@@ -100,7 +100,7 @@ inline constexpr std::uint32_t diagnostic_poll_interval_ms = 5000;
 
 // Setup access point and webpage
 inline constexpr char setup_ap_ssid_prefix[] = "INVERTER-";
-inline constexpr char setup_ap_password[] = "inverter123";
+inline constexpr char setup_ap_password[] = "12345678";
 inline constexpr char setup_page_url[] = "http://esp32.local";
 inline constexpr std::uint8_t setup_ap_default_channel = 1;
 inline constexpr std::uint8_t setup_ap_max_connections = 4;

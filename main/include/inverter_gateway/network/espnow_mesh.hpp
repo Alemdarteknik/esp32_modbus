@@ -23,6 +23,9 @@ public:
     esp_err_t send_telemetry(const TelemetryMessage &message);
     esp_err_t send_command(const RoutedCommand &command);
     esp_err_t send_command_result(const RoutedCommandResult &result);
+    esp_err_t send_protocol_telemetry(const ProtocolTelemetryMessage &message);
+    esp_err_t send_protocol_command(const ProtocolCommand &command);
+    esp_err_t send_protocol_command_result(const ProtocolCommandResult &result);
     std::size_t discovered_member_count() const;
     bool has_coordinator() const;
 

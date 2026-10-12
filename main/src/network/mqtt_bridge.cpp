@@ -1,4 +1,5 @@
 #include "inverter_gateway/network/mqtt_bridge.hpp"
+#include "inverter_gateway/network/native_telemetry.hpp"
 
 #include <algorithm>
 #include <cerrno>
@@ -42,6 +43,7 @@ std::atomic<std::uint32_t> telemetry_queue_drops{0};
 std::atomic<std::uint32_t> live_json_failures{0};
 std::atomic<std::uint32_t> live_publish_deferrals{0};
 std::atomic<std::uint32_t> result_queue_drops{0};
+std::atomic<std::uint32_t> protocol_queue_drops{0};
 
 // Only for literal keys and strings owned by the static register catalog.
 // Borrowing immutable metadata avoids duplicating it for every live reading.
@@ -163,6 +165,36 @@ bool parse_command_id(const cJSON *item, std::uint64_t &command_id)
         return errno != ERANGE && command_id != 0 && end != item->valuestring && *end == '\0';
     }
     return false;
+}
+
+const char *protocol_outcome_name(ProtocolCommandOutcome outcome)
+{
+    switch (outcome) {
+    case ProtocolCommandOutcome::completed: return "completed";
+    case ProtocolCommandOutcome::acknowledged: return "acknowledged";
+    case ProtocolCommandOutcome::rejected: return "rejected";
+    case ProtocolCommandOutcome::unsupported: return "unsupported";
+    case ProtocolCommandOutcome::unavailable: return "unavailable";
+    case ProtocolCommandOutcome::not_sent: return "not_sent";
+    case ProtocolCommandOutcome::uncertain: return "uncertain";
+    case ProtocolCommandOutcome::invalid_response: return "invalid_response";
+    }
+    return "unsupported";
+}
+
+template <std::size_t Size>
+bool terminated_text(const char (&text)[Size])
+{
+    return std::memchr(text, '\0', Size) != nullptr;
+}
+
+bool topic_component(const char *text)
+{
+    if (!text || !*text) return false;
+    for (const unsigned char *p = reinterpret_cast<const unsigned char *>(text); *p; ++p) {
+        if (!std::isalnum(*p) && *p != '_') return false;
+    }
+    return true;
 }
 
 bool parse_named_category(const cJSON *item, inverter::RegisterSpace &space)
@@ -441,6 +473,17 @@ esp_err_t MqttBridge::start()
         if (result_queue_ == nullptr) result = ESP_ERR_NO_MEM;
     }
     if (result == ESP_OK) {
+        const bool protocol_telemetry_needed =
+            config_.profile.device_role != app::DeviceRole::standalone_combined ||
+            config_.inverter_link.protocol != protocol::EnergyProtocol::aohai_modbus;
+        if (protocol_telemetry_needed) {
+            protocol_publish_queue_ = xQueueCreate(32, sizeof(ProtocolTelemetryMessage));
+        }
+        protocol_result_queue_ = xQueueCreate(8, sizeof(ProtocolCommandResult));
+        if ((protocol_telemetry_needed && protocol_publish_queue_ == nullptr) ||
+            protocol_result_queue_ == nullptr) result = ESP_ERR_NO_MEM;
+    }
+    if (result == ESP_OK) {
         live_json_capacity_ = app::mqtt_live_buffer_psram_bytes;
         live_json_buffer_ = static_cast<char *>(heap_caps_malloc(
             live_json_capacity_, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
@@ -489,10 +532,19 @@ void MqttBridge::stop()
         vQueueDelete(result_queue_);
         result_queue_ = nullptr;
     }
+    if (protocol_publish_queue_ != nullptr) {
+        vQueueDelete(protocol_publish_queue_);
+        protocol_publish_queue_ = nullptr;
+    }
+    if (protocol_result_queue_ != nullptr) {
+        vQueueDelete(protocol_result_queue_);
+        protocol_result_queue_ = nullptr;
+    }
     // The only user of this buffer (publisher_task_) has been stopped above.
     heap_caps_free(live_json_buffer_);
     live_json_buffer_ = nullptr;
     live_json_capacity_ = 0;
+    for (auto &cache : native_cache_) cache.reset();
 }
 
 void MqttBridge::event_callback(void *argument, esp_event_base_t,
@@ -564,6 +616,44 @@ void MqttBridge::handle_command(const char *topic, int topic_length,
     command.origin = RemoteCommandOrigin::mqtt;
     std::uint64_t command_id = 0;
     bool valid = cJSON_IsString(operation) && parse_command_id(id, command_id);
+    if (valid && std::strcmp(operation->valuestring, "protocol") == 0) {
+        ProtocolCommand native{};
+        native.command_id = command_id;
+        native.target_member_id = target;
+        native.origin = RemoteCommandOrigin::mqtt;
+        const cJSON *profile = cJSON_GetObjectItemCaseSensitive(root, "protocol");
+        const cJSON *text = cJSON_GetObjectItemCaseSensitive(root, "command");
+        const cJSON *write = cJSON_GetObjectItemCaseSensitive(root, "write");
+        protocol::EnergyCommandInfo definition{};
+        valid = cJSON_IsString(profile) && cJSON_IsString(text) &&
+            text->valuestring && std::strlen(text->valuestring) < sizeof(native.command) &&
+            protocol::parse_energy_protocol(profile->valuestring, native.protocol) &&
+            native.protocol != protocol::EnergyProtocol::aohai_modbus &&
+            protocol::energy_command_info(native.protocol, text->valuestring, definition);
+        if (valid) {
+            native.write = definition.setter;
+            native.confirmed = cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(root, "confirmed"));
+            std::snprintf(native.command, sizeof(native.command), "%s", text->valuestring);
+            if (write != nullptr) valid = cJSON_IsBool(write) && cJSON_IsTrue(write) == native.write;
+        }
+        if (valid && remember_command_id(command_id)) {
+            if (native.write && !native.confirmed) {
+                ProtocolCommandResult rejected{};
+                rejected.command_id = command_id;
+                rejected.source_member_id = target;
+                rejected.protocol = native.protocol;
+                rejected.outcome = ProtocolCommandOutcome::not_sent;
+                std::snprintf(rejected.command, sizeof(rejected.command), "%s", native.command);
+                std::snprintf(rejected.detail, sizeof(rejected.detail), "Settings command requires confirmed:true");
+                publish_protocol_command_result(rejected);
+            } else sink_.on_protocol_command(native);
+        } else if (valid) {
+            ESP_LOGW(tag, "Rejected duplicate MQTT command ID %llu",
+                     static_cast<unsigned long long>(command_id));
+        } else ESP_LOGW(tag, "Rejected malformed or unsupported native protocol command");
+        cJSON_Delete(root);
+        return;
+    }
     if (valid && std::strcmp(operation->valuestring, "get") == 0) {
         command.kind = RemoteCommandKind::read_registers;
     } else if (valid && std::strcmp(operation->valuestring, "set") == 0) {
@@ -1757,6 +1847,301 @@ void MqttBridge::publish_command_result(const RoutedCommandResult &message)
     }
 }
 
+void MqttBridge::publish_protocol_telemetry(const ProtocolTelemetryMessage &message)
+{
+    if (message.source_member_id >= maximum_members ||
+        message.protocol >= protocol::EnergyProtocol::count ||
+        message.protocol == protocol::EnergyProtocol::aohai_modbus ||
+        message.field_count == 0 || message.field_count > 2 ||
+        message.chunk_count == 0 || message.chunk_index >= message.chunk_count ||
+        message.final_chunk != (message.chunk_index + 1U == message.chunk_count) ||
+        !terminated_text(message.command)) return;
+    for (std::size_t i = 0; i < message.field_count; ++i) {
+        const auto &field = message.fields[i];
+        if (!terminated_text(field.key) || !field.key[0] || !terminated_text(field.unit) ||
+            (!field.numeric && !terminated_text(field.text)) ||
+            (field.numeric && !std::isfinite(field.value))) return;
+    }
+    last_telemetry_ms_.store(static_cast<std::uint32_t>(esp_timer_get_time() / 1000));
+    if (protocol_publish_queue_ == nullptr ||
+        xQueueSend(protocol_publish_queue_, &message, 0) != pdTRUE) {
+        ++protocol_queue_drops;
+        ESP_LOGW(tag, "MQTT protocol telemetry queue full; chunk dropped");
+    }
+}
+
+void MqttBridge::publish_protocol_telemetry_now(const ProtocolTelemetryMessage &message)
+{
+    const auto member = message.source_member_id;
+    if (member >= maximum_members) return;
+    if (!native_cache_[member]) {
+        native_cache_[member].reset(new (std::nothrow) ProtocolTelemetryCache);
+        if (!native_cache_[member]) { ++live_json_failures; return; }
+    }
+    const auto now = static_cast<std::uint32_t>(esp_timer_get_time() / 1000);
+    auto &cache = *native_cache_[member];
+    const auto rejected = cache.rejected_records;
+    auto *record = cache.receive(message, now);
+    protocol_queue_drops.fetch_add(cache.rejected_records - rejected);
+    if (record == nullptr) return;
+    publish_protocol_record_now(member, *record, now);
+    publish_protocol_live_now(member, now);
+}
+
+namespace {
+bool protocol_poll_info(protocol::EnergyProtocol profile, const char *command,
+                        protocol::EnergyPollInfo &info)
+{
+    if (protocol::energy_poll_info(profile, command, info)) return true;
+    // Existing compact radio/cable packets carry a 15-byte command label.
+    // Resolve only an unambiguous background-query prefix, never a setter.
+    bool found = false;
+    if (std::strlen(command) != 15) return false;
+    for (std::size_t i = 0; i < protocol::energy_background_poll_count(profile); ++i) {
+        protocol::EnergyPollInfo candidate{};
+        if (!protocol::energy_background_poll_command(profile, i, candidate) ||
+            std::strlen(candidate.command) <= 15 || std::strncmp(candidate.command, command, 15)) continue;
+        if (found) return false;
+        info = candidate; found = true;
+    }
+    return found;
+}
+
+cJSON *protocol_record_json(const ProtocolTelemetryCache::Record &record,
+                           protocol::EnergyProtocol profile, std::uint8_t member,
+                           std::uint32_t now)
+{
+    cJSON *root = cJSON_CreateObject();
+    if (root == nullptr) return nullptr;
+    bool valid = cJSON_AddNumberToObject(root, "member_id", member) != nullptr;
+    valid = cJSON_AddStringToObject(root, "protocol", protocol::energy_protocol_info(profile).name) != nullptr && valid;
+    valid = cJSON_AddStringToObject(root, "command", record.command) != nullptr && valid;
+    valid = cJSON_AddNumberToObject(root, "sequence", record.sequence) != nullptr && valid;
+    valid = cJSON_AddNumberToObject(root, "timestamp_ms", static_cast<double>(record.timestamp_ms)) != nullptr && valid;
+    valid = cJSON_AddNumberToObject(root, "sample_age_ms", now - record.received_ms) != nullptr && valid;
+    valid = cJSON_AddBoolToObject(root, "record_complete", true) != nullptr && valid;
+    cJSON *fields = cJSON_AddObjectToObject(root, "fields");
+    valid = fields != nullptr && valid;
+    for (std::size_t i = 0; i < record.response.count && valid; ++i) {
+        const auto &field = record.response.fields[i];
+        cJSON *item = cJSON_AddObjectToObject(fields, field.key);
+        if (item == nullptr) { valid = false; break; }
+        valid = cJSON_AddStringToObject(item, "unit", field.unit) != nullptr && valid;
+        valid = (field.numeric ? cJSON_AddNumberToObject(item, "value", field.value)
+                               : cJSON_AddStringToObject(item, "value", field.text)) != nullptr && valid;
+    }
+    if (!valid) { cJSON_Delete(root); return nullptr; }
+    return root;
+}
+
+const char *protocol_live_section(protocol::EnergyProtocol profile, const char *command, const char *key, const char *unit)
+{
+    protocol::EnergyPollInfo info{};
+    if (protocol_poll_info(profile, command, info)) {
+        if (info.poll_class == protocol::EnergyPollClass::identity) return "identity";
+        if (info.poll_class == protocol::EnergyPollClass::configuration) return "settings";
+        if (info.poll_class == protocol::EnergyPollClass::energy) return "energy";
+        if (info.poll_class == protocol::EnergyPollClass::status) return "status";
+    }
+    return native_field_section(profile, key, unit);
+}
+} // namespace
+
+void MqttBridge::publish_protocol_record_now(std::uint8_t member,
+                                            ProtocolTelemetryCache::Record &record, std::uint32_t now)
+{
+    auto &cache = *native_cache_[member];
+    protocol::EnergyPollInfo info{};
+    const bool classified = protocol_poll_info(cache.profile(), record.command, info);
+    const auto hash = ProtocolTelemetryCache::fingerprint(record);
+    if (classified && info.publish_on_change && record.published && record.published_hash == hash &&
+        now - record.published_ms < 60000) return;
+    app::MemoryWorkGuard memory_work;
+    if (!memory_work || esp_mqtt_client_get_outbox_size(client_) > 8192) {
+        ++live_publish_deferrals;
+        return;
+    }
+    cJSON *root = protocol_record_json(record, cache.profile(), member, now);
+    if (root != nullptr && live_json_buffer_ != nullptr &&
+        cJSON_PrintPreallocated(root, live_json_buffer_, static_cast<int>(live_json_capacity_), false)) {
+        char suffix[40]{"protocol"};
+        if (topic_component(record.command)) {
+            std::snprintf(suffix, sizeof(suffix), "protocol/%s", record.command);
+        }
+        char topic[224]{};
+        make_topic(topic, sizeof(topic), member, suffix);
+        // One acknowledged MQTT message contains the whole observation.
+        if (enqueue_payload(client_, topic, live_json_buffer_, 1, 0) >= 0) {
+            record.published = true; record.published_hash = hash; record.published_ms = now;
+            last_live_enqueued_ms_.store(now);
+        }
+    } else ++live_json_failures;
+    cJSON_Delete(root);
+}
+
+void MqttBridge::publish_protocol_live_now(std::uint8_t member, std::uint32_t now)
+{
+    if (!native_cache_[member]) return;
+    auto &cache = *native_cache_[member];
+    const auto generation = reconnect_count_.load();
+    if (cache.live_published && cache.reconnect_generation == generation &&
+        now - cache.last_live_publish_ms < app::mqtt_live_publish_interval_ms) return;
+    if (cache.live_attempted && cache.reconnect_generation == generation &&
+        now - cache.last_live_attempt_ms < 1000) return;
+    cache.live_attempted = true;
+    cache.last_live_attempt_ms = now;
+    cache.reconnect_generation = generation;
+    unsigned retries = 0;
+    for (auto &record : cache.records()) {
+        if (!record.response.count ||
+            (record.published && record.published_hash == ProtocolTelemetryCache::fingerprint(record))) continue;
+        publish_protocol_record_now(member, record, now);
+        if (++retries == 2) break;
+    }
+    app::MemoryWorkGuard memory_work;
+    if (!memory_work || esp_mqtt_client_get_outbox_size(client_) > 8192) {
+        ++live_publish_deferrals;
+        return;
+    }
+    cJSON *root = cJSON_CreateObject();
+    if (!root) { ++live_json_failures; return; }
+    bool valid = cJSON_AddStringToObject(root, "protocol", protocol::energy_protocol_info(cache.profile()).name) != nullptr;
+    valid = cJSON_AddNumberToObject(root, "member_id", member) != nullptr && valid;
+    valid = cJSON_AddNumberToObject(root, "sequence", cache.latest_sequence()) != nullptr && valid;
+    valid = cJSON_AddNumberToObject(root, "timestamp_ms", static_cast<double>(cache.latest_timestamp())) != nullptr && valid;
+    cJSON *records = cJSON_AddArrayToObject(root, "native_records");
+    cJSON *sections = cJSON_AddObjectToObject(root, "sections");
+    cJSON *operating = cJSON_AddObjectToObject(root, "operating_status");
+    cJSON *power = cJSON_AddObjectToObject(root, "power_summary");
+    cJSON *quality = cJSON_AddObjectToObject(root, "power_quality");
+    valid = records && sections && operating && power && quality && valid;
+    bool core_fresh = false;
+    NativePowerSummary summary(cache.profile());
+    for (const auto &record : cache.records()) {
+        if (!record.response.count || !valid) continue;
+        protocol::EnergyPollInfo info{};
+        if (!protocol_poll_info(cache.profile(), record.command, info)) continue;
+        const auto age = now - record.received_ms;
+        const bool metadata = info.poll_class == protocol::EnergyPollClass::identity ||
+                              info.poll_class == protocol::EnergyPollClass::configuration;
+        const bool stale = age > (metadata ? 300000U : info.poll_class == protocol::EnergyPollClass::energy ? 120000U : 15000U);
+        if (info.primary && !stale) {
+            for (std::size_t i = 0; i < record.response.count; ++i)
+                if (record.response.fields[i].numeric && std::strcmp(record.response.fields[i].unit, "bool") != 0)
+                    core_fresh = true;
+        }
+        cJSON *complete = protocol_record_json(record, cache.profile(), member, now);
+        if (!complete || !cJSON_AddItemToArray(records, complete)) {
+            cJSON_Delete(complete); valid = false; break;
+        }
+        for (std::size_t i = 0; i < record.response.count && valid; ++i) {
+            const auto &field = record.response.fields[i];
+            const char *section_name = protocol_live_section(cache.profile(), record.command, field.key, field.unit);
+            cJSON *section = cJSON_GetObjectItemCaseSensitive(sections, section_name);
+            if (!section) section = cJSON_AddArrayToObject(sections, section_name);
+            cJSON *entry = cJSON_CreateObject();
+            if (!section || !entry) { cJSON_Delete(entry); valid = false; break; }
+            valid = cJSON_AddStringToObject(entry, "name", field.key) != nullptr && valid;
+            valid = cJSON_AddStringToObject(entry, "unit", field.unit) != nullptr && valid;
+            valid = cJSON_AddNumberToObject(entry, "age_ms", age) != nullptr && valid;
+            valid = cJSON_AddBoolToObject(entry, "stale", stale) != nullptr && valid;
+            valid = (field.numeric ? cJSON_AddNumberToObject(entry, "value", field.value) :
+                                    cJSON_AddStringToObject(entry, "value", field.text)) != nullptr && valid;
+            if (!cJSON_AddItemToArray(section, entry)) { cJSON_Delete(entry); valid = false; break; }
+            if (!std::strcmp(section_name, "status") && !cJSON_GetObjectItemCaseSensitive(operating, field.key)) {
+                valid = (field.numeric ? cJSON_AddNumberToObject(operating, field.key, field.value) :
+                                        cJSON_AddStringToObject(operating, field.key, field.text)) != nullptr && valid;
+            }
+            if (info.poll_class == protocol::EnergyPollClass::live) summary.observe(field, age, record.sequence);
+        }
+    }
+    for (std::size_t index = 0; index < NativePowerSummary::metric_count && valid; ++index) {
+        const auto reading = summary.reading(static_cast<NativePowerSummary::Metric>(index));
+        if (!reading.present) continue;
+        const char *key = NativePowerSummary::names[index];
+        valid = (reading.fresh() ? cJSON_AddNumberToObject(power, key, reading.value) :
+                                 cJSON_AddNullToObject(power, key)) != nullptr && valid;
+        cJSON *flags = cJSON_AddObjectToObject(quality, key);
+        valid = flags && valid;
+        if (flags) {
+            valid = cJSON_AddBoolToObject(flags, "valid", reading.fresh()) != nullptr && valid;
+            valid = cJSON_AddBoolToObject(flags, "stale", !reading.fresh()) != nullptr && valid;
+            valid = cJSON_AddNumberToObject(flags, "age_ms", reading.age_ms) != nullptr && valid;
+            valid = cJSON_AddStringToObject(flags, "source_field", reading.source_field) != nullptr && valid;
+        }
+    }
+    valid = cJSON_AddBoolToObject(root, "core_status_fresh", core_fresh) != nullptr && valid;
+    valid = cJSON_AddStringToObject(power, "sampling", "sequential_cached_readings") != nullptr && valid;
+    const auto render = [&]() {
+        return valid && live_json_buffer_ &&
+            cJSON_PrintPreallocated(root, live_json_buffer_, static_cast<int>(live_json_capacity_), false);
+    };
+    bool rendered = render();
+    if (!rendered && valid && live_json_buffer_) {
+        // Large variant catalogs can exceed the internal-RAM output buffer.
+        // These sections duplicate complete records; keep every observation
+        // so monitors can reconstruct the same identity, settings and totals.
+        cJSON_DeleteItemFromObjectCaseSensitive(sections, "identity");
+        cJSON_DeleteItemFromObjectCaseSensitive(sections, "settings");
+        cJSON_DeleteItemFromObjectCaseSensitive(sections, "energy");
+        valid = cJSON_AddBoolToObject(root, "metadata_in_native_records", true) != nullptr && valid;
+        rendered = render();
+    }
+    if (!rendered && valid && live_json_buffer_) {
+        // Complete typed observations remain the authoritative snapshot even
+        // when the second, grouped representation cannot fit alongside them.
+        cJSON_DeleteItemFromObjectCaseSensitive(root, "sections");
+        valid = cJSON_AddBoolToObject(root, "sections_in_native_records", true) != nullptr && valid;
+        rendered = render();
+    }
+    if (rendered) {
+        char topic[224]{};
+        make_topic(topic, sizeof(topic), member, "live");
+        if (enqueue_payload(client_, topic, live_json_buffer_, 1, 0) >= 0) {
+            cache.live_published = true; cache.last_live_publish_ms = now;
+            cache.reconnect_generation = generation;
+            last_live_enqueued_ms_.store(now);
+        }
+    } else ++live_json_failures;
+    cJSON_Delete(root);
+}
+
+void MqttBridge::publish_protocol_command_result(const ProtocolCommandResult &message)
+{
+    if (message.source_member_id >= maximum_members ||
+        message.protocol >= protocol::EnergyProtocol::count ||
+        !terminated_text(message.command) || !terminated_text(message.detail)) return;
+    if (protocol_result_queue_ == nullptr ||
+        xQueueSend(protocol_result_queue_, &message, 0) != pdTRUE) {
+        ++result_queue_drops;
+        ESP_LOGW(tag, "MQTT protocol result queue full; result dropped");
+    }
+}
+
+void MqttBridge::publish_protocol_command_result_now(const ProtocolCommandResult &message)
+{
+    cJSON *root = cJSON_CreateObject();
+    if (root == nullptr) { ++live_json_failures; return; }
+    char id[24];
+    std::snprintf(id, sizeof(id), "%llu", static_cast<unsigned long long>(message.command_id));
+    bool valid = cJSON_AddStringToObject(root, "command_id", id) != nullptr;
+    valid = cJSON_AddNumberToObject(root, "member_id", message.source_member_id) != nullptr && valid;
+    valid = cJSON_AddStringToObject(root, "operation", "protocol") != nullptr && valid;
+    valid = cJSON_AddStringToObject(root, "protocol", protocol::energy_protocol_info(message.protocol).name) != nullptr && valid;
+    valid = cJSON_AddStringToObject(root, "command", message.command) != nullptr && valid;
+    valid = cJSON_AddStringToObject(root, "outcome", protocol_outcome_name(message.outcome)) != nullptr && valid;
+    valid = cJSON_AddStringToObject(root, "detail", message.detail) != nullptr && valid;
+    valid = (message.write_sent_known ? cJSON_AddBoolToObject(root, "write_sent", message.write_sent)
+                                     : cJSON_AddNullToObject(root, "write_sent")) != nullptr && valid;
+    if (valid && live_json_buffer_ != nullptr &&
+        cJSON_PrintPreallocated(root, live_json_buffer_, static_cast<int>(live_json_capacity_), false)) {
+        char topic[192]{};
+        make_topic(topic, sizeof(topic), message.source_member_id, "result");
+        enqueue_payload(client_, topic, live_json_buffer_, 1, 0);
+    } else ++live_json_failures;
+    cJSON_Delete(root);
+}
+
 void MqttBridge::publish_command_result_now(const RoutedCommandResult &message)
 {
     cJSON *root = cJSON_CreateObject();
@@ -1907,7 +2292,7 @@ void MqttBridge::publish_health()
     const auto live = last_live_enqueued_ms_.load();
     const auto usb = transport::UsbRs485::stats();
     const auto modbus = protocol::modbus_rtu_stats();
-    char payload[1024]{};
+    char payload[1280]{};
     const int size = std::snprintf(payload, sizeof(payload),
         "{\"uptime_ms\":%llu,\"reset_reason\":%d,\"heap_free_bytes\":%u,"
         "\"heap_minimum_bytes\":%u,\"heap_largest_block_bytes\":%u,"
@@ -1916,6 +2301,7 @@ void MqttBridge::publish_health()
         "\"live_enqueued\":%s,\"live_enqueue_age_ms\":%u,"
         "\"mqtt_disconnect_count\":%u,\"enqueue_failures\":%u,\"telemetry_queue_drops\":%u,"
         "\"live_json_failures\":%u,\"live_publish_deferrals\":%u,\"result_queue_drops\":%u,"
+        "\"protocol_queue_depth\":%u,\"protocol_queue_drops\":%u,"
         "\"json_allocation_failures\":%u,\"heap_internal_free_bytes\":%u,"
         "\"heap_internal_largest_block_bytes\":%u,\"heap_psram_free_bytes\":%u,"
         "\"usb_rx_dropped_bytes\":%u,\"usb_rx_overflow_events\":%u,"
@@ -1938,6 +2324,8 @@ void MqttBridge::publish_health()
         static_cast<unsigned>(live_json_failures.load()),
         static_cast<unsigned>(live_publish_deferrals.load()),
         static_cast<unsigned>(result_queue_drops.load()),
+        static_cast<unsigned>(protocol_publish_queue_ ? uxQueueMessagesWaiting(protocol_publish_queue_) : 0),
+        static_cast<unsigned>(protocol_queue_drops.load()),
         static_cast<unsigned>(app::json_allocation_failures()),
         static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
         static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
@@ -1968,6 +2356,8 @@ void MqttBridge::publisher_task(void *argument)
     }
     TelemetryMessage message{};
     RoutedCommandResult command_result{};
+    ProtocolTelemetryMessage native_message{};
+    ProtocolCommandResult native_result{};
     std::uint32_t last_health = 0;
     while (self != nullptr) {
         const auto now = static_cast<std::uint32_t>(esp_timer_get_time() / 1000);
@@ -1982,6 +2372,21 @@ void MqttBridge::publisher_task(void *argument)
         for (unsigned burst = 0; burst < 2 && self->connected_; ++burst) {
             if (xQueueReceive(self->result_queue_, &command_result, 0) != pdTRUE) break;
             self->publish_command_result_now(command_result);
+        }
+        for (unsigned burst = 0; burst < 2 && self->connected_; ++burst) {
+            if (xQueueReceive(self->protocol_result_queue_, &native_result, 0) != pdTRUE) break;
+            self->publish_protocol_command_result_now(native_result);
+        }
+        for (unsigned burst = 0; burst < 8 && self->protocol_publish_queue_ != nullptr; ++burst) {
+            if (xQueueReceive(self->protocol_publish_queue_, &native_message, 0) != pdTRUE) break;
+            if (!self->connected_) { ++protocol_queue_drops; continue; }
+            self->publish_protocol_telemetry_now(native_message);
+        }
+        if (self->connected_) {
+            // Cached metadata reaches newly connected subscribers while
+            // sample ages continue advancing if the inverter stops replying.
+            for (std::uint8_t member = 0; member < maximum_members; ++member)
+                self->publish_protocol_live_now(member, now);
         }
         if (xQueueReceive(self->publish_queue_, &message, pdMS_TO_TICKS(100)) != pdTRUE) continue;
         if (!self->connected_) {
@@ -2002,7 +2407,8 @@ bool MqttBridge::ota_publisher_healthy() const
 bool MqttBridge::ota_results_drained() const
 {
     return connected() && ota_publisher_healthy() && result_queue_ != nullptr &&
-        uxQueueMessagesWaiting(result_queue_) == 0 && client_ != nullptr &&
+        uxQueueMessagesWaiting(result_queue_) == 0 && protocol_result_queue_ != nullptr &&
+        uxQueueMessagesWaiting(protocol_result_queue_) == 0 && client_ != nullptr &&
         esp_mqtt_client_get_outbox_size(client_) == 0;
 }
 

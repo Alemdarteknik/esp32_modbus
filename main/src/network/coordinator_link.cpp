@@ -1,6 +1,7 @@
 #include "inverter_gateway/network/coordinator_link.hpp"
 
 #include <array>
+#include <cmath>
 #include <cstring>
 
 #include "esp_check.h"
@@ -20,6 +21,9 @@ constexpr std::uint8_t type_heartbeat = 1;
 constexpr std::uint8_t type_telemetry = 2;
 constexpr std::uint8_t type_command = 3;
 constexpr std::uint8_t type_command_result = 4;
+constexpr std::uint8_t type_protocol_telemetry = 5;
+constexpr std::uint8_t type_protocol_command = 6;
+constexpr std::uint8_t type_protocol_command_result = 7;
 constexpr std::size_t maximum_payload = 256;
 
 #pragma pack(push, 1)
@@ -44,6 +48,59 @@ struct OutboundFrame {
     coordinator_policy::Ticket ticket;
     std::uint8_t payload[maximum_payload];
 };
+
+bool command_frame_type(std::uint8_t type)
+{
+    return type == type_command || type == type_protocol_command;
+}
+
+bool valid_protocol(protocol::EnergyProtocol value)
+{
+    return static_cast<std::uint8_t>(value) < static_cast<std::uint8_t>(protocol::EnergyProtocol::count);
+}
+
+bool valid_bool(const bool &value)
+{
+    return *reinterpret_cast<const std::uint8_t *>(&value) <= 1;
+}
+
+bool valid_terminated(const char *text, std::size_t capacity, bool allow_empty = true)
+{
+    return (allow_empty || text[0] != '\0') && std::memchr(text, '\0', capacity) != nullptr;
+}
+
+bool valid_protocol_telemetry(const ProtocolTelemetryMessage &message)
+{
+    if (!valid_protocol(message.protocol) || !valid_bool(message.final_chunk) ||
+        message.chunk_count == 0 || message.chunk_count > 48 || message.chunk_index >= message.chunk_count ||
+        message.final_chunk != (message.chunk_index + 1 == message.chunk_count) ||
+        message.field_count > 2 || !valid_terminated(message.command, sizeof(message.command), false)) return false;
+    for (std::size_t i = 0; i < message.field_count; ++i) {
+        const auto &field = message.fields[i];
+        if (!valid_bool(field.numeric) || !valid_terminated(field.key, sizeof(field.key), false) ||
+            !valid_terminated(field.unit, sizeof(field.unit)) ||
+            (field.numeric ? !std::isfinite(field.value) :
+                !valid_terminated(field.text, sizeof(field.text)))) return false;
+    }
+    return true;
+}
+
+bool valid_protocol_command(const ProtocolCommand &message)
+{
+    return valid_protocol(message.protocol) && message.origin == RemoteCommandOrigin::mqtt &&
+        valid_bool(message.write) && valid_bool(message.confirmed) &&
+        valid_terminated(message.command, sizeof(message.command), false);
+}
+
+bool valid_protocol_result(const ProtocolCommandResult &message)
+{
+    return valid_protocol(message.protocol) && valid_bool(message.write_sent) &&
+        valid_bool(message.write_sent_known) &&
+        static_cast<std::uint8_t>(message.outcome) <=
+            static_cast<std::uint8_t>(ProtocolCommandOutcome::invalid_response) &&
+        valid_terminated(message.command, sizeof(message.command), false) &&
+        valid_terminated(message.detail, sizeof(message.detail));
+}
 
 std::uint32_t monotonic_ms()
 {
@@ -146,10 +203,15 @@ void CoordinatorLink::stop()
         // accepted-but-unsent command into a subsequent start of this object.
         OutboundFrame pending{};
         while (xQueueReceive(transmit_queue_, &pending, 0) == pdTRUE) {
-            if (pending.type != type_command || pending.size != sizeof(RoutedCommand)) continue;
-            RoutedCommand command{};
-            std::memcpy(&command, pending.payload, sizeof(command));
-            report_command_failure(command, false, "coordinator link stopped before send");
+            if (pending.type == type_command && pending.size == sizeof(RoutedCommand)) {
+                RoutedCommand command{};
+                std::memcpy(&command, pending.payload, sizeof(command));
+                report_command_failure(command, false, "coordinator link stopped before send");
+            } else if (pending.type == type_protocol_command && pending.size == sizeof(ProtocolCommand)) {
+                ProtocolCommand command{};
+                std::memcpy(&command, pending.payload, sizeof(command));
+                report_protocol_command_failure(command, false, "coordinator link stopped before send");
+            }
         }
         vQueueDelete(transmit_queue_);
         transmit_queue_ = nullptr;
@@ -194,6 +256,54 @@ esp_err_t CoordinatorLink::send_command(const RoutedCommand &command)
          command.kind != RemoteCommandKind::read_registers &&
          command.kind != RemoteCommandKind::write_registers)) return ESP_ERR_INVALID_ARG;
     return enqueue(type_command, &command, sizeof(command));
+}
+
+esp_err_t CoordinatorLink::send_protocol_telemetry(const ProtocolTelemetryMessage &message)
+{
+    if (config_.profile.device_role != app::DeviceRole::parallel_coordinator ||
+        !valid_protocol_telemetry(message)) return ESP_ERR_INVALID_ARG;
+    return enqueue(type_protocol_telemetry, &message, sizeof(message));
+}
+
+esp_err_t CoordinatorLink::send_protocol_command(const ProtocolCommand &command)
+{
+    if (config_.profile.device_role != app::DeviceRole::internet_gateway ||
+        !valid_protocol_command(command)) return ESP_ERR_INVALID_ARG;
+    return enqueue(type_protocol_command, &command, sizeof(command));
+}
+
+esp_err_t CoordinatorLink::send_protocol_command_result(const ProtocolCommandResult &result)
+{
+    if (config_.profile.device_role != app::DeviceRole::parallel_coordinator ||
+        !valid_protocol_result(result)) return ESP_ERR_INVALID_ARG;
+    return enqueue(type_protocol_command_result, &result, sizeof(result));
+}
+
+ProtocolCommandResult CoordinatorLink::protocol_command_route_failure(const ProtocolCommand &command,
+                                                                     bool uncertain)
+{
+    ProtocolCommandResult result{};
+    result.command_id = command.command_id;
+    result.source_member_id = command.target_member_id;
+    result.protocol = command.protocol;
+    result.outcome = uncertain ? ProtocolCommandOutcome::uncertain : ProtocolCommandOutcome::not_sent;
+    result.write_sent_known = !uncertain;
+    std::memcpy(result.command, command.command, sizeof(result.command));
+    result.command[sizeof(result.command) - 1] = '\0';
+    std::strncpy(result.detail, uncertain ? "coordinator forwarding outcome uncertain" :
+        "coordinator forwarding not sent", sizeof(result.detail) - 1);
+    return result;
+}
+
+void CoordinatorLink::report_protocol_command_failure(const ProtocolCommand &command, bool uncertain,
+                                                      const char *reason)
+{
+    ESP_LOGW(tag, "Protocol command route to member %u %s: %s (no automatic retry)",
+             command.target_member_id, uncertain ? "uncertain" : "not sent", reason);
+    auto result = protocol_command_route_failure(command, uncertain);
+    std::strncpy(result.detail, reason, sizeof(result.detail) - 1);
+    result.detail[sizeof(result.detail) - 1] = '\0';
+    sink_.on_protocol_command_result(result);
 }
 
 RoutedCommandResult CoordinatorLink::command_route_failure(const RoutedCommand &command,
@@ -251,7 +361,7 @@ esp_err_t CoordinatorLink::enqueue(std::uint8_t type, const void *payload,
     if (size != 0) std::memcpy(frame.payload, payload, size);
     xSemaphoreTake(state_mutex_, portMAX_DELAY);
     const auto now = monotonic_ms();
-    if (type == type_command && !session_.online(now, app::coordinator_link_timeout_ms)) {
+    if (command_frame_type(type) && !session_.online(now, app::coordinator_link_timeout_ms)) {
         xSemaphoreGive(state_mutex_);
         return ESP_ERR_INVALID_STATE;
     }
@@ -358,7 +468,7 @@ void CoordinatorLink::run()
         xSemaphoreTake(state_mutex_, portMAX_DELAY);
         const bool link_ready = session_.online(monotonic_ms(), app::coordinator_link_timeout_ms);
         if (xQueueReceive(transmit_queue_, &outbound, 0) == pdTRUE) {
-            if (link_ready || outbound.type == type_command) have_outbound = true;
+            if (link_ready || command_frame_type(outbound.type)) have_outbound = true;
             else {
                 // Keep non-command data for the existing reconnect workflow.
                 // Rotate it so old commands behind it are rejected offline.
@@ -367,21 +477,34 @@ void CoordinatorLink::run()
         }
         xSemaphoreGive(state_mutex_);
         if (have_outbound) {
-            const bool command_frame = outbound.type == type_command;
+            const bool command_frame = command_frame_type(outbound.type);
             const auto result = send(outbound.type, outbound.payload, outbound.size,
                                      command_frame ? &outbound.ticket : nullptr);
             if (result.disposition != coordinator_policy::SendDisposition::forwarded) {
-                if (command_frame && outbound.size == sizeof(RoutedCommand)) {
+                if (outbound.type == type_command && outbound.size == sizeof(RoutedCommand)) {
                     RoutedCommand command{};
                     std::memcpy(&command, outbound.payload, sizeof(command));
                     report_command_failure(command,
+                        result.disposition == coordinator_policy::SendDisposition::uncertain,
+                        esp_err_to_name(result.error));
+                } else if (outbound.type == type_protocol_command && outbound.size == sizeof(ProtocolCommand)) {
+                    ProtocolCommand command{};
+                    std::memcpy(&command, outbound.payload, sizeof(command));
+                    report_protocol_command_failure(command,
                         result.disposition == coordinator_policy::SendDisposition::uncertain,
                         esp_err_to_name(result.error));
                 } else ESP_LOGW(tag, "UART forwarding failed: %s", esp_err_to_name(result.error));
             }
         }
         std::uint8_t first = 0;
-        if (uart_read_bytes(port, &first, 1, pdMS_TO_TICKS(100)) != 1) continue;
+        // Keep draining queued telemetry while interleaving available RX. A
+        // fixed 100 ms receive wait after every transmitted frame caps this
+        // link below the rate of a large multi-chunk status response.
+        const auto receive_wait = have_outbound ? TickType_t{0} : pdMS_TO_TICKS(100);
+        if (uart_read_bytes(port, &first, 1, receive_wait) != 1) {
+            if (have_outbound) vTaskDelay(1);
+            continue;
+        }
         if (first != static_cast<std::uint8_t>(magic & 0xff)) continue;
         Header header{};
         reinterpret_cast<std::uint8_t *>(&header)[0] = first;
@@ -446,9 +569,29 @@ void CoordinatorLink::run()
                 report_command_failure(command, false, "no current coordinator-link session");
                 continue;
             }
+        } else if (header.type == type_protocol_command && coordinator &&
+                   header.payload_size == sizeof(ProtocolCommand)) {
+            ProtocolCommand command{};
+            std::memcpy(&command, payload.data(), sizeof(command));
+            if (!valid_protocol_command(command)) continue;
+            if (!accept_received_command()) {
+                report_protocol_command_failure(command, false, "no current coordinator-link session");
+                continue;
+            }
         } else if (gateway &&
                    ((header.type == type_telemetry && header.payload_size == sizeof(TelemetryMessage)) ||
-                    (header.type == type_command_result && header.payload_size == sizeof(RoutedCommandResult)))) {
+                    (header.type == type_command_result && header.payload_size == sizeof(RoutedCommandResult)) ||
+                    (header.type == type_protocol_telemetry && header.payload_size == sizeof(ProtocolTelemetryMessage)) ||
+                    (header.type == type_protocol_command_result && header.payload_size == sizeof(ProtocolCommandResult)))) {
+            if (header.type == type_protocol_telemetry) {
+                ProtocolTelemetryMessage message{};
+                std::memcpy(&message, payload.data(), sizeof(message));
+                if (!valid_protocol_telemetry(message)) continue;
+            } else if (header.type == type_protocol_command_result) {
+                ProtocolCommandResult result{};
+                std::memcpy(&result, payload.data(), sizeof(result));
+                if (!valid_protocol_result(result)) continue;
+            }
             note_receive();
         } else continue;
         dispatch(header.type, payload.data(), header.payload_size);
@@ -473,6 +616,18 @@ void CoordinatorLink::dispatch(std::uint8_t type, const std::uint8_t *payload,
         RoutedCommandResult message{};
         std::memcpy(&message, payload, size);
         sink_.on_command_result(message);
+    } else if (type == type_protocol_telemetry && gateway && size == sizeof(ProtocolTelemetryMessage)) {
+        ProtocolTelemetryMessage message{};
+        std::memcpy(&message, payload, size);
+        if (valid_protocol_telemetry(message)) sink_.on_protocol_telemetry(message);
+    } else if (type == type_protocol_command && coordinator && size == sizeof(ProtocolCommand)) {
+        ProtocolCommand message{};
+        std::memcpy(&message, payload, size);
+        if (valid_protocol_command(message)) sink_.on_protocol_command(message);
+    } else if (type == type_protocol_command_result && gateway && size == sizeof(ProtocolCommandResult)) {
+        ProtocolCommandResult message{};
+        std::memcpy(&message, payload, size);
+        if (valid_protocol_result(message)) sink_.on_protocol_command_result(message);
     }
 }
 
@@ -480,5 +635,8 @@ static_assert(sizeof(TelemetryMessage) <= maximum_payload);
 static_assert(sizeof(IdentityPayload) <= maximum_payload);
 static_assert(sizeof(RoutedCommand) <= maximum_payload);
 static_assert(sizeof(RoutedCommandResult) <= maximum_payload);
+static_assert(sizeof(ProtocolTelemetryMessage) <= maximum_payload);
+static_assert(sizeof(ProtocolCommand) <= maximum_payload);
+static_assert(sizeof(ProtocolCommandResult) <= maximum_payload);
 
 } // namespace inverter_gateway::network

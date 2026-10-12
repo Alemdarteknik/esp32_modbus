@@ -34,5 +34,5 @@
     "--compile-commands-dir=c:\\Users\\Administrator\\Documents\\Espressif\\esp32_modbus\\build"
   ],
   "idf.flashType": "UART",
-  "idf.port": "COM25"
+  "idf.port": "COM9"
 }

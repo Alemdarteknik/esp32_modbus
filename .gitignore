@@ -56,6 +56,10 @@ __pycache__/
 *.egg-info/
 dist/
 
+# Local Python monitor backups
+/pythonMonitoring/**/.protocol-backup-*/
+/pythonMonitoring/**/.telemetry*-backup-*/
+
 # Virtual environment folders
 venv/
 .venv/

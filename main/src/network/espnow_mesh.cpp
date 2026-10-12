@@ -1,6 +1,7 @@
 #include "inverter_gateway/network/espnow_mesh.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 
 #include "esp_log.h"
@@ -20,6 +21,9 @@ enum WireType : std::uint8_t {
     telemetry = 2,
     command = 3,
     command_result = 4,
+    protocol_telemetry = 5,
+    protocol_command = 6,
+    protocol_command_result = 7,
 };
 
 #pragma pack(push, 1)
@@ -52,6 +56,54 @@ struct ReceivedPacket {
 bool same_mac(const std::uint8_t *a, const std::uint8_t *b)
 {
     return std::memcmp(a, b, 6) == 0;
+}
+
+bool valid_protocol(protocol::EnergyProtocol value)
+{
+    return static_cast<std::uint8_t>(value) < static_cast<std::uint8_t>(protocol::EnergyProtocol::count);
+}
+
+bool valid_bool(const bool &value)
+{
+    return *reinterpret_cast<const std::uint8_t *>(&value) <= 1;
+}
+
+bool valid_terminated(const char *text, std::size_t capacity, bool allow_empty = true)
+{
+    return (allow_empty || text[0] != '\0') && std::memchr(text, '\0', capacity) != nullptr;
+}
+
+bool valid_protocol_telemetry(const ProtocolTelemetryMessage &message)
+{
+    if (!valid_protocol(message.protocol) || !valid_bool(message.final_chunk) || message.field_count > 2 ||
+        message.chunk_count == 0 || message.chunk_count > 48 || message.chunk_index >= message.chunk_count ||
+        message.final_chunk != (message.chunk_index + 1 == message.chunk_count) ||
+        !valid_terminated(message.command, sizeof(message.command), false)) return false;
+    for (std::size_t i = 0; i < message.field_count; ++i) {
+        const auto &field = message.fields[i];
+        if (!valid_bool(field.numeric) || !valid_terminated(field.key, sizeof(field.key), false) ||
+            !valid_terminated(field.unit, sizeof(field.unit)) ||
+            (field.numeric ? !std::isfinite(field.value) :
+                !valid_terminated(field.text, sizeof(field.text)))) return false;
+    }
+    return true;
+}
+
+bool valid_protocol_command(const ProtocolCommand &message)
+{
+    return valid_protocol(message.protocol) && message.origin == RemoteCommandOrigin::mqtt &&
+        valid_bool(message.write) && valid_bool(message.confirmed) &&
+        valid_terminated(message.command, sizeof(message.command), false);
+}
+
+bool valid_protocol_result(const ProtocolCommandResult &message)
+{
+    return valid_protocol(message.protocol) && valid_bool(message.write_sent) &&
+        valid_bool(message.write_sent_known) &&
+        static_cast<std::uint8_t>(message.outcome) <=
+            static_cast<std::uint8_t>(ProtocolCommandOutcome::invalid_response) &&
+        valid_terminated(message.command, sizeof(message.command), false) &&
+        valid_terminated(message.detail, sizeof(message.detail));
 }
 
 std::uint32_t site_hash(const char *text)
@@ -174,6 +226,36 @@ esp_err_t EspNowMesh::send_command_result(const RoutedCommandResult &result)
     return send_packet(destination, WireType::command_result, &result, sizeof(result));
 }
 
+esp_err_t EspNowMesh::send_protocol_telemetry(const ProtocolTelemetryMessage &message)
+{
+    if (!valid_protocol_telemetry(message) ||
+        message.source_member_id != config_.profile.logical_member_id) return ESP_ERR_INVALID_ARG;
+    const std::uint8_t *destination = broadcast_mac;
+    if (app::role_is_espnow_member(config_.profile.device_role)) {
+        if (const auto *coordinator = peer_for_member(0)) destination = coordinator;
+    }
+    return send_packet(destination, WireType::protocol_telemetry, &message, sizeof(message));
+}
+
+esp_err_t EspNowMesh::send_protocol_command(const ProtocolCommand &message)
+{
+    if (!app::role_is_espnow_coordinator(config_.profile.device_role) ||
+        !valid_protocol_command(message)) return ESP_ERR_INVALID_ARG;
+    const auto *destination = peer_for_member(message.target_member_id);
+    if (destination == nullptr) return ESP_ERR_NOT_FOUND;
+    return send_packet(destination, WireType::protocol_command, &message, sizeof(message));
+}
+
+esp_err_t EspNowMesh::send_protocol_command_result(const ProtocolCommandResult &result)
+{
+    if (!app::role_is_espnow_member(config_.profile.device_role) ||
+        !valid_protocol_result(result) ||
+        result.source_member_id != config_.profile.logical_member_id) return ESP_ERR_INVALID_ARG;
+    const auto *destination = peer_for_member(0);
+    if (destination == nullptr) destination = broadcast_mac;
+    return send_packet(destination, WireType::protocol_command_result, &result, sizeof(result));
+}
+
 std::size_t EspNowMesh::discovered_member_count() const
 {
     return std::count_if(config_.peers.begin(), config_.peers.end(),
@@ -294,6 +376,32 @@ void EspNowMesh::receive(const std::uint8_t *source, const std::uint8_t *data,
         const auto *known = peer_for_member(message.source_member_id);
         if (known != nullptr && same_mac(known, source) &&
             accept_sequence(source, header.sequence, false)) sink_.on_command_result(message);
+    } else if (header.type == WireType::protocol_telemetry &&
+               header.payload_size == sizeof(ProtocolTelemetryMessage) &&
+               app::role_is_espnow_coordinator(config_.profile.device_role)) {
+        ProtocolTelemetryMessage message{};
+        std::memcpy(&message, payload, sizeof(message));
+        const auto *known = peer_for_member(message.source_member_id);
+        if (valid_protocol_telemetry(message) && known != nullptr && same_mac(known, source) &&
+            accept_sequence(source, header.sequence, false)) sink_.on_protocol_telemetry(message);
+    } else if (header.type == WireType::protocol_command &&
+               header.payload_size == sizeof(ProtocolCommand) &&
+               app::role_is_espnow_member(config_.profile.device_role)) {
+        const auto *coordinator = peer_for_member(0);
+        if (coordinator == nullptr || !same_mac(coordinator, source)) return;
+        ProtocolCommand message{};
+        std::memcpy(&message, payload, sizeof(message));
+        if (valid_protocol_command(message) &&
+            message.target_member_id == config_.profile.logical_member_id &&
+            accept_sequence(source, header.sequence, false)) sink_.on_protocol_command(message);
+    } else if (header.type == WireType::protocol_command_result &&
+               header.payload_size == sizeof(ProtocolCommandResult) &&
+               app::role_is_espnow_coordinator(config_.profile.device_role)) {
+        ProtocolCommandResult message{};
+        std::memcpy(&message, payload, sizeof(message));
+        const auto *known = peer_for_member(message.source_member_id);
+        if (valid_protocol_result(message) && known != nullptr && same_mac(known, source) &&
+            accept_sequence(source, header.sequence, false)) sink_.on_protocol_command_result(message);
     }
 }
 
@@ -378,5 +486,8 @@ static_assert(sizeof(WireHeader) + sizeof(TelemetryMessage) <= max_packet_size);
 static_assert(sizeof(WireHeader) + sizeof(HelloPayload) <= max_packet_size);
 static_assert(sizeof(WireHeader) + sizeof(RoutedCommand) <= max_packet_size);
 static_assert(sizeof(WireHeader) + sizeof(RoutedCommandResult) <= max_packet_size);
+static_assert(sizeof(WireHeader) + sizeof(ProtocolTelemetryMessage) <= max_packet_size);
+static_assert(sizeof(WireHeader) + sizeof(ProtocolCommand) <= max_packet_size);
+static_assert(sizeof(WireHeader) + sizeof(ProtocolCommandResult) <= max_packet_size);
 
 } // namespace inverter_gateway::network

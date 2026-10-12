@@ -24,9 +24,14 @@ public:
     esp_err_t send_telemetry(const TelemetryMessage &message);
     esp_err_t send_command(const RoutedCommand &command);
     esp_err_t send_command_result(const RoutedCommandResult &result);
+    esp_err_t send_protocol_telemetry(const ProtocolTelemetryMessage &message);
+    esp_err_t send_protocol_command(const ProtocolCommand &command);
+    esp_err_t send_protocol_command_result(const ProtocolCommandResult &result);
     // Synthesizes a routing result for the requested member, not this gateway.
     static RoutedCommandResult command_route_failure(const RoutedCommand &command,
                                                      bool uncertain);
+    static ProtocolCommandResult protocol_command_route_failure(const ProtocolCommand &command,
+                                                                bool uncertain);
 
 private:
     struct SendResult {
@@ -41,6 +46,8 @@ private:
     void dispatch(std::uint8_t type, const std::uint8_t *payload, std::uint16_t size);
     void report_command_failure(const RoutedCommand &command, bool uncertain,
                                 const char *reason);
+    void report_protocol_command_failure(const ProtocolCommand &command, bool uncertain,
+                                         const char *reason);
     void note_receive();
     bool accept_received_command();
 

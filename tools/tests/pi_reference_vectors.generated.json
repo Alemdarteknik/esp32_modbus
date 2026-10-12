@@ -1,0 +1,5813 @@
+{
+  "source_revision": "eafdd4328c77f516cf82430c5bcb6fa042c45d3a",
+  "vectors": [
+    {
+      "protocol": "pi16",
+      "command": "QED",
+      "pattern": "QED(\\d\\d\\d\\d\\d\\d\\d\\d)$",
+      "frame_hex": "283031323334359caf0d"
+    },
+    {
+      "protocol": "pi16",
+      "command": "QID",
+      "pattern": null,
+      "frame_hex": "28393631333138303131303030353793a50d"
+    },
+    {
+      "protocol": "pi16",
+      "command": "QGMN",
+      "pattern": null,
+      "frame_hex": "2830303044ee0d"
+    },
+    {
+      "protocol": "pi16",
+      "command": "QMOD",
+      "pattern": null,
+      "frame_hex": "28429caf0d"
+    },
+    {
+      "protocol": "pi16",
+      "command": "QMOD",
+      "pattern": null,
+      "frame_hex": "2847b76c0d"
+    },
+    {
+      "protocol": "pi16",
+      "command": "QPIBI",
+      "pattern": null,
+      "frame_hex": "283020362031323334203132203433b76c0d"
+    },
+    {
+      "protocol": "pi16",
+      "command": "QPIGS",
+      "pattern": null,
+      "frame_hex": "283232342e36203030303030302034392e3920303030362e38203233322e342030313539342034392e39203030362e3820303239203431352e30203431352e30203035372e39202d2d2d2e2d20313030203030303030203030303030202d2d2d2d2d203030302e30203030302e30202d2d2d2e2d203033352e3020442d2d2d3131303030316bdb0d"
+    },
+    {
+      "protocol": "pi16",
+      "command": "QPIGS",
+      "pattern": null,
+      "frame_hex": "283232352e38203030303032342034392e3920303030302e30203030302e302030303030302030302e30203030302e3020303030203430352e34203430352e34203034382e38202d2d2d2e2d20303438203030313633203030303234202d2d2d2d2d203334322e36202d2d2d2e2d202d2d2d2e2d203034392e3020412d2d2d303031303130595a0d"
+    },
+    {
+      "protocol": "pi16",
+      "command": "QPI",
+      "pattern": null,
+      "frame_hex": "28504931369caf0d"
+    },
+    {
+      "protocol": "pi16",
+      "command": "QPIRI",
+      "pattern": null,
+      "frame_hex": "283233302e302035302e30203031332e30203233302e30203031332e302031382e30203034382e302031203130203086420d"
+    },
+    {
+      "protocol": "pi16",
+      "command": "QVFW",
+      "pattern": null,
+      "frame_hex": "2856455246573a30303030302e323756090d"
+    },
+    {
+      "protocol": "pi16",
+      "command": "QVFW2",
+      "pattern": null,
+      "frame_hex": "285645524657323a30303030302e3330e3880d"
+    },
+    {
+      "protocol": "pi17",
+      "command": "GPMP",
+      "pattern": null,
+      "frame_hex": "5e443030383135303030e1a10d"
+    },
+    {
+      "protocol": "pi17",
+      "command": "PI",
+      "pattern": null,
+      "frame_hex": "5e443030353137caec0d"
+    },
+    {
+      "protocol": "pi17",
+      "command": "ID",
+      "pattern": null,
+      "frame_hex": "5e44303235313439363136313730343130303234323030303030306c650d"
+    },
+    {
+      "protocol": "pi17",
+      "command": "VFW",
+      "pattern": null,
+      "frame_hex": "5e4430313756455246573a30303030312e303156570d"
+    },
+    {
+      "protocol": "pi17",
+      "command": "VFW2",
+      "pattern": null,
+      "frame_hex": "5e443031385645524657323a30303030312e303199c30d"
+    },
+    {
+      "protocol": "pi17",
+      "command": "MD",
+      "pattern": null,
+      "frame_hex": "5e443033373030302c3031303030302c39392c332c332c323330302c323330302c30342c31323055820d"
+    },
+    {
+      "protocol": "pi17",
+      "command": "DM",
+      "pattern": null,
+      "frame_hex": "5e4430303630353068db0d"
+    },
+    {
+      "protocol": "pi17",
+      "command": "INGS",
+      "pattern": null,
+      "frame_hex": "5e44303536303032302c303031392c303032312c303030322c303030342c303030352c333830392c333830392c333831302c333830372c303030f11e0d"
+    },
+    {
+      "protocol": "pi17",
+      "command": "EMINFO",
+      "pattern": null,
+      "frame_hex": "5e44303330312c31303030302c30303030352c30303031302c30303030302c31adc40d"
+    },
+    {
+      "protocol": "pi17",
+      "command": "PIRI",
+      "pattern": null,
+      "frame_hex": "5e44303435323430302c3530302c303431362c323430302c303431362c303138372c303438302c322c31302c302c31bc730d"
+    },
+    {
+      "protocol": "pi17",
+      "command": "GS",
+      "pattern": null,
+      "frame_hex": "5e44313130303030302c303030302c303030302c303030302c303339342c3030302c2b30303030302c323338392c323432372c323435392c353030322c303030302c303030302c303030302c323337382c323433342c323435352c353030312c2c2c2c3032392c3032392c3030302c30f86e0d"
+    },
+    {
+      "protocol": "pi17",
+      "command": "PS",
+      "pattern": null,
+      "frame_hex": "5e4431303130303236332c30303338312c2c2d30303835352c2d30333134312c2d30333135362c2d30373135322c303030302c303030302c303030302c30303030302c303139332c303134372c303139352c30303533352c3030332c312c312c312c322c322c31321c0d5e4431303130303237312c30303338312c2c2d30303735362c2d30323439312c2d30323430312c2d30353634382c303030302c303030302c303030302c30303030302c303139332c303134372c303139342c30303533342c3030332c312c312c312c322c322c313ae90d"
+    },
+    {
+      "protocol": "pi17",
+      "command": "MOD",
+      "pattern": null,
+      "frame_hex": "5e443030353035d99f0d"
+    },
+    {
+      "protocol": "pi17",
+      "command": "WS",
+      "pattern": null,
+      "frame_hex": "5e44303437312c312c302c302c312c312c302c302c312c302c302c302c302c302c302c302c302c302c302c302c302c302c149c0d"
+    },
+    {
+      "protocol": "pi17",
+      "command": "FLAG",
+      "pattern": null,
+      "frame_hex": "5e44303132302c302c312c302c31d8f20d"
+    },
+    {
+      "protocol": "pi17",
+      "command": "T",
+      "pattern": null,
+      "frame_hex": "5e4430313732303231303532313233343734330d520d"
+    },
+    {
+      "protocol": "pi17",
+      "command": "ET",
+      "pattern": null,
+      "frame_hex": "5e443031313030303036353931ba100d"
+    },
+    {
+      "protocol": "pi17",
+      "command": "BATS",
+      "pattern": null,
+      "frame_hex": "5e44303736323030302c303538342c303537362c303030302c3030302c303537362c303436302c303531302c303436302c303531302c312c2c2c312c303534302c3030302c323030302c3032353085590d"
+    },
+    {
+      "protocol": "pi17",
+      "command": "BATS",
+      "pattern": null,
+      "frame_hex": "5e44303934313735302c303536302c303534302c303030302c3036302c303533302c303432302c303438302c303438302c303534302c302c2c2c302c303438302c3030302c303130302c303137352c3030302c3030302c3030302c3030302c30c9d90d"
+    },
+    {
+      "protocol": "pi17",
+      "command": "BATS",
+      "pattern": null,
+      "frame_hex": "5e44303934313735302c303536302c303534302c303030302c3036302c303533302c303432302c303438302c303438302c303534302c302c2c2c302c303438302c3030302c303130302c303137352c3031302c3032302c3032302c3038302c306d720d"
+    },
+    {
+      "protocol": "pi17",
+      "command": "HECS",
+      "pattern": null,
+      "frame_hex": "5e4430313930302c302c302c302c302c302c302c302c3035fc0d"
+    },
+    {
+      "protocol": "pi17",
+      "command": "EY",
+      "pattern": "EY(\\d\\d\\d\\d)$",
+      "frame_hex": "5e443031313030303036353931ba100d"
+    },
+    {
+      "protocol": "pi17",
+      "command": "EM",
+      "pattern": "EM(\\d\\d\\d\\d\\d\\d)$",
+      "frame_hex": "5e44303130303030303635393151330d"
+    },
+    {
+      "protocol": "pi17",
+      "command": "ED",
+      "pattern": "ED(\\d\\d\\d\\d\\d\\d\\d\\d)$",
+      "frame_hex": "5e443030393030303039310e730d"
+    },
+    {
+      "protocol": "pi17",
+      "command": "EH",
+      "pattern": "EH(\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d)$",
+      "frame_hex": "5e443030383030303030310c8a0d"
+    },
+    {
+      "protocol": "pi17",
+      "command": "BMS",
+      "pattern": null,
+      "frame_hex": "5e44303531424d53303532322c3130302c2d303030302c302c303536382c303536382c30303030302c302031203034353520303530301a7b0d"
+    },
+    {
+      "protocol": "pi17",
+      "command": "GPMP0",
+      "pattern": "GPMP(0[10]\\d\\d\\d\\d)$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi17",
+      "command": "GPMP0",
+      "pattern": "GPMP(0[10]\\d\\d\\d\\d)$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi17",
+      "command": "LON",
+      "pattern": "LON([01])$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi17",
+      "command": "LON",
+      "pattern": "LON([01])$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi17",
+      "command": "PA",
+      "pattern": "PA([01])$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi17",
+      "command": "PA",
+      "pattern": "PA([01])$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi17",
+      "command": "PB",
+      "pattern": "PB([01])$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi17",
+      "command": "PB",
+      "pattern": "PB([01])$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi17",
+      "command": "PC",
+      "pattern": "PC([01])$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi17",
+      "command": "PC",
+      "pattern": "PC([01])$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi17",
+      "command": "PD",
+      "pattern": "PD([A-Z])$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi17",
+      "command": "PD",
+      "pattern": "PD([A-Z])$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi17",
+      "command": "PE",
+      "pattern": "PE([A-Z])$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi17",
+      "command": "PE",
+      "pattern": "PE([A-Z])$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi17",
+      "command": "PF",
+      "pattern": "PF([01])$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi17",
+      "command": "PF",
+      "pattern": "PF([01])$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi17",
+      "command": "DAT",
+      "pattern": "DAT(\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d)$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi17",
+      "command": "DAT",
+      "pattern": "DAT(\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d)$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi17",
+      "command": "LST",
+      "pattern": "LST((0[123])|([12]0))$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi17",
+      "command": "LST",
+      "pattern": "LST((0[123])|([12]0))$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi17",
+      "command": "EDA",
+      "pattern": "EDA([01])$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi17",
+      "command": "EDA",
+      "pattern": "EDA([01])$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi17",
+      "command": "EDB",
+      "pattern": "EDB([01])$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi17",
+      "command": "EDB",
+      "pattern": "EDB([01])$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi17",
+      "command": "EDC",
+      "pattern": "EDC([01])$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi17",
+      "command": "EDC",
+      "pattern": "EDC([01])$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi17",
+      "command": "EDD",
+      "pattern": "EDD([01])$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi17",
+      "command": "EDD",
+      "pattern": "EDD([01])$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi17",
+      "command": "EDE",
+      "pattern": "EDE([01])$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi17",
+      "command": "EDE",
+      "pattern": "EDE([01])$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi17",
+      "command": "EDF",
+      "pattern": "EDF([01])$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi17",
+      "command": "EDF",
+      "pattern": "EDF([01])$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi17",
+      "command": "EDG",
+      "pattern": "EDG([01])$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi17",
+      "command": "EDG",
+      "pattern": "EDG([01])$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi17",
+      "command": "BT",
+      "pattern": "BT([01])$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi17",
+      "command": "BT",
+      "pattern": "BT([01])$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi17",
+      "command": "MCHGV",
+      "pattern": "MCHGV(0[45]\\d\\d,0[45]\\d\\d)$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi17",
+      "command": "MCHGV",
+      "pattern": "MCHGV(0[45]\\d\\d,0[45]\\d\\d)$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi17",
+      "command": "ACCT",
+      "pattern": "ACCT((2[0-3]|[01]?[0-9])([0-5]?[0-9])-(2[0-3]|[01]?[0-9])([0-5]?[0-9]))$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi17",
+      "command": "ACCT",
+      "pattern": "ACCT((2[0-3]|[01]?[0-9])([0-5]?[0-9])-(2[0-3]|[01]?[0-9])([0-5]?[0-9]))$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi17",
+      "command": "ACCB",
+      "pattern": "ACCB([01],0[456]\\d\\d)$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi17",
+      "command": "ACCB",
+      "pattern": "ACCB([01],0[456]\\d\\d)$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi17",
+      "command": "MCHGC",
+      "pattern": "MCHGC([012]\\d\\d\\d)$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi17",
+      "command": "MCHGC",
+      "pattern": "MCHGC([012]\\d\\d\\d)$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi17",
+      "command": "MUCHGC",
+      "pattern": "MUCHGC([012]\\d\\d\\d)$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi17",
+      "command": "MUCHGC",
+      "pattern": "MUCHGC([012]\\d\\d\\d)$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi17",
+      "command": "SEP",
+      "pattern": "SEP(0[012])$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi17",
+      "command": "SEP",
+      "pattern": "SEP(0[012])$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi17",
+      "command": "BDCM",
+      "pattern": "BDCM(0[012]\\d\\d)$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi17",
+      "command": "BDCM",
+      "pattern": "BDCM(0[012]\\d\\d)$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi17",
+      "command": "BATDV",
+      "pattern": "BATDV(0[45]\\d\\d,0[45]\\d\\d,0[45]\\d\\d,0[45]\\d\\d)$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi17",
+      "command": "BATDV",
+      "pattern": "BATDV(0[45]\\d\\d,0[45]\\d\\d,0[45]\\d\\d,0[45]\\d\\d)$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi17",
+      "command": "BCA",
+      "pattern": "BCA(0\\d\\d\\d,0\\d\\d,0\\d\\d\\d)$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi17",
+      "command": "BCA",
+      "pattern": "BCA(0\\d\\d\\d,0\\d\\d,0\\d\\d\\d)$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi17m058",
+      "command": "GPMP",
+      "pattern": null,
+      "frame_hex": "5e443030383135303030e1a10d"
+    },
+    {
+      "protocol": "pi17m058",
+      "command": "PI",
+      "pattern": null,
+      "frame_hex": "5e443030353137caec0d"
+    },
+    {
+      "protocol": "pi17m058",
+      "command": "ID",
+      "pattern": null,
+      "frame_hex": "5e44303235313439363136313730343130303234323030303030306c650d"
+    },
+    {
+      "protocol": "pi17m058",
+      "command": "VFW",
+      "pattern": null,
+      "frame_hex": "5e4430313756455246573a30303030312e303156570d"
+    },
+    {
+      "protocol": "pi17m058",
+      "command": "VFW2",
+      "pattern": null,
+      "frame_hex": "5e443031385645524657323a30303030312e303199c30d"
+    },
+    {
+      "protocol": "pi17m058",
+      "command": "MD",
+      "pattern": null,
+      "frame_hex": "5e443033373030302c3031303030302c39392c332c332c323330302c323330302c30342c31323055820d"
+    },
+    {
+      "protocol": "pi17m058",
+      "command": "DM",
+      "pattern": null,
+      "frame_hex": "5e4430303630353068db0d"
+    },
+    {
+      "protocol": "pi17m058",
+      "command": "INGS",
+      "pattern": null,
+      "frame_hex": "5e44303536303032302c303031392c303032312c303030322c303030342c303030352c333830392c333830392c333831302c333830372c303030f11e0d"
+    },
+    {
+      "protocol": "pi17m058",
+      "command": "EMINFO",
+      "pattern": null,
+      "frame_hex": "5e44303330312c31303030302c30303030352c30303031302c30303030302c31adc40d"
+    },
+    {
+      "protocol": "pi17m058",
+      "command": "PIRI",
+      "pattern": null,
+      "frame_hex": "5e44303435323430302c3530302c303431362c323430302c303431362c303138372c303438302c322c31302c302c31bc730d"
+    },
+    {
+      "protocol": "pi17m058",
+      "command": "GS",
+      "pattern": null,
+      "frame_hex": "5e44313130303030302c303030302c303030302c303030302c303339342c3030302c2b30303030302c323338392c323432372c323435392c353030322c303030302c303030302c303030302c323337382c323433342c323435352c353030312c2c2c2c3032392c3032392c3030302c30f86e0d"
+    },
+    {
+      "protocol": "pi17m058",
+      "command": "PS",
+      "pattern": null,
+      "frame_hex": "5e4431303130303236332c30303338312c2c2d30303835352c2d30333134312c2d30333135362c2d30373135322c303030302c303030302c303030302c30303030302c303139332c303134372c303139352c30303533352c3030332c312c312c312c322c322c31321c0d5e4431303130303237312c30303338312c2c2d30303735362c2d30323439312c2d30323430312c2d30353634382c303030302c303030302c303030302c30303030302c303139332c303134372c303139342c30303533342c3030332c312c312c312c322c322c313ae90d"
+    },
+    {
+      "protocol": "pi17m058",
+      "command": "MOD",
+      "pattern": null,
+      "frame_hex": "5e443030353035d99f0d"
+    },
+    {
+      "protocol": "pi17m058",
+      "command": "WS",
+      "pattern": null,
+      "frame_hex": "5e44303437312c312c302c302c312c312c302c302c312c302c302c302c302c302c302c302c302c302c302c302c302c302c149c0d"
+    },
+    {
+      "protocol": "pi17m058",
+      "command": "FLAG",
+      "pattern": null,
+      "frame_hex": "5e44303132302c302c312c302c31d8f20d"
+    },
+    {
+      "protocol": "pi17m058",
+      "command": "T",
+      "pattern": null,
+      "frame_hex": "5e4430313732303231303532313233343734330d520d"
+    },
+    {
+      "protocol": "pi17m058",
+      "command": "ET",
+      "pattern": null,
+      "frame_hex": "5e443031313030303036353931ba100d"
+    },
+    {
+      "protocol": "pi17m058",
+      "command": "BATS",
+      "pattern": null,
+      "frame_hex": "5e44303934313735302c303536302c303534302c303030302c3036302c303533302c303432302c303438302c303438302c303534302c302c2c2c302c303438302c3030302c303130302c303137352c3031302c3032302c3032302c3038302c306d720d"
+    },
+    {
+      "protocol": "pi17m058",
+      "command": "HECS",
+      "pattern": null,
+      "frame_hex": "5e4430313930302c302c302c302c302c302c302c302c3035fc0d"
+    },
+    {
+      "protocol": "pi17m058",
+      "command": "EY",
+      "pattern": "EY(\\d\\d\\d\\d)$",
+      "frame_hex": "5e443031313030303036353931ba100d"
+    },
+    {
+      "protocol": "pi17m058",
+      "command": "EM",
+      "pattern": "EM(\\d\\d\\d\\d\\d\\d)$",
+      "frame_hex": "5e44303130303030303635393151330d"
+    },
+    {
+      "protocol": "pi17m058",
+      "command": "ED",
+      "pattern": "ED(\\d\\d\\d\\d\\d\\d\\d\\d)$",
+      "frame_hex": "5e443030393030303039310e730d"
+    },
+    {
+      "protocol": "pi17m058",
+      "command": "EH",
+      "pattern": "EH(\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d)$",
+      "frame_hex": "5e443030383030303030310c8a0d"
+    },
+    {
+      "protocol": "pi17m058",
+      "command": "BMS",
+      "pattern": null,
+      "frame_hex": "5e44303531424d53303532322c3130302c2d303030302c302c303536382c303536382c30303030302c302031203034353520303530301a7b0d"
+    },
+    {
+      "protocol": "pi17m058",
+      "command": "GPMP0",
+      "pattern": "GPMP(0[10]\\d\\d\\d\\d)$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi17m058",
+      "command": "GPMP0",
+      "pattern": "GPMP(0[10]\\d\\d\\d\\d)$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi17m058",
+      "command": "LON",
+      "pattern": "LON([01])$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi17m058",
+      "command": "LON",
+      "pattern": "LON([01])$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi17m058",
+      "command": "PA",
+      "pattern": "PA([01])$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi17m058",
+      "command": "PA",
+      "pattern": "PA([01])$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi17m058",
+      "command": "PB",
+      "pattern": "PB([01])$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi17m058",
+      "command": "PB",
+      "pattern": "PB([01])$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi17m058",
+      "command": "PC",
+      "pattern": "PC([01])$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi17m058",
+      "command": "PC",
+      "pattern": "PC([01])$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi17m058",
+      "command": "PD",
+      "pattern": "PD([A-Z])$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi17m058",
+      "command": "PD",
+      "pattern": "PD([A-Z])$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi17m058",
+      "command": "PE",
+      "pattern": "PE([A-Z])$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi17m058",
+      "command": "PE",
+      "pattern": "PE([A-Z])$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi17m058",
+      "command": "PF",
+      "pattern": "PF([01])$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi17m058",
+      "command": "PF",
+      "pattern": "PF([01])$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi17m058",
+      "command": "DAT",
+      "pattern": "DAT(\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d)$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi17m058",
+      "command": "DAT",
+      "pattern": "DAT(\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d)$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi17m058",
+      "command": "LST",
+      "pattern": "LST((0[123])|([12]0))$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi17m058",
+      "command": "LST",
+      "pattern": "LST((0[123])|([12]0))$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi17m058",
+      "command": "EDA",
+      "pattern": "EDA([01])$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi17m058",
+      "command": "EDA",
+      "pattern": "EDA([01])$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi17m058",
+      "command": "EDB",
+      "pattern": "EDB([01])$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi17m058",
+      "command": "EDB",
+      "pattern": "EDB([01])$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi17m058",
+      "command": "EDC",
+      "pattern": "EDC([01])$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi17m058",
+      "command": "EDC",
+      "pattern": "EDC([01])$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi17m058",
+      "command": "EDD",
+      "pattern": "EDD([01])$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi17m058",
+      "command": "EDD",
+      "pattern": "EDD([01])$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi17m058",
+      "command": "EDE",
+      "pattern": "EDE([01])$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi17m058",
+      "command": "EDE",
+      "pattern": "EDE([01])$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi17m058",
+      "command": "EDF",
+      "pattern": "EDF([01])$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi17m058",
+      "command": "EDF",
+      "pattern": "EDF([01])$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi17m058",
+      "command": "EDG",
+      "pattern": "EDG([01])$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi17m058",
+      "command": "EDG",
+      "pattern": "EDG([01])$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi17m058",
+      "command": "BT",
+      "pattern": "BT([01])$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi17m058",
+      "command": "BT",
+      "pattern": "BT([01])$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi17m058",
+      "command": "MCHGV",
+      "pattern": "MCHGV(0[45]\\d\\d,0[45]\\d\\d)$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi17m058",
+      "command": "MCHGV",
+      "pattern": "MCHGV(0[45]\\d\\d,0[45]\\d\\d)$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi17m058",
+      "command": "ACCT",
+      "pattern": "ACCT((2[0-3]|[01]?[0-9])([0-5]?[0-9])-(2[0-3]|[01]?[0-9])([0-5]?[0-9]))$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi17m058",
+      "command": "ACCT",
+      "pattern": "ACCT((2[0-3]|[01]?[0-9])([0-5]?[0-9])-(2[0-3]|[01]?[0-9])([0-5]?[0-9]))$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi17m058",
+      "command": "ACCB",
+      "pattern": "ACCB([01],0[456]\\d\\d)$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi17m058",
+      "command": "ACCB",
+      "pattern": "ACCB([01],0[456]\\d\\d)$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi17m058",
+      "command": "MCHGC",
+      "pattern": "MCHGC([012]\\d\\d\\d)$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi17m058",
+      "command": "MCHGC",
+      "pattern": "MCHGC([012]\\d\\d\\d)$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi17m058",
+      "command": "MUCHGC",
+      "pattern": "MUCHGC([012]\\d\\d\\d)$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi17m058",
+      "command": "MUCHGC",
+      "pattern": "MUCHGC([012]\\d\\d\\d)$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi17m058",
+      "command": "SEP",
+      "pattern": "SEP(0[012])$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi17m058",
+      "command": "SEP",
+      "pattern": "SEP(0[012])$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi17m058",
+      "command": "BDCM",
+      "pattern": "BDCM(0[012]\\d\\d)$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi17m058",
+      "command": "BDCM",
+      "pattern": "BDCM(0[012]\\d\\d)$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi17m058",
+      "command": "BATDV",
+      "pattern": "BATDV(0[45]\\d\\d,0[45]\\d\\d,0[45]\\d\\d,0[45]\\d\\d)$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi17m058",
+      "command": "BATDV",
+      "pattern": "BATDV(0[45]\\d\\d,0[45]\\d\\d,0[45]\\d\\d,0[45]\\d\\d)$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi17m058",
+      "command": "BCA",
+      "pattern": "BCA(0\\d\\d\\d,0\\d\\d,0\\d\\d\\d)$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi17m058",
+      "command": "BCA",
+      "pattern": "BCA(0\\d\\d\\d,0\\d\\d,0\\d\\d\\d)$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi17infini",
+      "command": "GPMP",
+      "pattern": null,
+      "frame_hex": "5e443030383135303030e1a10d"
+    },
+    {
+      "protocol": "pi17infini",
+      "command": "PI",
+      "pattern": null,
+      "frame_hex": "5e443030353137caec0d"
+    },
+    {
+      "protocol": "pi17infini",
+      "command": "ID",
+      "pattern": null,
+      "frame_hex": "5e44303235313439363136313730343130303234323030303030306c650d"
+    },
+    {
+      "protocol": "pi17infini",
+      "command": "VFW",
+      "pattern": null,
+      "frame_hex": "5e4430313756455246573a30303030312e303156570d"
+    },
+    {
+      "protocol": "pi17infini",
+      "command": "VFW2",
+      "pattern": null,
+      "frame_hex": "5e443031385645524657323a30303030312e303199c30d"
+    },
+    {
+      "protocol": "pi17infini",
+      "command": "MD",
+      "pattern": null,
+      "frame_hex": "5e443033373030302c3031303030302c39392c332c332c323330302c323330302c30342c31323055820d"
+    },
+    {
+      "protocol": "pi17infini",
+      "command": "DM",
+      "pattern": null,
+      "frame_hex": "5e4430303630353068db0d"
+    },
+    {
+      "protocol": "pi17infini",
+      "command": "INGS",
+      "pattern": null,
+      "frame_hex": "5e44303536303032302c303031392c303032312c303030322c303030342c303030352c333830392c333830392c333831302c333830372c303030f11e0d"
+    },
+    {
+      "protocol": "pi17infini",
+      "command": "EMINFO",
+      "pattern": null,
+      "frame_hex": "5e44303330312c31303030302c30303030352c30303031302c30303030302c31adc40d"
+    },
+    {
+      "protocol": "pi17infini",
+      "command": "PIRI",
+      "pattern": null,
+      "frame_hex": "5e44303435323430302c3530302c303431362c323430302c303431362c303138372c303438302c322c31302c302c31bc730d"
+    },
+    {
+      "protocol": "pi17infini",
+      "command": "GS",
+      "pattern": null,
+      "frame_hex": "5e44313130303030302c303030302c303030302c303030302c303339342c3030302c2b30303030302c323338392c323432372c323435392c353030322c303030302c303030302c303030302c323337382c323433342c323435352c353030312c2c2c2c3032392c3032392c3030302c30f86e0d"
+    },
+    {
+      "protocol": "pi17infini",
+      "command": "PS",
+      "pattern": null,
+      "frame_hex": "5e4431303130303236332c30303338312c2c2d30303835352c2d30333134312c2d30333135362c2d30373135322c303030302c303030302c303030302c30303030302c303139332c303134372c303139352c30303533352c3030332c312c312c312c322c322c31321c0d5e4431303130303237312c30303338312c2c2d30303735362c2d30323439312c2d30323430312c2d30353634382c303030302c303030302c303030302c30303030302c303139332c303134372c303139342c30303533342c3030332c312c312c312c322c322c313ae90d"
+    },
+    {
+      "protocol": "pi17infini",
+      "command": "MOD",
+      "pattern": null,
+      "frame_hex": "5e443030353035d99f0d"
+    },
+    {
+      "protocol": "pi17infini",
+      "command": "WS",
+      "pattern": null,
+      "frame_hex": "5e44303437312c312c302c302c312c312c302c302c312c302c302c302c302c302c302c302c302c302c302c302c302c302c149c0d"
+    },
+    {
+      "protocol": "pi17infini",
+      "command": "FLAG",
+      "pattern": null,
+      "frame_hex": "5e44303132302c302c312c302c31d8f20d"
+    },
+    {
+      "protocol": "pi17infini",
+      "command": "T",
+      "pattern": null,
+      "frame_hex": "5e4430313732303231303532313233343734330d520d"
+    },
+    {
+      "protocol": "pi17infini",
+      "command": "ET",
+      "pattern": null,
+      "frame_hex": "5e443031313030303036353931ba100d"
+    },
+    {
+      "protocol": "pi17infini",
+      "command": "BATS",
+      "pattern": null,
+      "frame_hex": "5e44303736323030302c303538342c303537362c303030302c3030302c303537362c303436302c303531302c303436302c303531302c312c2c2c312c303534302c3030302c323030302c3032353085590d"
+    },
+    {
+      "protocol": "pi17infini",
+      "command": "BATS",
+      "pattern": null,
+      "frame_hex": "5e44303934313735302c303536302c303534302c303030302c3036302c303533302c303432302c303438302c303438302c303534302c302c2c2c302c303438302c3030302c303130302c303137352c3030302c3030302c3030302c3030302c30c9d90d"
+    },
+    {
+      "protocol": "pi17infini",
+      "command": "BATS",
+      "pattern": null,
+      "frame_hex": "5e44303934313735302c303536302c303534302c303030302c3036302c303533302c303432302c303438302c303438302c303534302c302c2c2c302c303438302c3030302c303130302c303137352c3031302c3032302c3032302c3038302c306d720d"
+    },
+    {
+      "protocol": "pi17infini",
+      "command": "HECS",
+      "pattern": null,
+      "frame_hex": "5e4430313930302c302c302c302c302c302c302c302c3035fc0d"
+    },
+    {
+      "protocol": "pi17infini",
+      "command": "EY",
+      "pattern": "EY(\\d\\d\\d\\d)$",
+      "frame_hex": "5e443031313030303036353931ba100d"
+    },
+    {
+      "protocol": "pi17infini",
+      "command": "EM",
+      "pattern": "EM(\\d\\d\\d\\d\\d\\d)$",
+      "frame_hex": "5e44303130303030303635393151330d"
+    },
+    {
+      "protocol": "pi17infini",
+      "command": "ED",
+      "pattern": "ED(\\d\\d\\d\\d\\d\\d\\d\\d)$",
+      "frame_hex": "5e443030393030303039310e730d"
+    },
+    {
+      "protocol": "pi17infini",
+      "command": "EH",
+      "pattern": "EH(\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d)$",
+      "frame_hex": "5e443030383030303030310c8a0d"
+    },
+    {
+      "protocol": "pi17infini",
+      "command": "BMS",
+      "pattern": null,
+      "frame_hex": "5e44303531424d53303532322c3130302c2d303030302c302c303536382c303536382c30303030302c302031203034353520303530301a7b0d"
+    },
+    {
+      "protocol": "pi17infini",
+      "command": "GPMP0",
+      "pattern": "GPMP(0[10]\\d\\d\\d\\d)$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi17infini",
+      "command": "GPMP0",
+      "pattern": "GPMP(0[10]\\d\\d\\d\\d)$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi17infini",
+      "command": "LON",
+      "pattern": "LON([01])$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi17infini",
+      "command": "LON",
+      "pattern": "LON([01])$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi17infini",
+      "command": "PC",
+      "pattern": "PC([01])$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi17infini",
+      "command": "PC",
+      "pattern": "PC([01])$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi17infini",
+      "command": "PD",
+      "pattern": "PD([A-Z])$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi17infini",
+      "command": "PD",
+      "pattern": "PD([A-Z])$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi17infini",
+      "command": "PE",
+      "pattern": "PE([A-Z])$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi17infini",
+      "command": "PE",
+      "pattern": "PE([A-Z])$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi17infini",
+      "command": "PF",
+      "pattern": "PF([01])$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi17infini",
+      "command": "PF",
+      "pattern": "PF([01])$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi17infini",
+      "command": "DAT",
+      "pattern": "DAT(\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d)$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi17infini",
+      "command": "DAT",
+      "pattern": "DAT(\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d)$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi17infini",
+      "command": "LST",
+      "pattern": "LST((0[123])|([12]0))$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi17infini",
+      "command": "LST",
+      "pattern": "LST((0[123])|([12]0))$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi17infini",
+      "command": "EDA",
+      "pattern": "EDA([01])$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi17infini",
+      "command": "EDA",
+      "pattern": "EDA([01])$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi17infini",
+      "command": "EDB",
+      "pattern": "EDB([01])$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi17infini",
+      "command": "EDB",
+      "pattern": "EDB([01])$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi17infini",
+      "command": "EDC",
+      "pattern": "EDC([01])$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi17infini",
+      "command": "EDC",
+      "pattern": "EDC([01])$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi17infini",
+      "command": "EDD",
+      "pattern": "EDD([01])$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi17infini",
+      "command": "EDD",
+      "pattern": "EDD([01])$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi17infini",
+      "command": "EDE",
+      "pattern": "EDE([01])$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi17infini",
+      "command": "EDE",
+      "pattern": "EDE([01])$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi17infini",
+      "command": "EDF",
+      "pattern": "EDF([01])$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi17infini",
+      "command": "EDF",
+      "pattern": "EDF([01])$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi17infini",
+      "command": "EDG",
+      "pattern": "EDG([01])$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi17infini",
+      "command": "EDG",
+      "pattern": "EDG([01])$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi17infini",
+      "command": "BT",
+      "pattern": "BT([01])$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi17infini",
+      "command": "BT",
+      "pattern": "BT([01])$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi17infini",
+      "command": "MCHGV",
+      "pattern": "MCHGV(0[45]\\d\\d,0[45]\\d\\d)$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi17infini",
+      "command": "MCHGV",
+      "pattern": "MCHGV(0[45]\\d\\d,0[45]\\d\\d)$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi17infini",
+      "command": "ACCT",
+      "pattern": "ACCT((2[0-3]|[01]?[0-9])([0-5]?[0-9]),(2[0-3]|[01]?[0-9])([0-5]?[0-9]),(2[0-3]|[01]?[0-9])([0-5]?[0-9]),(2[0-3]|[01]?[0-9])([0-5]?[0-9]))$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi17infini",
+      "command": "ACCT",
+      "pattern": "ACCT((2[0-3]|[01]?[0-9])([0-5]?[0-9]),(2[0-3]|[01]?[0-9])([0-5]?[0-9]),(2[0-3]|[01]?[0-9])([0-5]?[0-9]),(2[0-3]|[01]?[0-9])([0-5]?[0-9]))$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi17infini",
+      "command": "ACCB",
+      "pattern": "ACCB([01],0[456]\\d\\d)$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi17infini",
+      "command": "ACCB",
+      "pattern": "ACCB([01],0[456]\\d\\d)$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi17infini",
+      "command": "MCHGC",
+      "pattern": "MCHGC([012]\\d\\d\\d)$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi17infini",
+      "command": "MCHGC",
+      "pattern": "MCHGC([012]\\d\\d\\d)$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi17infini",
+      "command": "MUCHGC",
+      "pattern": "MUCHGC([012]\\d\\d\\d)$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi17infini",
+      "command": "MUCHGC",
+      "pattern": "MUCHGC([012]\\d\\d\\d)$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi17infini",
+      "command": "SEP",
+      "pattern": "SEP(0[012])$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi17infini",
+      "command": "SEP",
+      "pattern": "SEP(0[012])$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi17infini",
+      "command": "BDCM",
+      "pattern": "BDCM(0[012]\\d\\d)$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi17infini",
+      "command": "BDCM",
+      "pattern": "BDCM(0[012]\\d\\d)$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi17infini",
+      "command": "BATDV",
+      "pattern": "BATDV(0[45]\\d\\d,0[45]\\d\\d,0[45]\\d\\d,0[45]\\d\\d)$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi17infini",
+      "command": "BATDV",
+      "pattern": "BATDV(0[45]\\d\\d,0[45]\\d\\d,0[45]\\d\\d,0[45]\\d\\d)$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi17infini",
+      "command": "BCA",
+      "pattern": "BCA(0\\d\\d\\d,0\\d\\d,0\\d\\d\\d)$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi17infini",
+      "command": "BCA",
+      "pattern": "BCA(0\\d\\d\\d,0\\d\\d,0\\d\\d\\d)$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi17infini",
+      "command": "PEA",
+      "pattern": null,
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi17infini",
+      "command": "PEA",
+      "pattern": null,
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi17infini",
+      "command": "PDA",
+      "pattern": null,
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi17infini",
+      "command": "PDA",
+      "pattern": null,
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi18",
+      "command": "PI",
+      "pattern": null,
+      "frame_hex": "5e4430303531383b030d"
+    },
+    {
+      "protocol": "pi18",
+      "command": "EY",
+      "pattern": "EY(\\d\\d\\d\\d)$",
+      "frame_hex": "5e4430313130353538303035310b9f0d"
+    },
+    {
+      "protocol": "pi18",
+      "command": "ED",
+      "pattern": "ED(\\d\\d\\d\\d\\d\\d\\d\\d)$",
+      "frame_hex": "5e44303039303030303931ba100d"
+    },
+    {
+      "protocol": "pi18",
+      "command": "ID",
+      "pattern": null,
+      "frame_hex": "5e4430323531343031323334353637383930313233343536370d"
+    },
+    {
+      "protocol": "pi18",
+      "command": "VFW",
+      "pattern": null,
+      "frame_hex": "5e5e4430323030353232302c30303030302c30303030300d"
+    },
+    {
+      "protocol": "pi18",
+      "command": "PIRI",
+      "pattern": null,
+      "frame_hex": "5e44303838323330302c3231372c323330302c3530302c3231372c353030302c353030302c3438302c3530302c3534302c3435302c3535322c3534352c322c31302c3036302c312c312c312c392c312c302c302c302c312c30300d"
+    },
+    {
+      "protocol": "pi18",
+      "command": "PIRI",
+      "pattern": null,
+      "frame_hex": "5e44303838323330302c3231372c323330302c3530302c3231372c353030302c353030302c3438302c3530302c3534302c3435302c3536302c3536302c322c30322c3036302c312c302c312c392c312c302c302c302c312c3030e90d"
+    },
+    {
+      "protocol": "pi18",
+      "command": "GS",
+      "pattern": null,
+      "frame_hex": "44313036323233322c3439392c323233322c3439392c303937312c303731302c3031392c3030382c3030302c3030302c3030302c3030302c3030302c3034342c3030302c3030302c303532302c303030302c313934312c303030302c302c322c302c312c302c322c312c30097b0d"
+    },
+    {
+      "protocol": "pi18",
+      "command": "GS",
+      "pattern": null,
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi18",
+      "command": "MCHGCR",
+      "pattern": null,
+      "frame_hex": "5e443033343031302c3032302c3033302c3034302c3035302c3036302c3037302c30383016310d"
+    },
+    {
+      "protocol": "pi18",
+      "command": "POP",
+      "pattern": "POP([01])$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi18",
+      "command": "POP",
+      "pattern": "POP([01])$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi18",
+      "command": "PSP",
+      "pattern": "PSP([01])$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi18",
+      "command": "PSP",
+      "pattern": "PSP([01])$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi18",
+      "command": "PEI",
+      "pattern": null,
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi18",
+      "command": "PEI",
+      "pattern": null,
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi18",
+      "command": "PDI",
+      "pattern": null,
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi18",
+      "command": "PDI",
+      "pattern": null,
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi18",
+      "command": "PCP",
+      "pattern": "PCP([0-9],[012])$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi18",
+      "command": "PCP",
+      "pattern": "PCP([0-9],[012])$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi18",
+      "command": "MCHGC",
+      "pattern": "MCHGC([0-9],0[1-8]0)$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi18",
+      "command": "MCHGC",
+      "pattern": "MCHGC([0-9],0[1-8]0)$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi18",
+      "command": "PBT",
+      "pattern": "PBT([012])$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi18",
+      "command": "PBT",
+      "pattern": "PBT([012])$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi18",
+      "command": "MCHGV",
+      "pattern": "MCHGV(4[8-9][0-9]|5[0-7][0-9]|58[0-5]),(4[8-9][0-9]|5[0-7][0-9]|58[0-4])$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi18",
+      "command": "MCHGV",
+      "pattern": "MCHGV(4[8-9][0-9]|5[0-7][0-9]|58[0-5]),(4[8-9][0-9]|5[0-7][0-9]|58[0-4])$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi18",
+      "command": "PSDV",
+      "pattern": "PSDV(4[0-7][0-9]|480)$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi18",
+      "command": "PSDV",
+      "pattern": "PSDV(4[0-7][0-9]|480)$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi18",
+      "command": "BUCD",
+      "pattern": "BUCD((4[4-9]0|5[0-1]0),(000|4[8-9]0|5[0-8]0))$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi18",
+      "command": "BUCD",
+      "pattern": "BUCD((4[4-9]0|5[0-1]0),(000|4[8-9]0|5[0-8]0))$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi18lvx",
+      "command": "PI",
+      "pattern": null,
+      "frame_hex": "5e4430303531383b030d"
+    },
+    {
+      "protocol": "pi18lvx",
+      "command": "T",
+      "pattern": null,
+      "frame_hex": "5e4430313732303231303532313233343734330e520d"
+    },
+    {
+      "protocol": "pi18lvx",
+      "command": "ET",
+      "pattern": null,
+      "frame_hex": "5e443031313030303036353931ba100d"
+    },
+    {
+      "protocol": "pi18lvx",
+      "command": "EY",
+      "pattern": "EY(\\d\\d\\d\\d)$",
+      "frame_hex": "5e443031313030303036353931ba100d"
+    },
+    {
+      "protocol": "pi18lvx",
+      "command": "EM",
+      "pattern": "EM(\\d\\d\\d\\d\\d\\d)$",
+      "frame_hex": "5e443031303030303036353931ba100d"
+    },
+    {
+      "protocol": "pi18lvx",
+      "command": "ED",
+      "pattern": "ED(\\d\\d\\d\\d\\d\\d\\d\\d)$",
+      "frame_hex": "5e44303131303030303335333789580d"
+    },
+    {
+      "protocol": "pi18lvx",
+      "command": "ID",
+      "pattern": null,
+      "frame_hex": "5e44303235313439363136313730343130303234323030303030306c650d"
+    },
+    {
+      "protocol": "pi18lvx",
+      "command": "VFW",
+      "pattern": null,
+      "frame_hex": "5e4430323030353430322c30383032352c3030303030c39d0d"
+    },
+    {
+      "protocol": "pi18lvx",
+      "command": "MCHGCR",
+      "pattern": null,
+      "frame_hex": "5e443033303031302c3032302c3033302c3034302c3035302c3036302c3037300a"
+    },
+    {
+      "protocol": "pi18lvx",
+      "command": "MUCHGCR",
+      "pattern": null,
+      "frame_hex": "5e443033303031302c3032302c3033302c3034302c3035302c3036302c3037300a"
+    },
+    {
+      "protocol": "pi18lvx",
+      "command": "PRI",
+      "pattern": "PRI(\\d)$",
+      "frame_hex": "5e44303430312c31342c39363133323230363130303431303030303030302c322c3036302c3035302c314a6c0d"
+    },
+    {
+      "protocol": "pi18lvx",
+      "command": "PGS",
+      "pattern": "PGS(\\d)$",
+      "frame_hex": "5e44313133312c352c30302c323338372c3439392c323338372c3439392c303731362c303136352c30313233322c30303530352c3031322c3030342c3531382c3030302c3031352c3033312c3033362c313133372c303030302c323038382c303030302c322c302c312c312c322c312c3033378a240d"
+    },
+    {
+      "protocol": "pi18lvx",
+      "command": "FWS",
+      "pattern": null,
+      "frame_hex": "5e4430333930302c302c302c302c302c302c302c302c302c302c302c302c302c302c302c302c302c30c2b69e0d"
+    },
+    {
+      "protocol": "pi18lvx",
+      "command": "PIRI",
+      "pattern": null,
+      "frame_hex": "5e44303839323330302c3234332c323330302c3530302c3234332c353630302c353630302c3438302c3530302c3533302c3438302c3537302c3534342c322c3035302c3036302c302c312c322c392c302c302c312c312c312c30308e7e0d"
+    },
+    {
+      "protocol": "pi18lvx",
+      "command": "GS",
+      "pattern": null,
+      "frame_hex": "5e44313036323333362c3439392c323333362c3439392c303434332c303235352c3030372c3532342c3030302c3030302c3030302c3031372c3034322c3033392c3030302c3030302c313332362c303030302c313930372c303030302c302c322c302c312c312c322c312c3160c3aa0d"
+    },
+    {
+      "protocol": "pi18lvx",
+      "command": "MOD",
+      "pattern": null,
+      "frame_hex": "5e443030353035c3999f0d"
+    },
+    {
+      "protocol": "pi18lvx",
+      "command": "FLAG",
+      "pattern": null,
+      "frame_hex": "275e44303230312c302c312c302c302c312c312c302c30c385a00d27"
+    },
+    {
+      "protocol": "pi18lvx",
+      "command": "ACCT",
+      "pattern": null,
+      "frame_hex": "5e44303132303030302c30303030c3821c0d"
+    },
+    {
+      "protocol": "pi18lvx",
+      "command": "ACLT",
+      "pattern": null,
+      "frame_hex": "5e44303132303030302c30303030c3821c0d"
+    },
+    {
+      "protocol": "pi18lvx",
+      "command": "LON",
+      "pattern": "LON([01])$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi18lvx",
+      "command": "LON",
+      "pattern": "LON([01])$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi18lvx",
+      "command": "PEA",
+      "pattern": null,
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi18lvx",
+      "command": "PEA",
+      "pattern": null,
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi18lvx",
+      "command": "PDA",
+      "pattern": null,
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi18lvx",
+      "command": "PDA",
+      "pattern": null,
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi18lvx",
+      "command": "PEB",
+      "pattern": null,
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi18lvx",
+      "command": "PEB",
+      "pattern": null,
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi18lvx",
+      "command": "PDB",
+      "pattern": null,
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi18lvx",
+      "command": "PDB",
+      "pattern": null,
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi18lvx",
+      "command": "PEC",
+      "pattern": null,
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi18lvx",
+      "command": "PEC",
+      "pattern": null,
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi18lvx",
+      "command": "PDC",
+      "pattern": null,
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi18lvx",
+      "command": "PDC",
+      "pattern": null,
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi18lvx",
+      "command": "PED",
+      "pattern": null,
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi18lvx",
+      "command": "PED",
+      "pattern": null,
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi18lvx",
+      "command": "PDD",
+      "pattern": null,
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi18lvx",
+      "command": "PDD",
+      "pattern": null,
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi18lvx",
+      "command": "PEE",
+      "pattern": null,
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi18lvx",
+      "command": "PEE",
+      "pattern": null,
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi18lvx",
+      "command": "PDE",
+      "pattern": null,
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi18lvx",
+      "command": "PDE",
+      "pattern": null,
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi18lvx",
+      "command": "PEF",
+      "pattern": null,
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi18lvx",
+      "command": "PEF",
+      "pattern": null,
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi18lvx",
+      "command": "PDF",
+      "pattern": null,
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi18lvx",
+      "command": "PDF",
+      "pattern": null,
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi18lvx",
+      "command": "PEG",
+      "pattern": null,
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi18lvx",
+      "command": "PEG",
+      "pattern": null,
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi18lvx",
+      "command": "PDG",
+      "pattern": null,
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi18lvx",
+      "command": "PDG",
+      "pattern": null,
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi18lvx",
+      "command": "PEH",
+      "pattern": null,
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi18lvx",
+      "command": "PEH",
+      "pattern": null,
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi18lvx",
+      "command": "PDH",
+      "pattern": null,
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi18lvx",
+      "command": "PDH",
+      "pattern": null,
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi18lvx",
+      "command": "PEI",
+      "pattern": null,
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi18lvx",
+      "command": "PEI",
+      "pattern": null,
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi18lvx",
+      "command": "PDI",
+      "pattern": null,
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi18lvx",
+      "command": "PDI",
+      "pattern": null,
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi18lvx",
+      "command": "PF",
+      "pattern": null,
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi18lvx",
+      "command": "PF",
+      "pattern": null,
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi18lvx",
+      "command": "MCHGC",
+      "pattern": "MCHGC(\\d,\\d\\d\\d)$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi18lvx",
+      "command": "MCHGC",
+      "pattern": "MCHGC(\\d,\\d\\d\\d)$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi18lvx",
+      "command": "MUCHGC",
+      "pattern": "MUCHGC(\\d,\\d\\d\\d)$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi18lvx",
+      "command": "MUCHGC",
+      "pattern": "MUCHGC(\\d,\\d\\d\\d)$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi18lvx",
+      "command": "MCHGV",
+      "pattern": "MCHGV(\\d\\d\\d,\\d\\d\\d)$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi18lvx",
+      "command": "MCHGV",
+      "pattern": "MCHGV(\\d\\d\\d,\\d\\d\\d)$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi18lvx",
+      "command": "DAT",
+      "pattern": "DAT(\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d)$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi18lvx",
+      "command": "DAT",
+      "pattern": "DAT(\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d)$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi18lvx",
+      "command": "POP",
+      "pattern": "POP(\\d)$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi18lvx",
+      "command": "POP",
+      "pattern": "POP(\\d)$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi18lvx",
+      "command": "BUCD",
+      "pattern": "BUCD(\\d\\d\\d,\\d\\d\\d)$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi18lvx",
+      "command": "BUCD",
+      "pattern": "BUCD(\\d\\d\\d,\\d\\d\\d)$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi18sv",
+      "command": "PI",
+      "pattern": null,
+      "frame_hex": "5e4430303531383b030d"
+    },
+    {
+      "protocol": "pi18sv",
+      "command": "T",
+      "pattern": null,
+      "frame_hex": "5e4430313732303231303532313233343734330e520d"
+    },
+    {
+      "protocol": "pi18sv",
+      "command": "ET",
+      "pattern": null,
+      "frame_hex": "5e443031313030303036353931ba100d"
+    },
+    {
+      "protocol": "pi18sv",
+      "command": "EY",
+      "pattern": "EY(\\d\\d\\d\\d)$",
+      "frame_hex": "5e443031313030303036353931ba100d"
+    },
+    {
+      "protocol": "pi18sv",
+      "command": "EM",
+      "pattern": "EM(\\d\\d\\d\\d\\d\\d)$",
+      "frame_hex": "5e443031303030303036353931ba100d"
+    },
+    {
+      "protocol": "pi18sv",
+      "command": "ED",
+      "pattern": "ED(\\d\\d\\d\\d\\d\\d\\d\\d)$",
+      "frame_hex": "5e44303131303030303335333789580d"
+    },
+    {
+      "protocol": "pi18sv",
+      "command": "ID",
+      "pattern": null,
+      "frame_hex": "5e44303235313439363136313730343130303234323030303030306c650d"
+    },
+    {
+      "protocol": "pi18sv",
+      "command": "VFW",
+      "pattern": null,
+      "frame_hex": "5e4430323030353430322c30383032352c3030303030c39d0d"
+    },
+    {
+      "protocol": "pi18sv",
+      "command": "MCHGCR",
+      "pattern": null,
+      "frame_hex": "5e443033303031302c3032302c3033302c3034302c3035302c3036302c3037300a"
+    },
+    {
+      "protocol": "pi18sv",
+      "command": "MUCHGCR",
+      "pattern": null,
+      "frame_hex": "5e443033303031302c3032302c3033302c3034302c3035302c3036302c3037300a"
+    },
+    {
+      "protocol": "pi18sv",
+      "command": "PRI",
+      "pattern": "PRI(\\d)$",
+      "frame_hex": "5e44303430312c31342c39363133323230363130303431303030303030302c322c3036302c3035302c314a6c0d"
+    },
+    {
+      "protocol": "pi18sv",
+      "command": "PGS",
+      "pattern": "PGS(\\d)$",
+      "frame_hex": "5e44313133312c352c30302c323338372c3439392c323338372c3439392c303731362c303136352c30313233322c30303530352c3031322c3030342c3531382c3030302c3031352c3033312c3033362c313133372c303030302c323038382c303030302c322c302c312c312c322c312c3033378a240d"
+    },
+    {
+      "protocol": "pi18sv",
+      "command": "FWS",
+      "pattern": null,
+      "frame_hex": "5e4430333930302c302c302c302c302c302c302c302c302c302c302c302c302c302c302c302c302c30c2b69e0d"
+    },
+    {
+      "protocol": "pi18sv",
+      "command": "PIRI",
+      "pattern": null,
+      "frame_hex": "5e44303839323330302c3234332c323330302c3530302c3234332c353630302c353630302c3438302c3530302c3533302c3438302c3537302c3534342c322c3035302c3036302c302c312c322c392c302c302c312c312c312c30308e7e0d"
+    },
+    {
+      "protocol": "pi18sv",
+      "command": "GS",
+      "pattern": null,
+      "frame_hex": "5e44313036323333362c3439392c323333362c3439392c303434332c303235352c3030372c3532342c3030302c3030302c3030302c3031372c3034322c3033392c3030302c3030302c313332362c303030302c313930372c303030302c302c322c302c312c312c322c312c3160c3aa0d"
+    },
+    {
+      "protocol": "pi18sv",
+      "command": "MOD",
+      "pattern": null,
+      "frame_hex": "5e443030353035c3999f0d"
+    },
+    {
+      "protocol": "pi18sv",
+      "command": "FLAG",
+      "pattern": null,
+      "frame_hex": "275e44303230312c302c312c302c302c312c312c302c30c385a00d27"
+    },
+    {
+      "protocol": "pi18sv",
+      "command": "ACCT",
+      "pattern": null,
+      "frame_hex": "5e44303132303030302c30303030c3821c0d"
+    },
+    {
+      "protocol": "pi18sv",
+      "command": "ACLT",
+      "pattern": null,
+      "frame_hex": "5e44303132303030302c30303030c3821c0d"
+    },
+    {
+      "protocol": "pi18sv",
+      "command": "LON",
+      "pattern": "LON([01])$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi18sv",
+      "command": "LON",
+      "pattern": "LON([01])$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi18sv",
+      "command": "PEA",
+      "pattern": null,
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi18sv",
+      "command": "PEA",
+      "pattern": null,
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi18sv",
+      "command": "PDA",
+      "pattern": null,
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi18sv",
+      "command": "PDA",
+      "pattern": null,
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi18sv",
+      "command": "PEB",
+      "pattern": null,
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi18sv",
+      "command": "PEB",
+      "pattern": null,
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi18sv",
+      "command": "PDB",
+      "pattern": null,
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi18sv",
+      "command": "PDB",
+      "pattern": null,
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi18sv",
+      "command": "PEC",
+      "pattern": null,
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi18sv",
+      "command": "PEC",
+      "pattern": null,
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi18sv",
+      "command": "PDC",
+      "pattern": null,
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi18sv",
+      "command": "PDC",
+      "pattern": null,
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi18sv",
+      "command": "PED",
+      "pattern": null,
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi18sv",
+      "command": "PED",
+      "pattern": null,
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi18sv",
+      "command": "PDD",
+      "pattern": null,
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi18sv",
+      "command": "PDD",
+      "pattern": null,
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi18sv",
+      "command": "PEE",
+      "pattern": null,
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi18sv",
+      "command": "PEE",
+      "pattern": null,
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi18sv",
+      "command": "PDE",
+      "pattern": null,
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi18sv",
+      "command": "PDE",
+      "pattern": null,
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi18sv",
+      "command": "PEF",
+      "pattern": null,
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi18sv",
+      "command": "PEF",
+      "pattern": null,
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi18sv",
+      "command": "PDF",
+      "pattern": null,
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi18sv",
+      "command": "PDF",
+      "pattern": null,
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi18sv",
+      "command": "PEG",
+      "pattern": null,
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi18sv",
+      "command": "PEG",
+      "pattern": null,
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi18sv",
+      "command": "PDG",
+      "pattern": null,
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi18sv",
+      "command": "PDG",
+      "pattern": null,
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi18sv",
+      "command": "PEH",
+      "pattern": null,
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi18sv",
+      "command": "PEH",
+      "pattern": null,
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi18sv",
+      "command": "PDH",
+      "pattern": null,
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi18sv",
+      "command": "PDH",
+      "pattern": null,
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi18sv",
+      "command": "PEI",
+      "pattern": null,
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi18sv",
+      "command": "PEI",
+      "pattern": null,
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi18sv",
+      "command": "PDI",
+      "pattern": null,
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi18sv",
+      "command": "PDI",
+      "pattern": null,
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi18sv",
+      "command": "PF",
+      "pattern": null,
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi18sv",
+      "command": "PF",
+      "pattern": null,
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi18sv",
+      "command": "MCHGC",
+      "pattern": "MCHGC(\\d,\\d\\d\\d)$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi18sv",
+      "command": "MCHGC",
+      "pattern": "MCHGC(\\d,\\d\\d\\d)$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi18sv",
+      "command": "MUCHGC",
+      "pattern": "MUCHGC(\\d,\\d\\d\\d)$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi18sv",
+      "command": "MUCHGC",
+      "pattern": "MUCHGC(\\d,\\d\\d\\d)$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi18sv",
+      "command": "MCHGV",
+      "pattern": "MCHGV(\\d\\d\\d,\\d\\d\\d)$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi18sv",
+      "command": "MCHGV",
+      "pattern": "MCHGV(\\d\\d\\d,\\d\\d\\d)$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi18sv",
+      "command": "DAT",
+      "pattern": "DAT(\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d)$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi18sv",
+      "command": "DAT",
+      "pattern": "DAT(\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d)$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi18sv",
+      "command": "POP",
+      "pattern": "POP(\\d)$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi18sv",
+      "command": "POP",
+      "pattern": "POP(\\d)$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi18sv",
+      "command": "BUCD",
+      "pattern": "BUCD(\\d\\d\\d,\\d\\d\\d)$",
+      "frame_hex": "5e310bc20d"
+    },
+    {
+      "protocol": "pi18sv",
+      "command": "BUCD",
+      "pattern": "BUCD(\\d\\d\\d,\\d\\d\\d)$",
+      "frame_hex": "5e301be30d"
+    },
+    {
+      "protocol": "pi30",
+      "command": "Q1",
+      "pattern": null,
+      "frame_hex": "28303030303020303030303020303120303120303020303539203034352030353320303638203030203030203030302030303430203035383020303030302035302e303020313339b90d"
+    },
+    {
+      "protocol": "pi30",
+      "command": "QDI",
+      "pattern": null,
+      "frame_hex": "283233302e302035302e3020303033302034322e302035342e302035362e342034362e30203630203020302032203020302030203020302031203120302030203120302035342e3020302031203030309e600d"
+    },
+    {
+      "protocol": "pi30",
+      "command": "QFLAG",
+      "pattern": null,
+      "frame_hex": "2845616b787944626a75767a2f290d"
+    },
+    {
+      "protocol": "pi30",
+      "command": "QID",
+      "pattern": null,
+      "frame_hex": "2839323933333333303130353031bb070d"
+    },
+    {
+      "protocol": "pi30",
+      "command": "QMCHGCR",
+      "pattern": null,
+      "frame_hex": "2830313020303230203033302030343020303530203036302030373020303830203039302031303020313130203132300ccb0d"
+    },
+    {
+      "protocol": "pi30",
+      "command": "QMOD",
+      "pattern": null,
+      "frame_hex": "285364390d"
+    },
+    {
+      "protocol": "pi30",
+      "command": "QMN",
+      "pattern": null,
+      "frame_hex": "284d4b53322d38303030b28d0d"
+    },
+    {
+      "protocol": "pi30",
+      "command": "QGMN",
+      "pattern": null,
+      "frame_hex": "28303434c8ae0d"
+    },
+    {
+      "protocol": "pi30",
+      "command": "QMUCHGCR",
+      "pattern": null,
+      "frame_hex": "28303032203031302030323020303330203034302030353020303630203037302030383020303930203130302031313020313230ca230d"
+    },
+    {
+      "protocol": "pi30",
+      "command": "QPGS",
+      "pattern": "QPGS(\\d+)$",
+      "frame_hex": "28312039323933313730313130303531302042203030203030302e302030302e3030203233302e362035302e303020303237352030313431203030352035312e342030303120313030203038332e33203030322030303537342030303331322030303320313031303031313020312032203036302031323020313020303420303030cc230d"
+    },
+    {
+      "protocol": "pi30",
+      "command": "QPGS",
+      "pattern": "QPGS(\\d+)$",
+      "frame_hex": "28312039323931323130323130303033332042203030203030302e302030302e3030203132302e312035392e393920303034382030303030203030302035332e312030303020303539203030302e3020303030203030313534203030303136203030302030303030303131302037203120303630203132302030333020303020303030203030302e30203030e7630d"
+    },
+    {
+      "protocol": "pi30",
+      "command": "QPGS",
+      "pattern": "QPGS(\\d+)$",
+      "frame_hex": "51504753303fda0d"
+    },
+    {
+      "protocol": "pi30",
+      "command": "QPI",
+      "pattern": null,
+      "frame_hex": "28504933309a0b0d"
+    },
+    {
+      "protocol": "pi30",
+      "command": "QPIGS",
+      "pattern": null,
+      "frame_hex": "283030302e302030302e30203233302e302034392e392030313631203031313920303033203436302035372e3530203031322031303020303036392030303134203130332e382035372e343520303030303020303031313031313020303020303020303038353620303130248c0d"
+    },
+    {
+      "protocol": "pi30",
+      "command": "QPIRI",
+      "pattern": null,
+      "frame_hex": "283233302e302032312e37203233302e302035302e302032312e37203530303020343030302034382e302034362e302034322e302035362e342035342e302030203130203031302031203020302036203031203020302035342e30203020316f7e0d"
+    },
+    {
+      "protocol": "pi30",
+      "command": "QPIRI",
+      "pattern": null,
+      "frame_hex": "283132302e302032352e30203132302e302036302e302032352e30203330303020333030302034382e302034362e302034342e302035382e342035342e342032203330203036302031203220302039203031203020362035342e30203020312030303020308fed0d"
+    },
+    {
+      "protocol": "pi30",
+      "command": "QPIRI",
+      "pattern": null,
+      "frame_hex": "283233302e302031332e30203233302e302035302e302031332e30203330303020323430302032342e302032332e302032312e302032382e322032372e302030203330203530203020322031202d203031203120302032362e3020302030b9bd0d"
+    },
+    {
+      "protocol": "pi30",
+      "command": "QPIRI",
+      "pattern": null,
+      "frame_hex": "283233302e302032312e37203233302e302035302e302032312e37203530303020353030302034382e302034372e302034362e352035372e362035372e362035203330203038302030203120322031203031203020302035322e302030203103240d"
+    },
+    {
+      "protocol": "pi30",
+      "command": "QPIRI",
+      "pattern": null,
+      "frame_hex": "283233302e302032312e37203233302e302035302e302032312e37203530303020353030302034382e302034372e302034362e352035372e362035372e362039203330203038302030203120322031203031203020302035322e30203020319c6f0d"
+    },
+    {
+      "protocol": "pi30",
+      "command": "QPIRI",
+      "pattern": null,
+      "frame_hex": "283233302e302033342e37203233302e302035302e302033342e37203830303020383030302034382e302034382e302034322e302035342e302035322e35203220303130203033302031203220322039203031203020302035302e302030203120343830203020303730d9600d"
+    },
+    {
+      "protocol": "pi30",
+      "command": "QPIWS",
+      "pattern": null,
+      "frame_hex": "28303030303031303030303030303030303130303030303030303030303030303056a60d"
+    },
+    {
+      "protocol": "pi30",
+      "command": "QPIWS",
+      "pattern": null,
+      "frame_hex": "2831303030303030303030303030303030303030303030303030303030303030303030303015cf0d"
+    },
+    {
+      "protocol": "pi30",
+      "command": "QVFW",
+      "pattern": null,
+      "frame_hex": "2856455246573a30303037322e373053a70d"
+    },
+    {
+      "protocol": "pi30",
+      "command": "QBMS",
+      "pattern": null,
+      "frame_hex": "283020313030203020302031203533322035333220343530203030303020303033300e5e0a"
+    },
+    {
+      "protocol": "pi30",
+      "command": "F",
+      "pattern": "F([56]0)$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30",
+      "command": "F",
+      "pattern": "F([56]0)$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30",
+      "command": "MCHGC",
+      "pattern": "MCHGC(\\d\\d\\d)$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30",
+      "command": "MCHGC",
+      "pattern": "MCHGC(\\d\\d\\d)$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30",
+      "command": "MNCHGC",
+      "pattern": "MNCHGC(\\d\\d\\d\\d)$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30",
+      "command": "MNCHGC",
+      "pattern": "MNCHGC(\\d\\d\\d\\d)$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30",
+      "command": "MUCHGC",
+      "pattern": "MUCHGC(\\d\\d\\d)$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30",
+      "command": "MUCHGC",
+      "pattern": "MUCHGC(\\d\\d\\d)$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30",
+      "command": "PBCV",
+      "pattern": "PBCV(\\d\\d\\.\\d)$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30",
+      "command": "PBCV",
+      "pattern": "PBCV(\\d\\d\\.\\d)$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30",
+      "command": "PBDV",
+      "pattern": "PBDV(\\d\\d\\.\\d)$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30",
+      "command": "PBDV",
+      "pattern": "PBDV(\\d\\d\\.\\d)$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30",
+      "command": "PBFT",
+      "pattern": "PBFT(\\d\\d\\.\\d)$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30",
+      "command": "PBFT",
+      "pattern": "PBFT(\\d\\d\\.\\d)$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30",
+      "command": "PBT",
+      "pattern": "PBT(0[012])$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30",
+      "command": "PBT",
+      "pattern": "PBT(0[012])$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30",
+      "command": "PCP",
+      "pattern": "PCP(0[0123])$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30",
+      "command": "PCP",
+      "pattern": "PCP(0[0123])$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30",
+      "command": "PCVV",
+      "pattern": "PCVV(\\d\\d\\.\\d)$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30",
+      "command": "PCVV",
+      "pattern": "PCVV(\\d\\d\\.\\d)$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30",
+      "command": "PE",
+      "pattern": "PE(.+)$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30",
+      "command": "PE",
+      "pattern": "PE(.+)$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30",
+      "command": "PD",
+      "pattern": "PD(.+)$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30",
+      "command": "PD",
+      "pattern": "PD(.+)$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30",
+      "command": "PF",
+      "pattern": null,
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30",
+      "command": "PF",
+      "pattern": null,
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30",
+      "command": "PGR",
+      "pattern": "PGR(0[01])$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30",
+      "command": "PGR",
+      "pattern": "PGR(0[01])$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30",
+      "command": "POP",
+      "pattern": "POP(0[012])$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30",
+      "command": "POP",
+      "pattern": "POP(0[012])$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30",
+      "command": "POPLG",
+      "pattern": "POPLG(0[012])$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30",
+      "command": "POPLG",
+      "pattern": "POPLG(0[012])$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30",
+      "command": "POPM",
+      "pattern": "POPM(\\d[01234])$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30",
+      "command": "POPM",
+      "pattern": "POPM(\\d[01234])$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30",
+      "command": "PPCP",
+      "pattern": "PPCP(\\d0[0123])$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30",
+      "command": "PPCP",
+      "pattern": "PPCP(\\d0[0123])$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30",
+      "command": "PPVOKC",
+      "pattern": "PPVOKC([01])$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30",
+      "command": "PPVOKC",
+      "pattern": "PPVOKC([01])$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30",
+      "command": "PSDV",
+      "pattern": "PSDV(\\d\\d\\.\\d)$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30",
+      "command": "PSDV",
+      "pattern": "PSDV(\\d\\d\\.\\d)$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30",
+      "command": "PSPB",
+      "pattern": "PSPB([01])$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30",
+      "command": "PSPB",
+      "pattern": "PSPB([01])$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30",
+      "command": "PBATCD",
+      "pattern": "PBATCD([01][01][01])$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30",
+      "command": "PBATCD",
+      "pattern": "PBATCD([01][01][01])$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30",
+      "command": "DAT",
+      "pattern": "DAT(\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d)$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30",
+      "command": "DAT",
+      "pattern": "DAT(\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d)$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30",
+      "command": "PBATMAXDISC",
+      "pattern": "PBATMAXDISC([01]\\d\\d)$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30",
+      "command": "PBATMAXDISC",
+      "pattern": "PBATMAXDISC([01]\\d\\d)$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30",
+      "command": "BTA",
+      "pattern": "BTA([-+]0\\d)$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30",
+      "command": "BTA",
+      "pattern": "BTA([-+]0\\d)$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30",
+      "command": "PSAVE",
+      "pattern": null,
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30",
+      "command": "PSAVE",
+      "pattern": null,
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "Q1",
+      "pattern": null,
+      "frame_hex": "28303030303020303030303020303120303120303020303539203034352030353320303638203030203030203030302030303430203035383020303030302035302e303020313339b90d"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "QDI",
+      "pattern": null,
+      "frame_hex": "283233302e302035302e3020303033302034342e302035342e302035362e342034362e30203630203020302032203020302030203020302031203120312030203120302035342e302030203120323234ebbc0d"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "QID",
+      "pattern": null,
+      "frame_hex": "2839323933333333303130353031bb070d"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "QMCHGCR",
+      "pattern": null,
+      "frame_hex": "2830313020303230203033302030343020303530203036302030373020303830203039302031303020313130203132300ccb0d"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "QMOD",
+      "pattern": null,
+      "frame_hex": "2853e5d90d"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "QMOD",
+      "pattern": null,
+      "frame_hex": "2842e7c90d"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "QMN",
+      "pattern": null,
+      "frame_hex": "284d4b53322d38303030b28d0d"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "QGMN",
+      "pattern": null,
+      "frame_hex": "28303434c8ae0d"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "QMUCHGCR",
+      "pattern": null,
+      "frame_hex": "28303032203031302030323020303330203034302030353020303630203037302030383020303930203130302031313020313230ca230d"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "QPGS",
+      "pattern": "QPGS(\\d+)$",
+      "frame_hex": "28302039323933323130353130353331352042203030203030302e302030302e3030203233302e302035302e303020303938392030393037203031322035332e322030303920303930203334392e3820303039203030393839203030393037203031312031303130303131302030203120313030203132302030333020303220303030203237352e33203032695d0d"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "QPI",
+      "pattern": null,
+      "frame_hex": "28504933309a0b0d"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "QPIGS",
+      "pattern": null,
+      "frame_hex": "283232372e322035302e30203233302e332035302e302030383239203037353120303130203434372035342e3530203032302030383320303035342030322e37203332332e362030302e303020303030303020303030313031313020303020303020303038373920303130f18c0d"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "QPIRI",
+      "pattern": null,
+      "frame_hex": "283233302e302032312e37203233302e302035302e302032312e37203530303020343030302034382e302034362e302034322e302035362e342035342e302030203130203031302031203020302036203031203020302035342e30203020316f7e0d"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "QPIWS",
+      "pattern": null,
+      "frame_hex": "28303030303031303030303030303030303130303030303030303030303030303056a60d"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "QPIWS",
+      "pattern": null,
+      "frame_hex": "283030303030303030303030303030303030303030303030303030303030303030303030303c8e0d"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "QVFW",
+      "pattern": null,
+      "frame_hex": "2856455246573a30303037322e373053a70d"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "QBMS",
+      "pattern": null,
+      "frame_hex": "283020313030203020302031203533322035333220343530203030303020303033300e5e0a"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "F",
+      "pattern": "F([56]0)$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "F",
+      "pattern": "F([56]0)$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "MCHGC",
+      "pattern": "MCHGC(\\d\\d\\d)$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "MCHGC",
+      "pattern": "MCHGC(\\d\\d\\d)$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "MNCHGC",
+      "pattern": "MNCHGC(\\d\\d\\d\\d)$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "MNCHGC",
+      "pattern": "MNCHGC(\\d\\d\\d\\d)$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "MUCHGC",
+      "pattern": "MUCHGC(\\d\\d\\d)$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "MUCHGC",
+      "pattern": "MUCHGC(\\d\\d\\d)$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "PBCV",
+      "pattern": "PBCV(\\d\\d\\.\\d)$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "PBCV",
+      "pattern": "PBCV(\\d\\d\\.\\d)$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "PBDV",
+      "pattern": "PBDV(\\d\\d\\.\\d)$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "PBDV",
+      "pattern": "PBDV(\\d\\d\\.\\d)$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "PBFT",
+      "pattern": "PBFT(\\d\\d\\.\\d)$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "PBFT",
+      "pattern": "PBFT(\\d\\d\\.\\d)$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "PBT",
+      "pattern": "PBT(0[012])$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "PBT",
+      "pattern": "PBT(0[012])$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "PCP",
+      "pattern": "PCP(0[0123])$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "PCP",
+      "pattern": "PCP(0[0123])$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "PCVV",
+      "pattern": "PCVV(\\d\\d\\.\\d)$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "PCVV",
+      "pattern": "PCVV(\\d\\d\\.\\d)$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "PE",
+      "pattern": "PE(.+)$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "PE",
+      "pattern": "PE(.+)$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "PD",
+      "pattern": "PD(.+)$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "PD",
+      "pattern": "PD(.+)$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "PF",
+      "pattern": null,
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "PF",
+      "pattern": null,
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "PGR",
+      "pattern": "PGR(0[01])$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "PGR",
+      "pattern": "PGR(0[01])$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "POP",
+      "pattern": "POP(0[012])$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "POP",
+      "pattern": "POP(0[012])$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "POPLG",
+      "pattern": "POPLG(0[012])$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "POPLG",
+      "pattern": "POPLG(0[012])$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "POPM",
+      "pattern": "POPM(\\d[01234])$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "POPM",
+      "pattern": "POPM(\\d[01234])$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "PPCP",
+      "pattern": "PPCP(\\d0[0123])$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "PPCP",
+      "pattern": "PPCP(\\d0[0123])$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "PPVOKC",
+      "pattern": "PPVOKC([01])$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "PPVOKC",
+      "pattern": "PPVOKC([01])$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "PSDV",
+      "pattern": "PSDV(\\d\\d\\.\\d)$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "PSDV",
+      "pattern": "PSDV(\\d\\d\\.\\d)$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "PSPB",
+      "pattern": "PSPB([01])$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "PSPB",
+      "pattern": "PSPB([01])$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "PBATCD",
+      "pattern": "PBATCD([01][01][01])$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "PBATCD",
+      "pattern": "PBATCD([01][01][01])$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "DAT",
+      "pattern": "DAT(\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d)$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "DAT",
+      "pattern": "DAT(\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d)$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "PBATMAXDISC",
+      "pattern": "PBATMAXDISC([01]\\d\\d)$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "PBATMAXDISC",
+      "pattern": "PBATMAXDISC([01]\\d\\d)$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "BTA",
+      "pattern": "BTA([-+]0\\d)$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "BTA",
+      "pattern": "BTA([-+]0\\d)$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "PSAVE",
+      "pattern": null,
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "PSAVE",
+      "pattern": null,
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "QSID",
+      "pattern": null,
+      "frame_hex": "2831343932393332313035313035333335303035353335940e0d"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "QPIGS2",
+      "pattern": null,
+      "frame_hex": "2830332e31203332372e3320303130323620c98b0d"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "QOPPT",
+      "pattern": null,
+      "frame_hex": "28322032203220322032203220322032203220322032203220322032203220322032203220322032203220322032203220322030203220313e3e0d"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "QCHPT",
+      "pattern": null,
+      "frame_hex": "2833203320332033203320332033203320332033203320332033203320332033203320332033203320332033203320332033203020302030d08b0d"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "QT",
+      "pattern": null,
+      "frame_hex": "2832303231303732363132323630364a460d"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "QBEQI",
+      "pattern": null,
+      "frame_hex": "2831203033302030333020303830203032312035352e3430203232342030333020302030323334793f0d"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "QET",
+      "pattern": null,
+      "frame_hex": "283030323338383030214a0d"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "QEY",
+      "pattern": "QEY(\\d\\d\\d\\d)$",
+      "frame_hex": "283030323338383030214a0d"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "QEM",
+      "pattern": "QEM(\\d\\d\\d\\d\\d\\d)$",
+      "frame_hex": "283030323338383030214a0d"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "QED",
+      "pattern": "QED(\\d\\d\\d\\d\\d\\d\\d\\d)$",
+      "frame_hex": "283030323338383030214a0d"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "QLT",
+      "pattern": null,
+      "frame_hex": "283030323338383030214a0d"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "QLY",
+      "pattern": "QLY(\\d\\d\\d\\d)$",
+      "frame_hex": "283030323338383030214a0d"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "QLM",
+      "pattern": "QLM(\\d\\d\\d\\d\\d\\d)$",
+      "frame_hex": "283030323338383030214a0d"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "QLD",
+      "pattern": "QLD(\\d\\d\\d\\d\\d\\d\\d\\d)$",
+      "frame_hex": "283030323338383030214a0d"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "QLED",
+      "pattern": null,
+      "frame_hex": "2831203120322035203320313438303030323131323535323535323535303030323535323535da6a0d"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "PLEDE",
+      "pattern": "PLEDE([01])$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "PLEDE",
+      "pattern": "PLEDE([01])$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "PLEDS",
+      "pattern": "PLEDS([012])$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "PLEDS",
+      "pattern": "PLEDS([012])$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "PLEDM",
+      "pattern": "PLEDM([0123])$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "PLEDM",
+      "pattern": "PLEDM([0123])$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "PLEDB",
+      "pattern": "PLEDB([123456789])$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "PLEDB",
+      "pattern": "PLEDB([123456789])$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "PLEDT",
+      "pattern": "PLEDT([123])$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "PLEDT",
+      "pattern": "PLEDT([123])$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "PLEDC",
+      "pattern": "PLEDC(\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d)$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30max",
+      "command": "PLEDC",
+      "pattern": "PLEDC(\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d)$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "Q1",
+      "pattern": null,
+      "frame_hex": "28303030303020303030303020303120303120303020303539203034352030353320303638203030203030203030302030303430203035383020303030302035302e303020313339b90d"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "QDI",
+      "pattern": null,
+      "frame_hex": "283233302e302035302e3020303033302034342e302035342e302035362e342034362e30203630203020302032203020302030203020302031203120312030203120302035342e302030203120323234ebbc0d"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "QID",
+      "pattern": null,
+      "frame_hex": "2839323933333333303130353031bb070d"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "QMCHGCR",
+      "pattern": null,
+      "frame_hex": "2830313020303230203033302030343020303530203036302030373020303830203039302031303020313130203132300ccb0d"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "QMOD",
+      "pattern": null,
+      "frame_hex": "2853e5d90d"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "QMOD",
+      "pattern": null,
+      "frame_hex": "2842e7c90d"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "QMN",
+      "pattern": null,
+      "frame_hex": "284d4b53322d38303030b28d0d"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "QGMN",
+      "pattern": null,
+      "frame_hex": "28303434c8ae0d"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "QMUCHGCR",
+      "pattern": null,
+      "frame_hex": "28303032203031302030323020303330203034302030353020303630203037302030383020303930203130302031313020313230ca230d"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "QPGS",
+      "pattern": "QPGS(\\d+)$",
+      "frame_hex": "28302039323933323130353130353331352042203030203030302e302030302e3030203233302e302035302e303020303938392030393037203031322035332e322030303920303930203334392e3820303039203030393839203030393037203031312031303130303131302030203120313030203132302030333020303220303030203237352e33203032695d0d"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "QPI",
+      "pattern": null,
+      "frame_hex": "28504933309a0b0d"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "QPIGS",
+      "pattern": null,
+      "frame_hex": "283232372e322035302e30203233302e332035302e302030383239203037353120303130203434372035342e3530203032302030383320303035342030322e37203332332e362030302e303020303030303020303030313031313020303020303020303038373920303130f18c0d"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "QPIRI",
+      "pattern": null,
+      "frame_hex": "283233302e302032312e37203233302e302035302e302032312e37203530303020343030302034382e302034362e302034322e302035362e342035342e302030203130203031302031203020302036203031203020302035342e30203020316f7e0d"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "QPIWS",
+      "pattern": null,
+      "frame_hex": "28303030303031303030303030303030303130303030303030303030303030303056a60d"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "QPIWS",
+      "pattern": null,
+      "frame_hex": "283030303030303030303030303030303030303030303030303030303030303030303030303c8e0d"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "QVFW",
+      "pattern": null,
+      "frame_hex": "2856455246573a30303037322e373053a70d"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "QBMS",
+      "pattern": null,
+      "frame_hex": "283020313030203020302031203533322035333220343530203030303020303033300e5e0a"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "F",
+      "pattern": "F([56]0)$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "F",
+      "pattern": "F([56]0)$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "MCHGC",
+      "pattern": "MCHGC(\\d\\d\\d)$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "MCHGC",
+      "pattern": "MCHGC(\\d\\d\\d)$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "MNCHGC",
+      "pattern": "MNCHGC(\\d\\d\\d\\d)$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "MNCHGC",
+      "pattern": "MNCHGC(\\d\\d\\d\\d)$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "MUCHGC",
+      "pattern": "MUCHGC(\\d\\d\\d)$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "MUCHGC",
+      "pattern": "MUCHGC(\\d\\d\\d)$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "PBCV",
+      "pattern": "PBCV(\\d\\d\\.\\d)$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "PBCV",
+      "pattern": "PBCV(\\d\\d\\.\\d)$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "PBDV",
+      "pattern": "PBDV(\\d\\d\\.\\d)$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "PBDV",
+      "pattern": "PBDV(\\d\\d\\.\\d)$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "PBFT",
+      "pattern": "PBFT(\\d\\d\\.\\d)$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "PBFT",
+      "pattern": "PBFT(\\d\\d\\.\\d)$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "PBT",
+      "pattern": "PBT(0[012])$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "PBT",
+      "pattern": "PBT(0[012])$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "PCP",
+      "pattern": "PCP(0[0123])$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "PCP",
+      "pattern": "PCP(0[0123])$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "PCVV",
+      "pattern": "PCVV(\\d\\d\\.\\d)$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "PCVV",
+      "pattern": "PCVV(\\d\\d\\.\\d)$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "PE",
+      "pattern": "PE(.+)$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "PE",
+      "pattern": "PE(.+)$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "PD",
+      "pattern": "PD(.+)$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "PD",
+      "pattern": "PD(.+)$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "PF",
+      "pattern": null,
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "PF",
+      "pattern": null,
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "PGR",
+      "pattern": "PGR(0[01])$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "PGR",
+      "pattern": "PGR(0[01])$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "POP",
+      "pattern": "POP(0[012])$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "POP",
+      "pattern": "POP(0[012])$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "POPLG",
+      "pattern": "POPLG(0[012])$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "POPLG",
+      "pattern": "POPLG(0[012])$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "POPM",
+      "pattern": "POPM(\\d[01234])$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "POPM",
+      "pattern": "POPM(\\d[01234])$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "PPCP",
+      "pattern": "PPCP(\\d0[0123])$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "PPCP",
+      "pattern": "PPCP(\\d0[0123])$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "PPVOKC",
+      "pattern": "PPVOKC([01])$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "PPVOKC",
+      "pattern": "PPVOKC([01])$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "PSDV",
+      "pattern": "PSDV(\\d\\d\\.\\d)$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "PSDV",
+      "pattern": "PSDV(\\d\\d\\.\\d)$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "PSPB",
+      "pattern": "PSPB([01])$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "PSPB",
+      "pattern": "PSPB([01])$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "PBATCD",
+      "pattern": "PBATCD([01][01][01])$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "PBATCD",
+      "pattern": "PBATCD([01][01][01])$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "DAT",
+      "pattern": "DAT(\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d)$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "DAT",
+      "pattern": "DAT(\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d)$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "PBATMAXDISC",
+      "pattern": "PBATMAXDISC([01]\\d\\d)$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "PBATMAXDISC",
+      "pattern": "PBATMAXDISC([01]\\d\\d)$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "BTA",
+      "pattern": "BTA([-+]0\\d)$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "BTA",
+      "pattern": "BTA([-+]0\\d)$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "PSAVE",
+      "pattern": null,
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "PSAVE",
+      "pattern": null,
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "QSID",
+      "pattern": null,
+      "frame_hex": "2831343932393332313035313035333335303035353335940e0d"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "QPIGS2",
+      "pattern": null,
+      "frame_hex": "2830332e31203332372e3320303130323620c98b0d"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "QOPPT",
+      "pattern": null,
+      "frame_hex": "28322032203220322032203220322032203220322032203220322032203220322032203220322032203220322032203220322030203220313e3e0d"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "QCHPT",
+      "pattern": null,
+      "frame_hex": "2833203320332033203320332033203320332033203320332033203320332033203320332033203320332033203320332033203020302030d08b0d"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "QT",
+      "pattern": null,
+      "frame_hex": "2832303231303732363132323630364a460d"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "QBEQI",
+      "pattern": null,
+      "frame_hex": "2831203033302030333020303830203032312035352e3430203232342030333020302030323334793f0d"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "QET",
+      "pattern": null,
+      "frame_hex": "283030323338383030214a0d"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "QEY",
+      "pattern": "QEY(\\d\\d\\d\\d)$",
+      "frame_hex": "283030323338383030214a0d"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "QEM",
+      "pattern": "QEM(\\d\\d\\d\\d\\d\\d)$",
+      "frame_hex": "283030323338383030214a0d"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "QED",
+      "pattern": "QED(\\d\\d\\d\\d\\d\\d\\d\\d)$",
+      "frame_hex": "283030323338383030214a0d"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "QLT",
+      "pattern": null,
+      "frame_hex": "283030323338383030214a0d"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "QLY",
+      "pattern": "QLY(\\d\\d\\d\\d)$",
+      "frame_hex": "283030323338383030214a0d"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "QLM",
+      "pattern": "QLM(\\d\\d\\d\\d\\d\\d)$",
+      "frame_hex": "283030323338383030214a0d"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "QLD",
+      "pattern": "QLD(\\d\\d\\d\\d\\d\\d\\d\\d)$",
+      "frame_hex": "283030323338383030214a0d"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "QLED",
+      "pattern": null,
+      "frame_hex": "2831203120322035203320313438303030323131323535323535323535303030323535323535da6a0d"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "PLEDE",
+      "pattern": "PLEDE([01])$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "PLEDE",
+      "pattern": "PLEDE([01])$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "PLEDS",
+      "pattern": "PLEDS([012])$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "PLEDS",
+      "pattern": "PLEDS([012])$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "PLEDM",
+      "pattern": "PLEDM([0123])$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "PLEDM",
+      "pattern": "PLEDM([0123])$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "PLEDB",
+      "pattern": "PLEDB([123456789])$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "PLEDB",
+      "pattern": "PLEDB([123456789])$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "PLEDT",
+      "pattern": "PLEDT([123])$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "PLEDT",
+      "pattern": "PLEDT([123])$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "PLEDC",
+      "pattern": "PLEDC(\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d)$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30mst",
+      "command": "PLEDC",
+      "pattern": "PLEDC(\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d)$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30revo",
+      "command": "PSET",
+      "pattern": "PSET(\\d+ \\d+[.]\\d+ \\d+[.]\\d+ \\d+[.]\\d+ \\d+[.]\\d+ \\d+ \\d+ \\d+ \\d+ \\d+ \\d+ \\d+.*)$",
+      "frame_hex": "284e414b030d"
+    },
+    {
+      "protocol": "pi30revo",
+      "command": "PSET",
+      "pattern": "PSET(\\d+ \\d+[.]\\d+ \\d+[.]\\d+ \\d+[.]\\d+ \\d+[.]\\d+ \\d+ \\d+ \\d+ \\d+ \\d+ \\d+ \\d+.*)$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30revo",
+      "command": "_PSET",
+      "pattern": "_PSET(\\d+ \\d+[.]\\d+ \\d+[.]\\d+ \\d+[.]\\d+ \\d+[.]\\d+ \\d+ \\d+ \\d+ \\d+ \\d+ \\d+ \\d+.*)$",
+      "frame_hex": "284e414b030d"
+    },
+    {
+      "protocol": "pi30revo",
+      "command": "_PSET",
+      "pattern": "_PSET(\\d+ \\d+[.]\\d+ \\d+[.]\\d+ \\d+[.]\\d+ \\d+[.]\\d+ \\d+ \\d+ \\d+ \\d+ \\d+ \\d+ \\d+.*)$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30revo",
+      "command": "PQSE",
+      "pattern": null,
+      "frame_hex": "283030303130302035362e302035342e302034342e302034322e30203033302030313020323031382030362030312032302030302030302030303c0a"
+    },
+    {
+      "protocol": "pi30revo",
+      "command": "QALL",
+      "pattern": null,
+      "frame_hex": "283030302030302e30203030302030302e302030303030203030302030302e30203030302030303020303030203030302030302e30203030303020303030303030203030303030302053203030203030030a"
+    },
+    {
+      "protocol": "pi30revo",
+      "command": "QMOD",
+      "pattern": null,
+      "frame_hex": "285364390d"
+    },
+    {
+      "protocol": "pi30revo",
+      "command": "QPI",
+      "pattern": null,
+      "frame_hex": "28504933309a0b0d"
+    },
+    {
+      "protocol": "pi30revo",
+      "command": "QPIGS",
+      "pattern": null,
+      "frame_hex": "283232312e302034392e39203232312e302034392e392030303030203037303720303132203430312030302e3130203031322030303020303032362030303030203030302e302030302e313020303030303020303030313030303020303020303020303030303020303130e97d0d"
+    },
+    {
+      "protocol": "pi30revo",
+      "command": "QPIRI",
+      "pattern": null,
+      "frame_hex": "283233302e302032312e37203233302e302035302e302032312e37203530303020343030302034382e302034362e302034322e302035362e342035342e302030203130203031302031203020302036203031203020302035342e30203020316f7e0d"
+    },
+    {
+      "protocol": "pi30revo",
+      "command": "QLITH0",
+      "pattern": null,
+      "frame_hex": "283034382e38203030302e30203030302e39203235302030323420303030203035322e35203031302e30203035332e35203030342e3420302032fc0b0a"
+    },
+    {
+      "protocol": "pi30revo",
+      "command": "QLITH0",
+      "pattern": null,
+      "frame_hex": "283035322e35203030302e30203030302e30203033322030333620303030203037302e30203030372e30203035372e30203030342e362030203582e00d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "Q1",
+      "pattern": null,
+      "frame_hex": "28303030303020303030303020303120303120303020303539203034352030353320303638203030203030203030302030303430203035383020303030302035302e303020313339b90d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "QDI",
+      "pattern": null,
+      "frame_hex": "283233302e302035302e3020303033302034342e302035342e302035362e342034362e30203630203020302032203020302030203020302031203120312030203120302035342e302030203120323234ebbc0d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "QFLAG",
+      "pattern": null,
+      "frame_hex": "2845627576797a44616a6b786e400d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "QID",
+      "pattern": null,
+      "frame_hex": "2839323933333333303130353031bb070d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "QMCHGCR",
+      "pattern": null,
+      "frame_hex": "2830313020303230203033302030343020303530203036302030373020303830203039302031303020313130203132300ccb0d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "QMOD",
+      "pattern": null,
+      "frame_hex": "2853e5d90d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "QMOD",
+      "pattern": null,
+      "frame_hex": "2842e7c90d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "QMN",
+      "pattern": null,
+      "frame_hex": "284d4b53322d38303030b28d0d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "QGMN",
+      "pattern": null,
+      "frame_hex": "28303434c8ae0d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "QMUCHGCR",
+      "pattern": null,
+      "frame_hex": "28303032203031302030323020303330203034302030353020303630203037302030383020303930203130302031313020313230ca230d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "QPGS",
+      "pattern": "QPGS(\\d+)$",
+      "frame_hex": "28302039323933323130353130353331352042203030203030302e302030302e3030203233302e302035302e303020303938392030393037203031322035332e322030303920303930203334392e3820303039203030393839203030393037203031312031303130303131302030203120313030203132302030333020303220303030203237352e33203032695d0d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "QPI",
+      "pattern": null,
+      "frame_hex": "28504933309a0b0d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "QPIGS",
+      "pattern": null,
+      "frame_hex": "283232372e322035302e30203233302e332035302e302030383239203037353120303130203434372035342e3530203032302030383320303035342030322e37203332332e362030302e303020303030303020303030313031313020303020303020303038373920303130f18c0d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "QPIRI",
+      "pattern": null,
+      "frame_hex": "283233302e302032312e37203233302e302035302e302032312e37203530303020343030302034382e302034362e302034322e302035362e342035342e302030203130203031302031203020302036203031203020302035342e30203020316f7e0d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "QPIWS",
+      "pattern": null,
+      "frame_hex": "28303030303031303030303030303030303130303030303030303030303030303056a60d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "QPIWS",
+      "pattern": null,
+      "frame_hex": "283030303030303030303030303030303030303030303030303030303030303030303030303c8e0d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "QVFW",
+      "pattern": null,
+      "frame_hex": "2856455246573a30303037322e373053a70d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "QBMS",
+      "pattern": null,
+      "frame_hex": "283020313030203020302031203533322035333220343530203030303020303033305e0a"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "F",
+      "pattern": "F([56]0)$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "F",
+      "pattern": "F([56]0)$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "MCHGC",
+      "pattern": "MCHGC(\\d\\d\\d)$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "MCHGC",
+      "pattern": "MCHGC(\\d\\d\\d)$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "MNCHGC",
+      "pattern": "MNCHGC(\\d\\d\\d\\d)$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "MNCHGC",
+      "pattern": "MNCHGC(\\d\\d\\d\\d)$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "MUCHGC",
+      "pattern": "MUCHGC(\\d\\d\\d)$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "MUCHGC",
+      "pattern": "MUCHGC(\\d\\d\\d)$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "PBCV",
+      "pattern": "PBCV(\\d\\d\\.\\d)$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "PBCV",
+      "pattern": "PBCV(\\d\\d\\.\\d)$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "PBDV",
+      "pattern": "PBDV(\\d\\d\\.\\d)$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "PBDV",
+      "pattern": "PBDV(\\d\\d\\.\\d)$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "PBFT",
+      "pattern": "PBFT(\\d\\d\\.\\d)$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "PBFT",
+      "pattern": "PBFT(\\d\\d\\.\\d)$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "PBT",
+      "pattern": "PBT(0[0-9])$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "PBT",
+      "pattern": "PBT(0[0-9])$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "PCP",
+      "pattern": "PCP(0[0123])$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "PCP",
+      "pattern": "PCP(0[0123])$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "PCVV",
+      "pattern": "PCVV(\\d\\d\\.\\d)$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "PCVV",
+      "pattern": "PCVV(\\d\\d\\.\\d)$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "PE",
+      "pattern": "PE(.+)$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "PE",
+      "pattern": "PE(.+)$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "PD",
+      "pattern": "PD(.+)$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "PD",
+      "pattern": "PD(.+)$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "PF",
+      "pattern": null,
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "PF",
+      "pattern": null,
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "PGR",
+      "pattern": "PGR(0[01])$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "PGR",
+      "pattern": "PGR(0[01])$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "POP",
+      "pattern": "POP(0[012])$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "POP",
+      "pattern": "POP(0[012])$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "POPLG",
+      "pattern": "POPLG(0[012])$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "POPLG",
+      "pattern": "POPLG(0[012])$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "POPM",
+      "pattern": "POPM(\\d[01234])$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "POPM",
+      "pattern": "POPM(\\d[01234])$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "PPCP",
+      "pattern": "PPCP(\\d0[0123])$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "PPCP",
+      "pattern": "PPCP(\\d0[0123])$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "PPVOKC",
+      "pattern": "PPVOKC([01])$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "PPVOKC",
+      "pattern": "PPVOKC([01])$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "PSDV",
+      "pattern": "PSDV(\\d\\d\\.\\d)$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "PSDV",
+      "pattern": "PSDV(\\d\\d\\.\\d)$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "PSPB",
+      "pattern": "PSPB([01])$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "PSPB",
+      "pattern": "PSPB([01])$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "PBATCD",
+      "pattern": "PBATCD([01][01][01])$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "PBATCD",
+      "pattern": "PBATCD([01][01][01])$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "DAT",
+      "pattern": "DAT(\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d)$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "DAT",
+      "pattern": "DAT(\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d)$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "PBATMAXDISC",
+      "pattern": "PBATMAXDISC([01]\\d\\d)$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "PBATMAXDISC",
+      "pattern": "PBATMAXDISC([01]\\d\\d)$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "BTA",
+      "pattern": "BTA([-+]0\\d)$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "BTA",
+      "pattern": "BTA([-+]0\\d)$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "PSAVE",
+      "pattern": null,
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "PSAVE",
+      "pattern": null,
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "QSID",
+      "pattern": null,
+      "frame_hex": "2831343932393332313035313035333335303035353335940e0d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "QPIGS2",
+      "pattern": null,
+      "frame_hex": "2830332e31203332372e3320303130323620c98b0d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "QOPPT",
+      "pattern": null,
+      "frame_hex": "28322032203220322032203220322032203220322032203220322032203220322032203220322032203220322032203220322030203220313e3e0d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "QCHPT",
+      "pattern": null,
+      "frame_hex": "2833203320332033203320332033203320332033203320332033203320332033203320332033203320332033203320332033203020302030d08b0d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "QT",
+      "pattern": null,
+      "frame_hex": "2832303231303732363132323630364a460d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "QBEQI",
+      "pattern": null,
+      "frame_hex": "2831203033302030333020303830203032312035352e3430203232342030333020302030323334793f0d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "QET",
+      "pattern": null,
+      "frame_hex": "283030323338383030214a0d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "QEY",
+      "pattern": "QEY(\\d\\d\\d\\d)$",
+      "frame_hex": "283030323338383030214a0d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "QEM",
+      "pattern": "QEM(\\d\\d\\d\\d\\d\\d)$",
+      "frame_hex": "283030323338383030214a0d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "QED",
+      "pattern": "QED(\\d\\d\\d\\d\\d\\d\\d\\d)$",
+      "frame_hex": "283030323338383030214a0d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "QLT",
+      "pattern": null,
+      "frame_hex": "283030323338383030214a0d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "QLY",
+      "pattern": "QLY(\\d\\d\\d\\d)$",
+      "frame_hex": "283030323338383030214a0d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "QLM",
+      "pattern": "QLM(\\d\\d\\d\\d\\d\\d)$",
+      "frame_hex": "283030323338383030214a0d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "QLD",
+      "pattern": "QLD(\\d\\d\\d\\d\\d\\d\\d\\d)$",
+      "frame_hex": "283030323338383030214a0d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "QLED",
+      "pattern": null,
+      "frame_hex": "2831203120322035203320313438303030323131323535323535323535303030323535323535da6a0d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "PLEDE",
+      "pattern": "PLEDE([01])$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "PLEDE",
+      "pattern": "PLEDE([01])$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "PLEDS",
+      "pattern": "PLEDS([012])$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "PLEDS",
+      "pattern": "PLEDS([012])$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "PLEDM",
+      "pattern": "PLEDM([0123])$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "PLEDM",
+      "pattern": "PLEDM([0123])$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "PLEDB",
+      "pattern": "PLEDB([123456789])$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "PLEDB",
+      "pattern": "PLEDB([123456789])$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "PLEDT",
+      "pattern": "PLEDT([123])$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "PLEDT",
+      "pattern": "PLEDT([123])$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "PLEDC",
+      "pattern": "PLEDC(\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d)$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "PLEDC",
+      "pattern": "PLEDC(\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d)$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30m044",
+      "command": "QDOP",
+      "pattern": null,
+      "frame_hex": "28302030203020302030302e302030302e30203030302030302030323520303335203031302030303020303020303098530d"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "Q1",
+      "pattern": null,
+      "frame_hex": "28303030303020303030303020303120303120303020303539203034352030353320303638203030203030203030302030303430203035383020303030302035302e303020313339b90d"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "QDI",
+      "pattern": null,
+      "frame_hex": "283233302e302035302e3020303033302034342e302035342e302035362e342034362e30203630203020302032203020302030203020302031203120312030203120302035342e302030203120323234ebbc0d"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "QID",
+      "pattern": null,
+      "frame_hex": "2839323933333333303130353031bb070d"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "QMCHGCR",
+      "pattern": null,
+      "frame_hex": "2830313020303230203033302030343020303530203036302030373020303830203039302031303020313130203132300ccb0d"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "QMOD",
+      "pattern": null,
+      "frame_hex": "2853e5d90d"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "QMOD",
+      "pattern": null,
+      "frame_hex": "2842e7c90d"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "QMN",
+      "pattern": null,
+      "frame_hex": "284d4b53322d38303030b28d0d"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "QGMN",
+      "pattern": null,
+      "frame_hex": "28303434c8ae0d"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "QMUCHGCR",
+      "pattern": null,
+      "frame_hex": "28303032203031302030323020303330203034302030353020303630203037302030383020303930203130302031313020313230ca230d"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "QPGS",
+      "pattern": "QPGS(\\d+)$",
+      "frame_hex": "28302039323933323130353130353331352042203030203030302e302030302e3030203233302e302035302e303020303938392030393037203031322035332e322030303920303930203334392e3820303039203030393839203030393037203031312031303130303131302030203120313030203132302030333020303220303030203237352e33203032695d0d"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "QPI",
+      "pattern": null,
+      "frame_hex": "28504933309a0b0d"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "QPIGS",
+      "pattern": null,
+      "frame_hex": "283232372e322035302e30203233302e332035302e302030383239203037353120303130203434372035342e3530203032302030383320303035342030322e37203332332e362030302e303020303030303020303030313031313020303020303020303038373920303130f18c0d"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "QPIRI",
+      "pattern": null,
+      "frame_hex": "283233302e302032312e37203233302e302035302e302032312e37203530303020343030302034382e302034362e302034322e302035362e342035342e302030203130203031302031203020302036203031203020302035342e30203020316f7e0d"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "QPIWS",
+      "pattern": null,
+      "frame_hex": "28303030303031303030303030303030303130303030303030303030303030303056a60d"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "QPIWS",
+      "pattern": null,
+      "frame_hex": "283030303030303030303030303030303030303030303030303030303030303030303030303c8e0d"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "QVFW",
+      "pattern": null,
+      "frame_hex": "2856455246573a30303037322e373053a70d"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "QBMS",
+      "pattern": null,
+      "frame_hex": "283020313030203020302031203533322035333220343530203030303020303033300e5e0a"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "F",
+      "pattern": "F([56]0)$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "F",
+      "pattern": "F([56]0)$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "MCHGC",
+      "pattern": "MCHGC(\\d\\d\\d)$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "MCHGC",
+      "pattern": "MCHGC(\\d\\d\\d)$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "MNCHGC",
+      "pattern": "MNCHGC(\\d\\d\\d\\d)$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "MNCHGC",
+      "pattern": "MNCHGC(\\d\\d\\d\\d)$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "MUCHGC",
+      "pattern": "MUCHGC(\\d[01]\\d[02])$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "MUCHGC",
+      "pattern": "MUCHGC(\\d[01]\\d[02])$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "PBCV",
+      "pattern": "PBCV(\\d\\d\\.\\d)$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "PBCV",
+      "pattern": "PBCV(\\d\\d\\.\\d)$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "PBDV",
+      "pattern": "PBDV(\\d\\d\\.\\d)$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "PBDV",
+      "pattern": "PBDV(\\d\\d\\.\\d)$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "PBFT",
+      "pattern": "PBFT(\\d\\d\\.\\d)$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "PBFT",
+      "pattern": "PBFT(\\d\\d\\.\\d)$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "PBT",
+      "pattern": "PBT(0[012])$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "PBT",
+      "pattern": "PBT(0[012])$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "PCP",
+      "pattern": "PCP(0[0123])$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "PCP",
+      "pattern": "PCP(0[0123])$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "PCVV",
+      "pattern": "PCVV(\\d\\d\\.\\d)$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "PCVV",
+      "pattern": "PCVV(\\d\\d\\.\\d)$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "PE",
+      "pattern": "PE(.+)$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "PE",
+      "pattern": "PE(.+)$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "PD",
+      "pattern": "PD(.+)$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "PD",
+      "pattern": "PD(.+)$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "PF",
+      "pattern": null,
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "PF",
+      "pattern": null,
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "PGR",
+      "pattern": "PGR(0[01])$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "PGR",
+      "pattern": "PGR(0[01])$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "POP",
+      "pattern": "POP(0[012])$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "POP",
+      "pattern": "POP(0[012])$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "POPLG",
+      "pattern": "POPLG(0[012])$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "POPLG",
+      "pattern": "POPLG(0[012])$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "POPM",
+      "pattern": "POPM(\\d[01234])$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "POPM",
+      "pattern": "POPM(\\d[01234])$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "PPCP",
+      "pattern": "PPCP(\\d0[0123])$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "PPCP",
+      "pattern": "PPCP(\\d0[0123])$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "PPVOKC",
+      "pattern": "PPVOKC([01])$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "PPVOKC",
+      "pattern": "PPVOKC([01])$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "PSDV",
+      "pattern": "PSDV(\\d\\d\\.\\d)$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "PSDV",
+      "pattern": "PSDV(\\d\\d\\.\\d)$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "PSPB",
+      "pattern": "PSPB([01])$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "PSPB",
+      "pattern": "PSPB([01])$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "PBATCD",
+      "pattern": "PBATCD([01][01][01])$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "PBATCD",
+      "pattern": "PBATCD([01][01][01])$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "DAT",
+      "pattern": "DAT(\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d)$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "DAT",
+      "pattern": "DAT(\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d)$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "PBATMAXDISC",
+      "pattern": "PBATMAXDISC([01]\\d\\d)$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "PBATMAXDISC",
+      "pattern": "PBATMAXDISC([01]\\d\\d)$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "BTA",
+      "pattern": "BTA([-+]0\\d)$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "BTA",
+      "pattern": "BTA([-+]0\\d)$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "PSAVE",
+      "pattern": null,
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "PSAVE",
+      "pattern": null,
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "QSID",
+      "pattern": null,
+      "frame_hex": "2831343932393332313035313035333335303035353335940e0d"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "QPIGS2",
+      "pattern": null,
+      "frame_hex": "2830332e31203332372e3320303130323620c98b0d"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "QOPPT",
+      "pattern": null,
+      "frame_hex": "28322032203220322032203220322032203220322032203220322032203220322032203220322032203220322032203220322030203220313e3e0d"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "QCHPT",
+      "pattern": null,
+      "frame_hex": "2833203320332033203320332033203320332033203320332033203320332033203320332033203320332033203320332033203020302030d08b0d"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "QT",
+      "pattern": null,
+      "frame_hex": "2832303231303732363132323630364a460d"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "QBEQI",
+      "pattern": null,
+      "frame_hex": "2831203033302030333020303830203032312035352e3430203232342030333020302030323334793f0d"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "QET",
+      "pattern": null,
+      "frame_hex": "283030323338383030214a0d"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "QEY",
+      "pattern": "QEY(\\d\\d\\d\\d)$",
+      "frame_hex": "283030323338383030214a0d"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "QEM",
+      "pattern": "QEM(\\d\\d\\d\\d\\d\\d)$",
+      "frame_hex": "283030323338383030214a0d"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "QED",
+      "pattern": "QED(\\d\\d\\d\\d\\d\\d\\d\\d)$",
+      "frame_hex": "283030323338383030214a0d"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "QLT",
+      "pattern": null,
+      "frame_hex": "283030323338383030214a0d"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "QLY",
+      "pattern": "QLY(\\d\\d\\d\\d)$",
+      "frame_hex": "283030323338383030214a0d"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "QLM",
+      "pattern": "QLM(\\d\\d\\d\\d\\d\\d)$",
+      "frame_hex": "283030323338383030214a0d"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "QLD",
+      "pattern": "QLD(\\d\\d\\d\\d\\d\\d\\d\\d)$",
+      "frame_hex": "283030323338383030214a0d"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "QLED",
+      "pattern": null,
+      "frame_hex": "2831203120322035203320313438303030323131323535323535323535303030323535323535da6a0d"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "PLEDE",
+      "pattern": "PLEDE([01])$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "PLEDE",
+      "pattern": "PLEDE([01])$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "PLEDS",
+      "pattern": "PLEDS([012])$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "PLEDS",
+      "pattern": "PLEDS([012])$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "PLEDM",
+      "pattern": "PLEDM([0123])$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "PLEDM",
+      "pattern": "PLEDM([0123])$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "PLEDB",
+      "pattern": "PLEDB([123456789])$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "PLEDB",
+      "pattern": "PLEDB([123456789])$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "PLEDT",
+      "pattern": "PLEDT([123])$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "PLEDT",
+      "pattern": "PLEDT([123])$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "PLEDC",
+      "pattern": "PLEDC(\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d)$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi30m045",
+      "command": "PLEDC",
+      "pattern": "PLEDC(\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d)$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi41",
+      "command": "Q1",
+      "pattern": null,
+      "frame_hex": "28303030303020303030303020303120303120303020303539203034352030353320303638203030203030203030302030303430203035383020303030302035302e303020313339b90d"
+    },
+    {
+      "protocol": "pi41",
+      "command": "QDI",
+      "pattern": null,
+      "frame_hex": "283233302e302035302e3020303033302034322e302035342e302035362e342034362e30203630203020302032203020302030203020302031203120302030203120302035342e3020302031203030309e600d"
+    },
+    {
+      "protocol": "pi41",
+      "command": "QFLAG",
+      "pattern": null,
+      "frame_hex": "2845616b787944626a75767a2f290d"
+    },
+    {
+      "protocol": "pi41",
+      "command": "QID",
+      "pattern": null,
+      "frame_hex": "2839323933333333303130353031bb070d"
+    },
+    {
+      "protocol": "pi41",
+      "command": "QMCHGCR",
+      "pattern": null,
+      "frame_hex": "2830313020303230203033302030343020303530203036302030373020303830203039302031303020313130203132300ccb0d"
+    },
+    {
+      "protocol": "pi41",
+      "command": "QMOD",
+      "pattern": null,
+      "frame_hex": "285364390d"
+    },
+    {
+      "protocol": "pi41",
+      "command": "QMN",
+      "pattern": null,
+      "frame_hex": "284d4b53322d38303030b28d0d"
+    },
+    {
+      "protocol": "pi41",
+      "command": "QGMN",
+      "pattern": null,
+      "frame_hex": "28303434c8ae0d"
+    },
+    {
+      "protocol": "pi41",
+      "command": "QMUCHGCR",
+      "pattern": null,
+      "frame_hex": "28303032203031302030323020303330203034302030353020303630203037302030383020303930203130302031313020313230ca230d"
+    },
+    {
+      "protocol": "pi41",
+      "command": "QPGS",
+      "pattern": "QPGS(\\d)$",
+      "frame_hex": "2831203932393131393036313030303435204c203030203132322e392035392e3938203132322e392035392e393820303333312030323732203031332035362e312030303420313030203030302e30203030342030313537372030313430302030303920303130303030313020362030203036302032323020343020303020303030c7c20d"
+    },
+    {
+      "protocol": "pi41",
+      "command": "QPI",
+      "pattern": null,
+      "frame_hex": "28504933309a0b0d"
+    },
+    {
+      "protocol": "pi41",
+      "command": "QPIGS",
+      "pattern": null,
+      "frame_hex": "283030302e302030302e30203233302e302034392e392030313631203031313920303033203436302035372e3530203031322031303020303036392030303134203130332e382035372e343520303030303020303031313031313020303020303020303038353620303130248c0d"
+    },
+    {
+      "protocol": "pi41",
+      "command": "QPIRI",
+      "pattern": null,
+      "frame_hex": "283233302e302032312e37203233302e302035302e302032312e37203530303020343030302034382e302034362e302034322e302035362e342035342e302030203130203031302031203020302036203031203020302035342e302030203120363083aa0d"
+    },
+    {
+      "protocol": "pi41",
+      "command": "QPIRI",
+      "pattern": null,
+      "frame_hex": "283132302e302032302e38203132302e302036302e302032302e38203235303020323530302034382e302034372e302034332e302035362e312035362e312032203430203036302030203020302039203031203020362035352e302030203120303030beac0d"
+    },
+    {
+      "protocol": "pi41",
+      "command": "QPIRI",
+      "pattern": null,
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi41",
+      "command": "QPIWS",
+      "pattern": null,
+      "frame_hex": "28303030303031303030303030303030303130303030303030303030303030303056a60d"
+    },
+    {
+      "protocol": "pi41",
+      "command": "QPIWS",
+      "pattern": null,
+      "frame_hex": "2831303030303030303030303030303030303030303030303030303030303030303030303015cf0d"
+    },
+    {
+      "protocol": "pi41",
+      "command": "QVFW",
+      "pattern": null,
+      "frame_hex": "2856455246573a30303037322e373053a70d"
+    },
+    {
+      "protocol": "pi41",
+      "command": "QBMS",
+      "pattern": null,
+      "frame_hex": "283020313030203020302031203533322035333220343530203030303020303033300e5e0a"
+    },
+    {
+      "protocol": "pi41",
+      "command": "F",
+      "pattern": "F([56]0)$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi41",
+      "command": "F",
+      "pattern": "F([56]0)$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi41",
+      "command": "MCHGC",
+      "pattern": "MCHGC(\\d\\d\\d)$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi41",
+      "command": "MCHGC",
+      "pattern": "MCHGC(\\d\\d\\d)$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi41",
+      "command": "MNCHGC",
+      "pattern": "MNCHGC(\\d\\d\\d\\d)$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi41",
+      "command": "MNCHGC",
+      "pattern": "MNCHGC(\\d\\d\\d\\d)$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi41",
+      "command": "MUCHGC",
+      "pattern": "MUCHGC(\\d\\d\\d)$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi41",
+      "command": "MUCHGC",
+      "pattern": "MUCHGC(\\d\\d\\d)$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi41",
+      "command": "PBCV",
+      "pattern": "PBCV(\\d\\d\\.\\d)$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi41",
+      "command": "PBCV",
+      "pattern": "PBCV(\\d\\d\\.\\d)$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi41",
+      "command": "PBDV",
+      "pattern": "PBDV(\\d\\d\\.\\d)$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi41",
+      "command": "PBDV",
+      "pattern": "PBDV(\\d\\d\\.\\d)$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi41",
+      "command": "PBFT",
+      "pattern": "PBFT(\\d\\d\\.\\d)$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi41",
+      "command": "PBFT",
+      "pattern": "PBFT(\\d\\d\\.\\d)$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi41",
+      "command": "PBT",
+      "pattern": "PBT(0[012])$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi41",
+      "command": "PBT",
+      "pattern": "PBT(0[012])$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi41",
+      "command": "PCP",
+      "pattern": "PCP(0[0123])$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi41",
+      "command": "PCP",
+      "pattern": "PCP(0[0123])$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi41",
+      "command": "PCVV",
+      "pattern": "PCVV(\\d\\d\\.\\d)$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi41",
+      "command": "PCVV",
+      "pattern": "PCVV(\\d\\d\\.\\d)$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi41",
+      "command": "PE",
+      "pattern": "PE(.+)$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi41",
+      "command": "PE",
+      "pattern": "PE(.+)$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi41",
+      "command": "PD",
+      "pattern": "PD(.+)$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi41",
+      "command": "PD",
+      "pattern": "PD(.+)$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi41",
+      "command": "PF",
+      "pattern": null,
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi41",
+      "command": "PF",
+      "pattern": null,
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi41",
+      "command": "PGR",
+      "pattern": "PGR(0[01])$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi41",
+      "command": "PGR",
+      "pattern": "PGR(0[01])$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi41",
+      "command": "POP",
+      "pattern": "POP(0[012])$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi41",
+      "command": "POP",
+      "pattern": "POP(0[012])$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi41",
+      "command": "POPLG",
+      "pattern": "POPLG(0[012])$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi41",
+      "command": "POPLG",
+      "pattern": "POPLG(0[012])$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi41",
+      "command": "POPM",
+      "pattern": "POPM(\\d[01234])$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi41",
+      "command": "POPM",
+      "pattern": "POPM(\\d[01234])$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi41",
+      "command": "PPCP",
+      "pattern": "PPCP(\\d0[0123])$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi41",
+      "command": "PPCP",
+      "pattern": "PPCP(\\d0[0123])$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi41",
+      "command": "PPVOKC",
+      "pattern": "PPVOKC([01])$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi41",
+      "command": "PPVOKC",
+      "pattern": "PPVOKC([01])$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi41",
+      "command": "PSDV",
+      "pattern": "PSDV(\\d\\d\\.\\d)$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi41",
+      "command": "PSDV",
+      "pattern": "PSDV(\\d\\d\\.\\d)$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi41",
+      "command": "PSPB",
+      "pattern": "PSPB([01])$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi41",
+      "command": "PSPB",
+      "pattern": "PSPB([01])$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi41",
+      "command": "PBATCD",
+      "pattern": "PBATCD([01][01][01])$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi41",
+      "command": "PBATCD",
+      "pattern": "PBATCD([01][01][01])$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi41",
+      "command": "DAT",
+      "pattern": "DAT(\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d)$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi41",
+      "command": "DAT",
+      "pattern": "DAT(\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d\\d)$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi41",
+      "command": "PBATMAXDISC",
+      "pattern": "PBATMAXDISC([01]\\d\\d)$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi41",
+      "command": "PBATMAXDISC",
+      "pattern": "PBATMAXDISC([01]\\d\\d)$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi41",
+      "command": "BTA",
+      "pattern": "BTA([-+]0\\d)$",
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi41",
+      "command": "BTA",
+      "pattern": "BTA([-+]0\\d)$",
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi41",
+      "command": "PSAVE",
+      "pattern": null,
+      "frame_hex": "284e414b73730d"
+    },
+    {
+      "protocol": "pi41",
+      "command": "PSAVE",
+      "pattern": null,
+      "frame_hex": "2841434b39200d"
+    },
+    {
+      "protocol": "pi41",
+      "command": "QP2GS",
+      "pattern": "QP2GS(\\d)$",
+      "frame_hex": "283131203932393131393036313030303435204c203030203132342e322035392e3938203132342e322035392e393820303134392030313330203030352035362e312030303020313030203030302e30203030203031303030303130a9a80d"
+    }
+  ]
+}

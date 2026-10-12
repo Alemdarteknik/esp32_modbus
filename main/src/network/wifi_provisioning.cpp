@@ -32,12 +32,13 @@ namespace inverter_gateway::network {
 namespace {
 
 constexpr char tag[] = "provisioning";
+// Webpage selection is staged ahead of the additional inverter backends.
 
 esp_err_t advertise_setup_page()
 {
     ESP_RETURN_ON_ERROR(mdns_init(), tag, "initialize mDNS");
     ESP_RETURN_ON_ERROR(mdns_hostname_set("esp32"), tag, "set mDNS hostname");
-    ESP_RETURN_ON_ERROR(mdns_instance_name_set("Modbus inverter gateway"), tag,
+    ESP_RETURN_ON_ERROR(mdns_instance_name_set("Inverter and BMS gateway"), tag,
                         "set mDNS instance name");
     return mdns_service_add(nullptr, "_http", "_tcp", 80, nullptr, 0);
 }
@@ -59,7 +60,7 @@ input:focus,select:focus{outline:3px solid #0ea5e933;border-color:var(--blue)}bu
 #message{white-space:pre-wrap;margin-top:12px;color:var(--muted)}details{border-top:1px solid var(--line);margin-top:16px;padding-top:12px}summary{cursor:pointer;font-weight:650}.actions{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:16px}
 @media(max-width:620px){body{padding:12px}.grid,.status-grid,.actions{grid-template-columns:1fr}.wide{grid-column:auto}.inline{display:block}.inline button{margin-top:8px;width:100%}}
 </style></head><body>
-<h1>Modbus inverter gateway</h1><p class="lead">Choose this device's job, connect it, then verify the installation.</p>
+<h1>Inverter gateway</h1><p class="lead">Choose this device's job, select its inverter connection, then verify the installation.</p>
 <form id="f" novalidate>
 <section class="card"><div class="step">Step 1</div><h2>Installation</h2><div class="grid">
 <div class="wide"><label for="topology">Inverter system</label><select id="topology" name="topology">
@@ -74,6 +75,24 @@ input:focus,select:focus{outline:3px solid #0ea5e933;border-color:var(--blue)}bu
 <div id="phase-box"><label for="phase">Phase for this inverter</label><select id="phase" name="phase"><option value="none" hidden>Not applicable</option><option value="parallel_single_phase" hidden>Parallel single phase</option><option value="phase_1">Phase 1 (L1)</option><option value="phase_2">Phase 2 (L2)</option><option value="phase_3">Phase 3 (L3)</option></select></div>
 </div></section>
 
+<section id="inverter-card" class="card"><div class="step">Inverter connection</div><h2>Protocol and cable</h2><div class="grid">
+<div><label for="inverter_protocol">Inverter / device protocol</label><select id="inverter_protocol" name="inverter_protocol" aria-describedby="protocol-hint inverter-selection-status">
+<optgroup label="Current Modbus inverter"><option value="AOHAI_MODBUS_RTU" selected>AOHAI Modbus RTU (Mexxsun)</option></optgroup>
+<optgroup label="MPP-Solar / Voltronic inverters">
+<option value="PI16">PI16</option><option value="PI17">PI17</option><option value="PI17M058">PI17M058</option><option value="PI17INFINI">PI17INFINI</option><option value="PI18">PI18</option><option value="PI18LVX">PI18LVX</option><option value="PI18SV">PI18SV</option><option value="PI30">PI30</option><option value="PI30MAX">PI30MAX</option><option value="PI30MST">PI30MST</option><option value="PI30REVO">PI30REVO</option><option value="PI30M044">PI30M044</option><option value="PI30M045">PI30M045</option><option value="PI41">PI41</option></optgroup>
+<optgroup label="JK battery / BMS"><option value="JK02">JK02</option><option value="JK02_32">JK02_32</option><option value="JK04">JK04</option><option value="JK232">JK232</option><option value="JK485">JK485</option><option value="JKPB">JKPB</option><option value="JKV11">JKV11</option><option value="JKSERIAL">JKSERIAL</option></optgroup>
+<optgroup label="Daly battery / BMS"><option value="DALY">DALY</option><option value="DALY40">DALY40</option></optgroup>
+<optgroup label="Victron VE.Direct"><option value="VED">VED</option></optgroup>
+</select><small class="hint" id="protocol-hint">Use the protocol specified for your device model. A brand name or cable type alone does not identify it.</small></div>
+<div><label for="inverter_connection">Connection to this ESP</label><select id="inverter_connection" name="inverter_connection" aria-describedby="connection-hint inverter-selection-status"><option value="usb_rs485" selected>USB serial adapter (RS485 / RS232)</option><option value="usb_hid">USB HID</option><option value="uart_rs232">UART / RS232</option><option value="uart_rs485">UART / RS485</option><option value="uart_ttl">UART / TTL</option><option value="bluetooth">Bluetooth LE</option></select><small class="hint" id="connection-hint">Use the existing CH340 / CH341 USB-RS485 adapter.</small></div>
+</div><div class="grid" style="margin-top:14px">
+<div id="serial-baud-box"><label for="inverter_baud">Serial baud rate</label><input id="inverter_baud" name="inverter_baud" type="number" min="1200" max="115200" value="9600"></div>
+<div id="protocol-address-box"><label for="inverter_address">Device address</label><input id="inverter_address" name="inverter_address" type="number" min="1" max="255" value="1"></div>
+<div id="uart-pins-box" class="wide"><div class="grid"><div><label for="inverter_tx_pin">UART2 TX GPIO</label><input id="inverter_tx_pin" name="inverter_tx_pin" type="number" min="0" max="48" value="4"></div><div><label for="inverter_rx_pin">UART2 RX GPIO</label><input id="inverter_rx_pin" name="inverter_rx_pin" type="number" min="0" max="48" value="5"></div><div id="direction-pin-box"><label for="inverter_direction_pin">RS485 DE / RE GPIO</label><input id="inverter_direction_pin" name="inverter_direction_pin" type="number" min="0" max="48" value="6"></div><div><label for="inverter_parity">Serial parity</label><select id="inverter_parity" name="inverter_parity"><option value="0">None</option><option value="1">Even</option><option value="2">Odd</option></select></div></div><small class="hint">UART2 is separate from the gateway cable on GPIO17 / 18. Match the device electrical interface and serial settings.</small></div>
+<div id="bluetooth-box" class="wide"><label for="inverter_bluetooth_address">BMS Bluetooth address</label><input id="inverter_bluetooth_address" name="inverter_bluetooth_address" maxlength="17" placeholder="AA:BB:CC:DD:EE:FF"><label for="inverter_bluetooth_address_type">Bluetooth address type</label><select id="inverter_bluetooth_address_type" name="inverter_bluetooth_address_type"><option value="0">Public</option><option value="1">Random / static</option></select><small class="hint">Use the address and address type of this BMS. The ESP connects to this device only.</small></div>
+</div>
+<p id="inverter-selection-status" class="badge ok" role="status" aria-live="polite">Available: AOHAI Modbus RTU over USB-RS485.</p></section>
+
 <section id="internet-card" class="card"><div class="step">Step 2</div><h2>Internet connection</h2>
 <div class="inline"><div><label for="wifi_networks">Available Wi-Fi networks</label><select id="wifi_networks"><option value="">Select a network</option></select></div><button type="button" class="secondary" id="scan">Scan Wi-Fi</button></div>
 <div id="scan-message" class="hint">A scan will start automatically.</div>
@@ -82,8 +101,8 @@ input:focus,select:focus{outline:3px solid #0ea5e933;border-color:var(--blue)}bu
 </section>
 
 <section id="mqtt-card" class="card"><div class="step">Step 3</div><h2>MQTT server</h2>
-<div class="grid"><div><label for="mqtt_uri">Server address</label><input id="mqtt_uri" name="mqtt_uri" maxlength="128" autocomplete="off"><small class="hint" id="mqtt-uri-hint">An IP address or hostname is enough; mqtt:// is added automatically.</small></div>
-<div><label for="mqtt_port">Port</label><input id="mqtt_port" name="mqtt_port" type="number" min="1" max="65535" value="1883"><small class="hint">The standard MQTT port is 1883.</small></div></div>
+<div class="grid"><div><label for="mqtt_uri">Server address</label><input id="mqtt_uri" name="mqtt_uri" maxlength="128" autocomplete="off"><small class="hint" id="mqtt-uri-hint">A hostname uses MQTT; a hostname with a path, such as server/mqtt, uses secure WebSockets. You can also enter a full mqtt://, mqtts://, ws:// or wss:// address.</small></div>
+<div><label for="mqtt_port">Port</label><input id="mqtt_port" name="mqtt_port" type="number" min="1" max="65535" value="1883"><small class="hint" id="mqtt-port-hint">MQTT defaults to 1883; secure WebSockets default to 443. A full address supplies its own port.</small></div></div>
 <label class="check"><input id="mqtt_auth" type="checkbox"> This MQTT server requires a username and password</label>
 <div id="mqtt-auth-fields" class="grid"><div><label for="mqtt_username">MQTT username</label><input id="mqtt_username" name="mqtt_username" maxlength="64" autocomplete="username"></div><div><label for="mqtt_password">MQTT password</label><input id="mqtt_password" name="mqtt_password" maxlength="64" type="password" autocomplete="new-password"><small class="hint" id="mqtt-password-hint">Leave blank to keep the saved password.</small></div></div>
 </section>
@@ -95,8 +114,9 @@ input:focus,select:focus{outline:3px solid #0ea5e933;border-color:var(--blue)}bu
 <div id="site-box" class="wide"><label for="site_id">Permanent installation ID</label><input id="site_id" name="site_id" maxlength="32"><small class="hint">Keep this ID for the lifetime of the installation. When replacing its ESP, enter the previous installation ID to keep MQTT topics unchanged. Disconnect the old ESP and revoke its broker access first.</small><label class="check"><input id="replacement_confirmed" type="checkbox"> Replacement: old ESP is disconnected; restore this installation and clear saved radio peers</label><small class="hint">Re-pair parallel nodes after replacement. For an inverter-only replacement, retain this ID, review the rating/settings, and save to restart connection verification. Do not replay old inverter commands.</small></div>
 <div id="modbus-box"><label for="modbus_slave_address">Inverter Modbus address</label><input id="modbus_slave_address" name="modbus_slave_address" type="number" min="1" max="247" value="1"><small class="hint">Usually 1. Change only when the inverter is configured differently.</small></div>
 <div id="prefix-box"><label for="mqtt_topic_prefix">MQTT topic prefix</label><input id="mqtt_topic_prefix" name="mqtt_topic_prefix" maxlength="64" value="inverter"></div>
+<div id="hid-options-box" class="wide"><label for="inverter_usb_vid">Optional USB vendor filter (decimal)</label><input id="inverter_usb_vid" name="inverter_usb_vid" type="number" min="0" max="65535" value="0"><label for="inverter_usb_pid">Optional USB product filter (decimal)</label><input id="inverter_usb_pid" name="inverter_usb_pid" type="number" min="0" max="65535" value="0"><small class="hint">Leave both at 0 for automatic detection. A nonzero ID limits detection to matching devices; report compatibility is still checked.</small></div>
 <div class="wide"><label class="check"><input id="monitor_output_enabled" type="checkbox"> Show detailed ESP serial-monitor output</label><small class="hint">Shows information messages and Modbus TX/RX frames. Warnings and errors remain visible when this is off.</small></div>
-</div></details><div class="actions"><button type="submit" id="save">Save and start connection test</button><button type="button" id="finalize">Verify and finish setup</button></div><div id="message"></div></section>
+</div></details><div class="actions"><button type="submit" id="save">Save and start connection test</button><button type="button" id="finalize" disabled>Verify and finish setup</button></div><div id="message"></div></section>
 </form>
 
 <section class="card"><div class="step">Connection check</div><h2>Current status</h2><div id="status" class="status-grid"></div><small class="hint">When every required connection remains ready, setup finishes automatically and the ESP restarts with its setup Wi-Fi disabled.</small></section>
@@ -117,6 +137,59 @@ const $=id=>document.getElementById(id);let loadedSsid='',wifiPasswordSaved=fals
 const mqttRoles=['standalone_combined','internet_gateway','coordinator_gateway_combined'];
 const meshRoles=['parallel_coordinator','parallel_member','coordinator_gateway_combined'];
 const localRoles=['standalone_combined','parallel_coordinator','parallel_member','coordinator_gateway_combined'];
+let configurationSaving=false,connectionsReady=false;
+let savedInverterSelection=null;
+const inverterSelectionKeys=['inverter_protocol','inverter_connection','inverter_baud','inverter_address','inverter_tx_pin','inverter_rx_pin','inverter_direction_pin','inverter_parity','inverter_bluetooth_address','inverter_bluetooth_address_type','inverter_usb_vid','inverter_usb_pid'];
+function inverterSelectionChanged(){return localRoles.includes($('device_role').value)&&savedInverterSelection&&inverterSelectionKeys.some(k=>!$(k).disabled&&$(k).value!==savedInverterSelection[k]);}
+function loadInverterSelection(c){
+ $('inverter_protocol').value=c.inverter_protocol===undefined?'AOHAI_MODBUS_RTU':c.inverter_protocol;
+ $('inverter_connection').value=c.inverter_connection===undefined?'usb_rs485':c.inverter_connection;
+}
+const piProtocols=['PI16','PI17','PI17M058','PI17INFINI','PI18','PI18LVX','PI18SV','PI30','PI30MAX','PI30MST','PI30REVO','PI30M044','PI30M045','PI41'];
+const bleProtocols=['JK02','JK02_32','JK04','JKV11'];
+const serialProtocols=['JK232','JK485','JKPB','JKSERIAL','DALY','DALY40'];
+let protocolCapabilities=null;
+function allowedConnections(p){
+ if(protocolCapabilities)return protocolCapabilities[p]?.connections||[];
+ if(p==='AOHAI_MODBUS_RTU')return['usb_rs485'];
+ if(bleProtocols.includes(p))return['bluetooth'];
+ if(p==='VED')return['uart_ttl'];
+ if(piProtocols.includes(p))return['usb_rs485','usb_hid','uart_rs232','uart_rs485','uart_ttl'];
+ if(serialProtocols.includes(p))return['usb_rs485','uart_rs232','uart_rs485','uart_ttl'];
+ return[];
+}
+function inverterSelectionProblem(){
+ if(!localRoles.includes($('device_role').value))return'';
+ const p=$('inverter_protocol').value,c=$('inverter_connection').value;
+ if(!allowedConnections(p).length)return'Choose an available device protocol.';
+ if(!allowedConnections(p).includes(c))return'This connection does not match the selected protocol.';
+ if(c==='bluetooth'&&!/^([0-9a-f]{2}:){5}[0-9a-f]{2}$/i.test($('inverter_bluetooth_address').value))return'Enter the Bluetooth address of this BMS.';
+ return'';
+}
+function protocolChanged(){
+ const p=$('inverter_protocol').value,cap=protocolCapabilities?.[p];
+ const connection=cap?.default_connection||(p==='AOHAI_MODBUS_RTU'?'usb_rs485':bleProtocols.includes(p)?'bluetooth':piProtocols.includes(p)?'usb_hid':p==='JK232'?'uart_rs232':['JK485','JKPB'].includes(p)?'uart_rs485':'uart_ttl');
+ $('inverter_connection').value=connection;
+ $('inverter_baud').value=String(cap?.default_baud||(p==='VED'?19200:piProtocols.includes(p)?2400:['JKPB','JKSERIAL',...bleProtocols].includes(p)?115200:9600));
+ updateInverterUi();
+}
+function updateInverterUi(){
+ const hasInverter=localRoles.includes($('device_role').value),problem=inverterSelectionProblem(),p=$('inverter_protocol').value,c=$('inverter_connection').value,uart=c.startsWith('uart_'),native=p!=='AOHAI_MODBUS_RTU';
+ visible('inverter-card',hasInverter);
+ $('inverter_protocol').disabled=!hasInverter;
+ $('inverter_connection').disabled=!hasInverter;
+ for(const option of $('inverter_connection').options)option.disabled=!allowedConnections(p).includes(option.value);
+ visible('modbus-box',hasInverter&&!native);
+ const groups=[['serial-baud-box',native&&(uart||c==='usb_rs485'),['inverter_baud']],['protocol-address-box',native&&!piProtocols.includes(p)&&!bleProtocols.includes(p)&&p!=='VED',['inverter_address']],['uart-pins-box',uart,['inverter_tx_pin','inverter_rx_pin','inverter_parity']],['direction-pin-box',c==='uart_rs485',['inverter_direction_pin']],['bluetooth-box',c==='bluetooth',['inverter_bluetooth_address','inverter_bluetooth_address_type']],['hid-options-box',c==='usb_hid',['inverter_usb_vid','inverter_usb_pid']]];
+ for(const [box,show,ids]of groups){visible(box,hasInverter&&show);for(const id of ids)$(id).disabled=!hasInverter||!show}
+ const hints={usb_rs485:'Use a CH340 / CH341 USB serial adapter and match the device electrical interface.',usb_hid:'Connect the inverter USB data cable to the ESP native USB OTG host port. Compatible USB HID devices are detected automatically; no vendor or product ID is needed.',uart_rs232:'Use an RS232 transceiver between the inverter serial cable and the ESP UART pins.',uart_rs485:'Use an RS485 transceiver between the inverter bus and the ESP UART pins.',uart_ttl:'Use a compatible TTL UART connection. VE.Direct uses 19200 baud; confirm the device pinout.',bluetooth:'Connect to the explicitly configured JK BMS Bluetooth LE address.'};
+ $('connection-hint').textContent=(p==='AOHAI_MODBUS_RTU'&&c==='usb_rs485'?'Use the existing CH340 / CH341 USB-RS485 adapter.':hints[c])||'Choose the connection that matches your device cable.';
+ const status=$('inverter-selection-status');
+ status.textContent=problem||('Selected: '+p+' over '+c+'.');
+ status.className='badge '+(problem?'wait':'ok');
+ $('save').disabled=configurationSaving||!!problem;
+ $('finalize').disabled=!connectionsReady||!!problem||!!inverterSelectionChanged();
+}
 const roleChoices={
  standalone:[['standalone_combined','This ESP reads the inverter and connects to MQTT']],
  parallel:[['coordinator_gateway_combined','Master inverter ESP and MQTT gateway'],['parallel_coordinator','Master inverter ESP using a separate Internet Gateway'],['parallel_member','Slave inverter ESP'],['internet_gateway','Internet Gateway ESP only - no inverter']]
@@ -125,16 +198,20 @@ function visible(id,show){$(id).classList.toggle('hidden',!show)}
 function setRoles(preferred){const parallel=$('topology').value.startsWith('parallel_'),choices=parallel?roleChoices.parallel:roleChoices.standalone,r=$('device_role');r.innerHTML=choices.map(x=>`<option value="${x[0]}">${x[1]}</option>`).join('');r.value=choices.some(x=>x[0]===preferred)?preferred:choices[0][0]}
 function memberOptions(){const total=Number(f.elements.expected_inverter_count.value)||2,el=$('logical_member_id'),role=$('device_role').value,old=Number(el.value)||1;f.elements.expected_member_count.value=String(Math.max(0,total-1));el.innerHTML='';if(role!=='parallel_member'){el.add(new Option('Master / coordinator','0'));el.value='0';return}for(let i=1;i<total;i++)el.add(new Option(`Slave ${i}`,String(i)));el.value=String(Math.min(old,total-1))}
 function updateEquipment(){const installed=$('battery_installed').checked;visible('bms-box',installed);$('bms_connected').disabled=!installed;if(!installed)$('bms_connected').checked=false}
-function updateUi(rolePreference){const topology=$('topology').value,parallel=topology.startsWith('parallel_');if(rolePreference!==undefined)setRoles(rolePreference);else if(![...$('device_role').options].some(o=>o.value===$('device_role').value))setRoles();const role=$('device_role').value,usesMqtt=mqttRoles.includes(role),usesMesh=meshRoles.includes(role),hasInverter=localRoles.includes(role);visible('count-box',parallel);visible('member-box',role==='parallel_member');visible('phase-box',parallel&&topology==='parallel_three_phase_groups'&&hasInverter);visible('pv-box',hasInverter);visible('rating-box',hasInverter);visible('equipment-box',hasInverter);visible('parallel-card',parallel&&usesMesh);visible('internet-card',usesMqtt);visible('mqtt-card',usesMqtt);visible('site-box',role!=='parallel_member'&&role!=='internet_gateway');visible('modbus-box',hasInverter);visible('prefix-box',usesMqtt);f.elements.expected_inverter_count.value=parallel?Math.max(2,Number(f.elements.expected_inverter_count.value)||2):1;f.elements.expected_member_count.value=parallel?Number(f.elements.expected_inverter_count.value)-1:0;if(role!=='parallel_member')f.elements.logical_member_id.value=0;if(!hasInverter)f.elements.phase.value='none';else if(topology==='parallel_single_phase')f.elements.phase.value='parallel_single_phase';else if(topology!=='parallel_three_phase_groups')f.elements.phase.value='none';if(usesMesh&&!usesMqtt&&f.elements.espnow_channel.value==='0')f.elements.espnow_channel.value='1';$('channel-hint').textContent=usesMqtt?'The channel is filled from the selected Wi-Fi network. Configure every slave with this same channel.':'Use the same channel selected on the master inverter ESP.';memberOptions();updateEquipment();$('wifi_ssid').required=usesMqtt;$('mqtt_uri').required=usesMqtt&&!mqttUriSaved;$('mqtt_port').required=usesMqtt;$('mqtt_topic_prefix').required=usesMqtt;$('role-hint').textContent=role==='parallel_member'?'This node sends its inverter data to the master ESP.':role==='internet_gateway'?'This ESP connects the master inverter ESP to Wi-Fi and MQTT through the gateway cable.':usesMqtt?'This device sends the installation data to MQTT.':'This device reads the master inverter and forwards data to the Internet Gateway.';if(usesMqtt&&!scanStarted&&!loadedSsid)scanWifi()}
+function updateUi(rolePreference){const topology=$('topology').value,parallel=topology.startsWith('parallel_');if(rolePreference!==undefined)setRoles(rolePreference);else if(![...$('device_role').options].some(o=>o.value===$('device_role').value))setRoles();const role=$('device_role').value,usesMqtt=mqttRoles.includes(role),usesMesh=meshRoles.includes(role),hasInverter=localRoles.includes(role);visible('count-box',parallel);visible('member-box',role==='parallel_member');visible('phase-box',parallel&&topology==='parallel_three_phase_groups'&&hasInverter);visible('pv-box',hasInverter);visible('rating-box',hasInverter);visible('equipment-box',hasInverter);visible('parallel-card',parallel&&usesMesh);visible('internet-card',usesMqtt);visible('mqtt-card',usesMqtt);visible('site-box',role!=='parallel_member'&&role!=='internet_gateway');updateInverterUi();visible('prefix-box',usesMqtt);f.elements.expected_inverter_count.value=parallel?Math.max(2,Number(f.elements.expected_inverter_count.value)||2):1;f.elements.expected_member_count.value=parallel?Number(f.elements.expected_inverter_count.value)-1:0;if(role!=='parallel_member')f.elements.logical_member_id.value=0;if(!hasInverter)f.elements.phase.value='none';else if(topology==='parallel_single_phase')f.elements.phase.value='parallel_single_phase';else if(topology!=='parallel_three_phase_groups')f.elements.phase.value='none';if(usesMesh&&!usesMqtt&&f.elements.espnow_channel.value==='0')f.elements.espnow_channel.value='1';$('channel-hint').textContent=usesMqtt?'The channel is filled from the selected Wi-Fi network. Configure every slave with this same channel.':'Use the same channel selected on the master inverter ESP.';memberOptions();updateEquipment();$('wifi_ssid').required=usesMqtt;$('mqtt_uri').required=usesMqtt&&!mqttUriSaved;$('mqtt_port').required=usesMqtt;$('mqtt_topic_prefix').required=usesMqtt;$('role-hint').textContent=role==='parallel_member'?'This node sends its inverter data to the master ESP.':role==='internet_gateway'?'This ESP connects the master inverter ESP to Wi-Fi and MQTT through the gateway cable.':usesMqtt?'This device sends the installation data to MQTT.':'This device reads the master inverter and forwards data to the Internet Gateway.';updateMqttEndpointUi();if(usesMqtt&&!scanStarted&&!loadedSsid)scanWifi()}
 function updateAuth(){const enabled=$('mqtt_auth').checked;visible('mqtt-auth-fields',enabled);$('mqtt_username').disabled=!enabled;$('mqtt_password').disabled=!enabled}
 function togglePassword(inputId,button){const input=$(inputId),show=input.type==='password';input.type=show?'text':'password';button.textContent=show?'Hide':'Show';button.setAttribute('aria-pressed',show?'true':'false')}
-function friendlyError(value){const key=String(value||'').trim(),messages={bad_header:'Some setup information is missing. Review the form and save again.',role_missing:'Choose what this ESP is connected to.',topology_missing:'Choose the inverter system type.',invalid_counts:'Check the total number of inverters.',invalid_member_id:'Choose a valid and unique slave number.',invalid_pv_input_count:'Choose between 0 and 16 connected PV inputs.',invalid_battery_configuration:'BMS communication requires an installed battery.',site_id_required:'Enter an Installation ID using letters, numbers, hyphen or underscore.',wifi_required:'Select or enter a Wi-Fi network.',mqtt_required:'Enter the MQTT server address.',espnow_channel_invalid:'Choose a valid parallel radio channel.','Waiting for ESP-NOW coordinator':'Waiting for the master inverter ESP.','Waiting for coordinator-gateway UART link':'Waiting for the cable between the master ESP and Internet Gateway.','MQTT is not connected':'The MQTT server is not connected.','Local inverter Modbus has not responded':'The inverter has not responded yet.','NVS save failed':'The ESP could not save the configuration.'};if(key.startsWith('Waiting for ESP-NOW members:'))return 'Waiting for all configured inverter ESPs: '+key.split(':').pop().trim();return messages[key]||key||'Please review the setup and try again.'}
-function composeMqttEndpoint(){const mqtt=$('mqtt_uri'),port=Number($('mqtt_port').value),raw=mqtt.value.trim();if(!Number.isInteger(port)||port<1||port>65535)return'Enter an MQTT port from 1 to 65535.';if(!raw)return'';try{const u=new URL(raw.includes('://')?raw:'mqtt://'+raw);if(!u.hostname)return'Enter a valid MQTT server address.';u.port=String(port);mqtt.value=u.toString();return''}catch(e){return'Enter a valid MQTT server address.'}}
-function validateForm(){const role=$('device_role').value,usesMqtt=mqttRoles.includes(role),mqtt=$('mqtt_uri');if(!$('topology').value)return'Choose the inverter system type.';if(!role)return'Choose what this ESP is connected to.';if(usesMqtt&&!$('wifi_ssid').value.trim())return'Select or enter a Wi-Fi network.';if(usesMqtt&&!mqtt.value.trim()&&!mqttUriSaved)return'Enter the MQTT server address.';if(usesMqtt){const endpointProblem=composeMqttEndpoint();if(endpointProblem)return endpointProblem}if(usesMqtt&&!$('mqtt_topic_prefix').value.trim())return'Enter the MQTT topic prefix under Advanced settings.';if($('mqtt_auth').checked&&!$('mqtt_username').value.trim())return'Enter the MQTT username, or turn off MQTT authentication.';return''}
+function friendlyError(value){const key=String(value||'').trim(),messages={bad_header:'Some setup information is missing. Review the form and save again.',role_missing:'Choose what this ESP is connected to.',topology_missing:'Choose the inverter system type.',invalid_counts:'Check the total number of inverters.',invalid_member_id:'Choose a valid and unique slave number.',invalid_pv_input_count:'Choose between 0 and 16 connected PV inputs.',invalid_battery_configuration:'BMS communication requires an installed battery.',site_id_required:'Enter an Installation ID using letters, numbers, hyphen or underscore.',wifi_required:'Select or enter a Wi-Fi network.',mqtt_required:'Enter the MQTT server address.',espnow_channel_invalid:'Choose a valid parallel radio channel.',inverter_protocol_invalid:'Choose a supported device protocol.',inverter_connection_invalid:'Check the protocol, serial baud rate, GPIO pins and Bluetooth address.','Waiting for ESP-NOW coordinator':'Waiting for the master inverter ESP.','Waiting for coordinator-gateway UART link':'Waiting for the cable between the master ESP and Internet Gateway.','MQTT is not connected':'The MQTT server is not connected.','Local device has not responded':'The selected device has not responded yet.','NVS save failed':'The ESP could not save the configuration.'};if(key.startsWith('Waiting for ESP-NOW members:'))return 'Waiting for all configured inverter ESPs: '+key.split(':').pop().trim();return messages[key]||key||'Please review the setup and try again.'}
+const mqttDefaultPorts={'mqtt:':'1883','mqtts:':'8883','ws:':'80','wss:':'443'};
+let mqttAddressRaw='',mqttLastPort='1883',mqttPortEdited=false;
+function parseMqttEndpoint(raw){const explicit=raw.includes('://');let u;try{u=new URL(explicit?raw:'mqtt://'+raw);if(!explicit&&u.pathname&&u.pathname!=='/')u=new URL('wss://'+raw)}catch(e){throw new Error('Enter a valid MQTT server address.')}if(!mqttDefaultPorts[u.protocol])throw new Error('Use an mqtt://, mqtts://, ws:// or wss:// server address.');if(!u.hostname||u.hash||/\s/.test(raw))throw new Error('Enter a valid MQTT server address.');const defaultPort=mqttDefaultPorts[u.protocol];return{u,explicit,defaultPort,port:u.port||defaultPort}}
+function updateMqttEndpointUi(){const raw=$('mqtt_uri').value.trim(),port=$('mqtt_port'),changed=raw!==mqttAddressRaw;if(port.value!==mqttLastPort)mqttPortEdited=true;mqttAddressRaw=raw;port.disabled=!raw&&mqttUriSaved;port.required=!port.disabled&&mqttRoles.includes($('device_role').value);$('mqtt-uri-hint').textContent=!raw&&mqttUriSaved?'Server address saved. Leave blank to keep it, or enter a replacement.':'A hostname uses MQTT; a hostname with a path, such as server/mqtt, uses secure WebSockets. Full mqtt://, mqtts://, ws:// and wss:// addresses keep their transport and port.';$('mqtt-port-hint').textContent='MQTT defaults to 1883; secure WebSockets default to 443. A full address supplies its own port.';if(!raw&&mqttUriSaved)$('mqtt-port-hint').textContent='Port saved with the server address. Enter a replacement address to change it.';if(raw){try{const endpoint=parseMqttEndpoint(raw);if(endpoint.explicit){port.value=endpoint.port;port.disabled=true;port.required=false;mqttPortEdited=false;$('mqtt-port-hint').textContent='Port from the full server address. Edit that address to change the port.'}else if(changed){if(endpoint.u.port){port.value=endpoint.u.port;mqttPortEdited=true}else if(!mqttPortEdited){port.value=endpoint.defaultPort;mqttPortEdited=false}}}catch(e){$('mqtt-port-hint').textContent=e.message}}mqttLastPort=port.value}
+function composeMqttEndpoint(){const mqtt=$('mqtt_uri'),raw=mqtt.value.trim();if(!raw)return'';updateMqttEndpointUi();try{const endpoint=parseMqttEndpoint(raw),port=Number(endpoint.explicit?endpoint.port:$('mqtt_port').value);if(!Number.isInteger(port)||port<1||port>65535)return'Enter an MQTT port from 1 to 65535.';endpoint.u.port=String(port);mqtt.value=endpoint.u.toString();updateMqttEndpointUi();return''}catch(e){return e.message||'Enter a valid MQTT server address.'}}
+function validateForm(){const role=$('device_role').value,usesMqtt=mqttRoles.includes(role),mqtt=$('mqtt_uri');if(!$('topology').value)return'Choose the inverter system type.';if(!role)return'Choose what this ESP is connected to.';const selectionProblem=inverterSelectionProblem();if(selectionProblem)return selectionProblem;if(usesMqtt&&!$('wifi_ssid').value.trim())return'Select or enter a Wi-Fi network.';if(usesMqtt&&!mqtt.value.trim()&&!mqttUriSaved)return'Enter the MQTT server address.';if(usesMqtt){const endpointProblem=composeMqttEndpoint();if(endpointProblem)return endpointProblem}if(usesMqtt&&!$('mqtt_topic_prefix').value.trim())return'Enter the MQTT topic prefix under Advanced settings.';if($('mqtt_auth').checked&&!$('mqtt_username').value.trim())return'Enter the MQTT username, or turn off MQTT authentication.';return''}
 async function scanWifi(){scanStarted=true;$('scan').disabled=true;$('scan-message').textContent='Scanning nearby networks...';try{const r=await fetch('/api/wifi/scan',{cache:'no-store'});if(!r.ok)throw new Error(await r.text());const data=await r.json(),select=$('wifi_networks');select.innerHTML='<option value="">Select a network</option>';data.networks.forEach(n=>{const o=new Option(`${n.ssid}  (${n.rssi} dBm${n.secure?', secured':', open'})`,n.ssid);o.dataset.secure=n.secure?'1':'0';o.dataset.channel=n.channel;select.add(o)});const current=$('wifi_ssid').value;if([...select.options].some(o=>o.value===current)){select.value=current;selectedNetworkSecure=select.selectedOptions[0].dataset.secure==='1';if(meshRoles.includes($('device_role').value))$('espnow_channel').value=select.selectedOptions[0].dataset.channel}$('scan-message').textContent=data.networks.length?`${data.networks.length} network(s) found.`:'No networks found. Try scanning again or enter the name manually.'}catch(e){$('scan-message').textContent='Wi-Fi scan failed: '+e.message}finally{$('scan').disabled=false}}
 $('wifi_networks').onchange=e=>{if(!e.target.value)return;$('wifi_ssid').value=e.target.value;selectedNetworkSecure=e.target.selectedOptions[0].dataset.secure==='1';if(meshRoles.includes($('device_role').value))$('espnow_channel').value=e.target.selectedOptions[0].dataset.channel;$('wifi_password').focus();$('wifi-password-hint').textContent=selectedNetworkSecure?'Enter the network password.':'This is an open network; no password is required.'};
-$('scan').onclick=scanWifi;$('toggle_wifi_password').onclick=e=>togglePassword('wifi_password',e.currentTarget);$('mqtt_auth').onchange=updateAuth;$('battery_installed').onchange=updateEquipment;$('topology').onchange=()=>{setRoles();updateUi()};$('device_role').onchange=()=>updateUi();$('expected_inverter_count').oninput=memberOptions;
-async function load(){try{const c=await(await fetch('/api/config',{cache:'no-store'})).json();Object.keys(c).forEach(k=>{if(f.elements[k]&&typeof c[k]!=='boolean')f.elements[k].value=c[k]});const savedRating=Number(c.output_rated_power_kw);const ratingSelect=$('output_rated_power_kw');if(savedRating>0){if(![...ratingSelect.options].some(o=>Number(o.value)===savedRating))ratingSelect.add(new Option(savedRating+' kW (saved)',String(savedRating)));ratingSelect.value=String(savedRating)}else ratingSelect.value='12';if(c.connected_pv_inputs===undefined)$('connected_pv_inputs').value='2';$('battery_installed').checked=c.battery_installed!==false;$('bms_connected').checked=c.bms_connected!==false;$('generator_installed').checked=!!c.generator_installed;mqttUriSaved=!!c.mqtt_uri_set;$('mqtt_uri').value='';$('mqtt_port').value='1883';loadedSsid=c.wifi_ssid||'';wifiPasswordSaved=!!c.wifi_password_set;mqttPasswordSaved=!!c.mqtt_password_set;statusRefreshMs=Number(c.status_refresh_ms)||statusRefreshMs;$('monitor_output_enabled').checked=!!c.monitor_output_enabled;$('topology').value=c.topology&&c.topology!=='unknown'?c.topology:'standalone_single_phase';setRoles(c.device_role);$('mqtt_auth').checked=!!c.mqtt_username||mqttPasswordSaved;updateAuth();updateUi(c.device_role);if(loadedSsid)$('scan-message').textContent='Saved network loaded. Press Scan Wi-Fi to choose another network.';$('wifi-password-hint').textContent=wifiPasswordSaved?'Password saved. Leave blank to keep it.':'Enter the Wi-Fi password if required.';$('mqtt-password-hint').textContent=mqttPasswordSaved?'Password saved. Leave blank to keep it.':'MQTT password is optional.';$('mqtt-uri-hint').textContent=mqttUriSaved?'Server address saved. Leave blank to keep it, or enter a replacement.':'Enter the MQTT server IP address or hostname.'}catch(e){message.textContent='Could not load the saved setup. Please refresh the page.';setRoles();updateUi();updateAuth()}}
+$('mqtt_uri').oninput=updateMqttEndpointUi;$('mqtt_uri').onchange=updateMqttEndpointUi;$('mqtt_port').oninput=()=>{mqttPortEdited=true;mqttLastPort=$('mqtt_port').value};$('scan').onclick=scanWifi;$('toggle_wifi_password').onclick=e=>togglePassword('wifi_password',e.currentTarget);$('mqtt_auth').onchange=updateAuth;$('battery_installed').onchange=updateEquipment;$('topology').onchange=()=>{setRoles();updateUi()};$('device_role').onchange=()=>updateUi();$('expected_inverter_count').oninput=memberOptions;$('inverter_protocol').onchange=protocolChanged;$('inverter_connection').onchange=updateInverterUi;$('inverter_bluetooth_address').oninput=updateInverterUi;for(const k of inverterSelectionKeys.slice(2))$(k).oninput=updateInverterUi;
+async function load(){try{const c=await(await fetch('/api/config',{cache:'no-store'})).json();Object.keys(c).forEach(k=>{if(f.elements[k]&&typeof c[k]!=='boolean')f.elements[k].value=c[k]});loadInverterSelection(c);if(c.inverter_protocols){protocolCapabilities={};for(const item of c.inverter_protocols)protocolCapabilities[item.name]=item;}const savedRating=Number(c.output_rated_power_kw);const ratingSelect=$('output_rated_power_kw');if(savedRating>0){if(![...ratingSelect.options].some(o=>Number(o.value)===savedRating))ratingSelect.add(new Option(savedRating+' kW (saved)',String(savedRating)));ratingSelect.value=String(savedRating)}else ratingSelect.value='12';if(c.connected_pv_inputs===undefined)$('connected_pv_inputs').value='2';$('battery_installed').checked=c.battery_installed!==false;$('bms_connected').checked=c.bms_connected!==false;$('generator_installed').checked=!!c.generator_installed;mqttUriSaved=!!c.mqtt_uri_set;$('mqtt_uri').value='';$('mqtt_port').value='1883';loadedSsid=c.wifi_ssid||'';wifiPasswordSaved=!!c.wifi_password_set;mqttPasswordSaved=!!c.mqtt_password_set;statusRefreshMs=Number(c.status_refresh_ms)||statusRefreshMs;$('monitor_output_enabled').checked=!!c.monitor_output_enabled;$('topology').value=c.topology&&c.topology!=='unknown'?c.topology:'standalone_single_phase';setRoles(c.device_role);$('mqtt_auth').checked=!!c.mqtt_username||mqttPasswordSaved;updateAuth();updateUi(c.device_role);savedInverterSelection={};for(const k of inverterSelectionKeys)savedInverterSelection[k]=$(k).value;updateInverterUi();if(loadedSsid)$('scan-message').textContent='Saved network loaded. Press Scan Wi-Fi to choose another network.';$('wifi-password-hint').textContent=wifiPasswordSaved?'Password saved. Leave blank to keep it.':'Enter the Wi-Fi password if required.';$('mqtt-password-hint').textContent=mqttPasswordSaved?'Password saved. Leave blank to keep it.':'MQTT password is optional.';updateMqttEndpointUi()}catch(e){message.textContent='Could not load the saved setup. Please refresh the page.';setRoles();updateUi();updateAuth()}}
 function badge(label,ok,text){return `<div class="badge ${ok?'ok':'wait'}"><strong>${label}</strong><br>${text}</div>`}
 function renderFirmware(x){
 const nonnegative=v=>typeof v==='number'&&Number.isFinite(v)&&v>=0?v:null;
@@ -159,11 +236,48 @@ const failureFree=nonnegative(x.firmware_failure_internal_free_bytes),failureLar
 const memoryValue=value=>value===null?'Unavailable':kib(value);
 $('firmware-failure-memory').textContent=failureStage===null?'Unavailable':failureStage?'Available: '+memoryValue(failureFree)+' free; largest block '+memoryValue(failureLargest)+' | Required: '+memoryValue(requiredFree)+' free; largest block '+memoryValue(requiredLargest):'None recorded';
 }
-async function refreshStatus(){try{const x=await(await fetch('/api/status',{cache:'no-store'})).json(),role=$('device_role').value,usesMqtt=mqttRoles.includes(role),hasInverter=localRoles.includes(role),needsUart=role==='parallel_coordinator'||role==='internet_gateway',needsCoordinator=role==='parallel_member',needsMembers=role==='parallel_coordinator'||role==='coordinator_gateway_combined',linkOk=(!needsUart&&!needsCoordinator)||(needsUart&&x.coordinator_uart_connected)||(needsCoordinator&&x.espnow_coordinator_found),membersOk=!needsMembers||x.members_found>=x.members_expected,ready=x.validation==='valid'&&(!usesMqtt||(x.station_connected&&x.mqtt_connected))&&(!hasInverter||x.inverter_responding)&&linkOk&&membersOk;renderFirmware(x);statusBox.innerHTML=badge('Installation ID',true,x.site_id)+badge('Configuration',x.validation==='valid',x.validation==='valid'?'Saved':friendlyError(x.validation))+badge('Wi-Fi',!usesMqtt||x.station_connected,usesMqtt?(x.station_connected?'Connected':'Waiting'):'Not required')+badge('MQTT',!usesMqtt||x.mqtt_connected,usesMqtt?(x.mqtt_connected?'Connected':'Waiting'):'Not required')+badge('Inverter',!hasInverter||x.inverter_responding,hasInverter?(x.inverter_responding?'Responding':'Waiting'):'Not required')+badge('Parallel nodes',membersOk,needsMembers?`${x.members_found}/${x.members_expected} found`:'Managed by master')+badge('Gateway link',linkOk,needsUart?(x.coordinator_uart_connected?'Gateway cable connected':'Waiting for gateway cable'):needsCoordinator?(x.espnow_coordinator_found?'Master ESP found':'Searching for master ESP'):'Not required');$('finalize').disabled=!ready}catch(e){renderFirmware({});statusBox.textContent='Status temporarily unavailable.';$('firmware-state').textContent='Firmware status unavailable. Reconnect to the ESP.';$('firmware-state').className='badge wait'}}
-f.onsubmit=async e=>{e.preventDefault();const problem=validateForm();if(problem){message.textContent=problem;return}message.textContent='Saving configuration...';$('save').disabled=true;const role=$('device_role').value,usesMqtt=mqttRoles.includes(role),ssid=$('wifi_ssid').value.trim();if(usesMqtt&&selectedNetworkSecure&&ssid!==loadedSsid&&!$('wifi_password').value){message.textContent='Enter the password for the selected secured Wi-Fi network.';$('save').disabled=false;return}const o={};o.replacement_confirmed=$('replacement_confirmed').checked;new FormData(f).forEach((v,k)=>o[k]=['expected_inverter_count','expected_member_count','logical_member_id','modbus_slave_address','espnow_channel','connected_pv_inputs','output_rated_power_kw'].includes(k)?Number(v):v);o.phase=f.elements.phase.value||'none';o.battery_installed=$('battery_installed').checked;o.bms_connected=o.battery_installed&&$('bms_connected').checked;o.generator_installed=$('generator_installed').checked;o.monitor_output_enabled=$('monitor_output_enabled').checked;o.clear_wifi_password=usesMqtt&&!selectedNetworkSecure&&ssid!==loadedSsid;o.clear_mqtt_credentials=usesMqtt&&!$('mqtt_auth').checked;if(!$('mqtt_auth').checked)o.mqtt_username='';if(!usesMqtt){o.wifi_ssid='';o.mqtt_uri='';o.mqtt_username='';o.clear_mqtt_credentials=true}const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),15000);try{const r=await fetch('/api/config',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(o),signal:controller.signal});const text=await r.text();if(!r.ok)throw new Error(text);message.textContent='Saved. The ESP is restarting to test the connections. Reconnect to this setup page in a few seconds.'}catch(err){message.textContent=err.name==='AbortError'?'The ESP did not answer in time. Stay connected to its Wi-Fi and try again.':'Could not save. '+friendlyError(err.message);$('save').disabled=false}finally{clearTimeout(timer)}};
-$('finalize').onclick=async()=>{message.textContent='Checking all required connections...';try{const r=await fetch('/api/finalize',{method:'POST'}),text=await r.text();if(!r.ok)throw new Error(text);message.textContent='Setup complete. The ESP is restarting in normal operation mode.'}catch(err){message.textContent='Setup is not ready. '+friendlyError(err.message)}};
+async function refreshStatus(){try{const x=await(await fetch('/api/status',{cache:'no-store'})).json(),role=$('device_role').value,usesMqtt=mqttRoles.includes(role),hasInverter=localRoles.includes(role),needsUart=role==='parallel_coordinator'||role==='internet_gateway',needsCoordinator=role==='parallel_member',needsMembers=role==='parallel_coordinator'||role==='coordinator_gateway_combined',linkOk=(!needsUart&&!needsCoordinator)||(needsUart&&x.coordinator_uart_connected)||(needsCoordinator&&x.espnow_coordinator_found),membersOk=!needsMembers||x.members_found>=x.members_expected,ready=x.validation==='valid'&&(!usesMqtt||(x.station_connected&&x.mqtt_connected))&&(!hasInverter||x.inverter_responding)&&linkOk&&membersOk;renderFirmware(x);statusBox.innerHTML=badge('Installation ID',true,x.site_id)+badge('Configuration',x.validation==='valid',x.validation==='valid'?'Saved':friendlyError(x.validation))+badge('Wi-Fi',!usesMqtt||x.station_connected,usesMqtt?(x.station_connected?'Connected':'Waiting'):'Not required')+badge('MQTT',!usesMqtt||x.mqtt_connected,usesMqtt?(x.mqtt_connected?'Connected':'Waiting'):'Not required')+badge('Inverter',!hasInverter||x.inverter_responding,hasInverter?(x.inverter_responding?'Responding':'Waiting'):'Not required')+badge('Parallel nodes',membersOk,needsMembers?`${x.members_found}/${x.members_expected} found`:'Managed by master')+badge('Gateway link',linkOk,needsUart?(x.coordinator_uart_connected?'Gateway cable connected':'Waiting for gateway cable'):needsCoordinator?(x.espnow_coordinator_found?'Master ESP found':'Searching for master ESP'):'Not required');connectionsReady=ready;updateInverterUi()}catch(e){connectionsReady=false;updateInverterUi();renderFirmware({});statusBox.textContent='Status temporarily unavailable.';$('firmware-state').textContent='Firmware status unavailable. Reconnect to the ESP.';$('firmware-state').className='badge wait'}}
+f.onsubmit=async e=>{e.preventDefault();const problem=validateForm();if(problem){message.textContent=problem;return}message.textContent='Saving configuration...';configurationSaving=true;updateInverterUi();const role=$('device_role').value,usesMqtt=mqttRoles.includes(role),ssid=$('wifi_ssid').value.trim();if(usesMqtt&&selectedNetworkSecure&&ssid!==loadedSsid&&!$('wifi_password').value){message.textContent='Enter the password for the selected secured Wi-Fi network.';configurationSaving=false;updateInverterUi();return}const o={};o.replacement_confirmed=$('replacement_confirmed').checked;new FormData(f).forEach((v,k)=>o[k]=['expected_inverter_count','expected_member_count','logical_member_id','modbus_slave_address','espnow_channel','connected_pv_inputs','output_rated_power_kw','inverter_baud','inverter_address','inverter_tx_pin','inverter_rx_pin','inverter_direction_pin','inverter_parity','inverter_bluetooth_address_type','inverter_usb_vid','inverter_usb_pid'].includes(k)?Number(v):v);o.phase=f.elements.phase.value||'none';o.battery_installed=$('battery_installed').checked;o.bms_connected=o.battery_installed&&$('bms_connected').checked;o.generator_installed=$('generator_installed').checked;o.monitor_output_enabled=$('monitor_output_enabled').checked;o.clear_wifi_password=usesMqtt&&!selectedNetworkSecure&&ssid!==loadedSsid;o.clear_mqtt_credentials=usesMqtt&&!$('mqtt_auth').checked;if(!$('mqtt_auth').checked)o.mqtt_username='';if(!usesMqtt){o.wifi_ssid='';o.mqtt_uri='';o.mqtt_username='';o.clear_mqtt_credentials=true}const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),15000);try{const r=await fetch('/api/config',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(o),signal:controller.signal});const text=await r.text();if(!r.ok)throw new Error(text);message.textContent='Saved. The ESP is restarting to test the connections. Reconnect to this setup page in a few seconds.'}catch(err){message.textContent=err.name==='AbortError'?'The ESP did not answer in time. Stay connected to its Wi-Fi and try again.':'Could not save. '+friendlyError(err.message);configurationSaving=false;updateInverterUi()}finally{clearTimeout(timer)}};
+$('finalize').onclick=async()=>{const problem=inverterSelectionProblem()||(inverterSelectionChanged()?'Save the changed protocol and connection settings before finishing setup.':'');if(problem){message.textContent=problem;return}message.textContent='Checking all required connections...';try{const r=await fetch('/api/finalize',{method:'POST'}),text=await r.text();if(!r.ok)throw new Error(text);message.textContent='Setup complete. The ESP is restarting in normal operation mode.'}catch(err){message.textContent='Setup is not ready. '+friendlyError(err.message)}};
 load().finally(()=>{refreshStatus();setInterval(refreshStatus,statusRefreshMs)});
 </script></body></html>)HTML";
+
+template <typename T>
+bool optional_integer(const cJSON *root, const char *key, T &value, int minimum, int maximum)
+{
+    const auto *item = cJSON_GetObjectItemCaseSensitive(root, key);
+    if (!item) return true;
+    if (!cJSON_IsNumber(item) || item->valuedouble < minimum || item->valuedouble > maximum ||
+        item->valuedouble != static_cast<double>(item->valueint)) return false;
+    value = static_cast<T>(item->valueint);
+    return true;
+}
+
+bool read_inverter_selection(const cJSON *root, app::InverterLinkConfig &link)
+{
+    const auto *p = cJSON_GetObjectItemCaseSensitive(root, "inverter_protocol");
+    const auto *c = cJSON_GetObjectItemCaseSensitive(root, "inverter_connection");
+    const auto old_protocol = link.protocol;
+    if (p && (!cJSON_IsString(p) || !protocol::parse_energy_protocol(p->valuestring, link.protocol))) return false;
+    if (link.protocol != old_protocol) link.baud = protocol::energy_protocol_info(link.protocol).default_baud;
+    if (c && (!cJSON_IsString(c) || !protocol::parse_energy_connection(c->valuestring, link.connection))) return false;
+    if (!c && link.protocol != old_protocol) link.connection = protocol::energy_protocol_info(link.protocol).default_connection;
+    const auto *mac = cJSON_GetObjectItemCaseSensitive(root, "inverter_bluetooth_address");
+    if (mac) {
+        if (!cJSON_IsString(mac) || std::strlen(mac->valuestring) >= sizeof(link.bluetooth_address)) return false;
+        std::snprintf(link.bluetooth_address, sizeof(link.bluetooth_address), "%s", mac->valuestring);
+    }
+    return protocol::energy_connection_supported(link.protocol, link.connection) &&
+        optional_integer(root, "inverter_baud", link.baud, 1200, 115200) &&
+        optional_integer(root, "inverter_address", link.address, 1, 255) &&
+        optional_integer(root, "inverter_tx_pin", link.tx_pin, 0, 48) &&
+        optional_integer(root, "inverter_rx_pin", link.rx_pin, 0, 48) &&
+        optional_integer(root, "inverter_direction_pin", link.direction_pin, 0, 48) &&
+        optional_integer(root, "inverter_parity", link.parity, 0, 2) &&
+        optional_integer(root, "inverter_bluetooth_address_type", link.bluetooth_address_type, 0, 1) &&
+        optional_integer(root, "inverter_usb_vid", link.usb_vid, 0, 65535) &&
+        optional_integer(root, "inverter_usb_pid", link.usb_pid, 0, 65535);
+}
 
 template <std::size_t N>
 bool copy_json_string(cJSON *root, const char *key, char (&destination)[N])
@@ -560,6 +674,35 @@ esp_err_t WifiProvisioning::config_get_handler(httpd_req_t *request)
     cJSON_AddStringToObject(root, "device_role", app::device_role_name(self->config_.profile.device_role));
     cJSON_AddStringToObject(root, "topology", app::topology_name(self->config_.profile.topology));
     cJSON_AddStringToObject(root, "phase", app::phase_assignment_name(self->config_.profile.phase));
+    const auto &link = self->config_.inverter_link;
+    cJSON_AddStringToObject(root, "inverter_protocol", protocol::energy_protocol_info(link.protocol).name);
+    cJSON_AddStringToObject(root, "inverter_connection", protocol::energy_connection_name(link.connection));
+    cJSON_AddNumberToObject(root, "inverter_baud", link.baud);
+    cJSON_AddNumberToObject(root, "inverter_address", link.address);
+    cJSON_AddNumberToObject(root, "inverter_tx_pin", link.tx_pin);
+    cJSON_AddNumberToObject(root, "inverter_rx_pin", link.rx_pin);
+    cJSON_AddNumberToObject(root, "inverter_direction_pin", link.direction_pin);
+    cJSON_AddNumberToObject(root, "inverter_parity", link.parity);
+    cJSON_AddStringToObject(root, "inverter_bluetooth_address", link.bluetooth_address);
+    cJSON_AddNumberToObject(root, "inverter_bluetooth_address_type", link.bluetooth_address_type);
+    cJSON_AddNumberToObject(root, "inverter_usb_vid", link.usb_vid);
+    cJSON_AddNumberToObject(root, "inverter_usb_pid", link.usb_pid);
+    auto *catalog = cJSON_AddArrayToObject(root, "inverter_protocols");
+    for (unsigned i = 0; i < static_cast<unsigned>(protocol::EnergyProtocol::count); ++i) {
+        const auto id = static_cast<protocol::EnergyProtocol>(i);
+        const auto &info = protocol::energy_protocol_info(id);
+        auto *item = cJSON_CreateObject();
+        cJSON_AddItemToArray(catalog, item);
+        cJSON_AddStringToObject(item, "name", info.name);
+        cJSON_AddNumberToObject(item, "default_baud", info.default_baud);
+        cJSON_AddStringToObject(item, "default_connection", protocol::energy_connection_name(info.default_connection));
+        auto *connections = cJSON_AddArrayToObject(item, "connections");
+        for (unsigned j = 0; j < 6; ++j) {
+            const auto connection = static_cast<protocol::EnergyConnection>(j);
+            if (info.implemented && protocol::energy_connection_supported(id, connection))
+                cJSON_AddItemToArray(connections, cJSON_CreateString(protocol::energy_connection_name(connection)));
+        }
+    }
     cJSON_AddNumberToObject(root, "expected_inverter_count", self->config_.profile.expected_inverter_count);
     cJSON_AddNumberToObject(root, "expected_member_count", self->config_.profile.expected_member_count);
     cJSON_AddNumberToObject(root, "logical_member_id", self->config_.profile.logical_member_id);
@@ -638,6 +781,11 @@ esp_err_t WifiProvisioning::config_post_handler(httpd_req_t *request)
                  cJSON_IsString(mqtt_uri_json) &&
                  cJSON_IsBool(monitor_json);
     const bool monitor_output_enabled = cJSON_IsTrue(monitor_json);
+    if (valid && app::role_has_local_inverter(role) && !read_inverter_selection(root, candidate.inverter_link)) {
+        cJSON_Delete(root);
+        return httpd_resp_send_err(request, HTTPD_400_BAD_REQUEST,
+                                   "Invalid device protocol, connection or serial settings.");
+    }
     if (valid) {
         const auto previous_profile = candidate.profile;
         char previous_site[sizeof(candidate.site_id)]{};
@@ -743,7 +891,8 @@ esp_err_t WifiProvisioning::config_post_handler(httpd_req_t *request)
         return httpd_resp_send_err(request, HTTPD_500_INTERNAL_SERVER_ERROR,
                                    "Could not save configuration");
     }
-    self->config_ = candidate;
+    // Apply the saved link only at boot. The running bus task owns the current
+    // transport; changing its protocol while a transaction runs is unsafe.
     httpd_resp_set_type(request, "application/json");
     httpd_resp_sendstr(request, "{\"saved\":true,\"restart\":true}");
     xTaskCreate(reboot_task, "config_reboot", 2048, nullptr, 2, nullptr);
@@ -925,7 +1074,7 @@ esp_err_t WifiProvisioning::finalize_handler(httpd_req_t *request)
     if (app::role_has_local_inverter(self->config_.profile.device_role) &&
         (self->inverter_ready_probe_ == nullptr ||
          !self->inverter_ready_probe_(self->inverter_ready_context_))) {
-        return send_conflict(request, "Local inverter Modbus has not responded");
+        return send_conflict(request, "Local device has not responded");
     }
     const esp_err_t result = self->complete_provisioning();
     if (result != ESP_OK && result != ESP_ERR_INVALID_STATE) {
