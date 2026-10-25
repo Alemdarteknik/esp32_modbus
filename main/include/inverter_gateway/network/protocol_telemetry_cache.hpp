@@ -23,12 +23,13 @@ public:
         std::int64_t timestamp_ms = 0;
         std::uint32_t received_ms = 0;
         std::uint32_t published_ms = 0;
+        std::uint32_t published_generation = 0;
         std::uint64_t published_hash = 0;
         bool published = false;
         void clear()
         {
             response.count = 0; command[0] = '\0'; sequence = received_ms = published_ms = 0;
-            timestamp_ms = 0; published_hash = 0; published = false;
+            timestamp_ms = 0; published_hash = 0; published_generation = 0; published = false;
         }
     };
 

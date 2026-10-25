@@ -36,11 +36,11 @@ class NativeCommandTests(unittest.TestCase):
                         total += 1
             for command in profile['polls']:
                 self.assertFalse(classify_command(protocol, command)['setter'])
-        self.assertEqual(total, 704)
+        self.assertEqual(total, 705)
 
     def test_variant_coverage_and_allowlist(self):
         counts = {'PI16': (13, 0), 'PI17': (25, 27), 'PI18': (13, 11),
-                  'PI18LVX': (20, 26), 'PI30': (19, 26), 'PI30MAX': (35, 32),
+                  'PI18LVX': (20, 26), 'PI30': (20, 26), 'PI30MAX': (35, 32),
                   'PI30REVO': (7, 2), 'PI41': (21, 26)}
         for protocol, expected in counts.items():
             self.assertEqual((len(PROFILES[protocol]['queries']), len(PROFILES[protocol]['setters'])), expected)
@@ -81,10 +81,10 @@ class NativeCommandTests(unittest.TestCase):
                                        ('JK485', 'setBalanceTrigger', 2, 1000),
                                        ('JK485', 'setMaxBalanceCurrent', 30, 1000),
                                        ('VED', 'setBatteryCapacity', 1, 9999)]:
-            for value in (str(low), str(high), str(low) + '.0', str(low) + '.'):
+            for value in (str(low), str(high)):
                 self.assertTrue(classify_command(profile, key + value)['setter'])
             for value in (str(low - 1), str(high + 1), str(low) + '.5', '+' + str(low),
-                          str(low) + 'e0', str(low) + 'x', ' ' + str(low), '.'):
+                          str(low) + 'e0', str(low) + 'x', ' ' + str(low), '.', str(low) + '.0', str(low) + '.'):
                 with self.assertRaises(ValueError):
                     classify_command(profile, key + value)
         for key in ('setChargingOn', 'setChargingOff', 'setDischargingOn', 'setDischargingOff'):
@@ -266,6 +266,68 @@ class NativeTelemetryTests(unittest.TestCase):
         self.assertEqual(snapshot[0]['fields']['battery_voltage']['value'], 52.4)
         snapshot[0]['fields'].clear()
         self.assertTrue(self.collector.records()[0]['fields'])
+
+    def test_readonly_view_is_stable_and_never_exposes_mutable_fields(self):
+        initial_revision = self.collector.revision
+        self.assertEqual(self.collector.records_view(), ())
+        data = chunk()
+        accepted = self.collector.receive(data, 1)
+        view = self.collector.records_view()
+        revision = self.collector.revision
+        self.assertGreater(revision, initial_revision)
+        self.assertIs(view, self.collector.records_view())
+        for mutate in (
+                lambda: view[0].__setitem__('sequence', 99),
+                lambda: view[0]['fields'].__setitem__('battery_voltage', {}),
+                lambda: view[0]['fields']['battery_voltage'].__setitem__('value', 99)):
+            with self.assertRaises((AttributeError, TypeError)):
+                mutate()
+        data['fields']['battery_voltage']['value'] = 1
+        accepted['fields']['battery_voltage']['value'] = 2
+        self.assertEqual(view[0]['fields']['battery_voltage']['value'], 52.4)
+        self.assertEqual(dict(view[0]), self.collector.records()[0])
+        self.assertIsNone(self.collector.receive(chunk(), 2))
+        self.assertEqual(self.collector.revision, revision)
+        self.assertIs(view, self.collector.records_view())
+        self.collector.receive(chunk(sequence=2, timestamp=2000,
+            fields={'battery_voltage': {'unit': 'V', 'value': 53.1}}), 3)
+        self.assertGreater(self.collector.revision, revision)
+        self.assertEqual(view[0]['fields']['battery_voltage']['value'], 52.4)
+        self.assertEqual(self.collector.records_view()[0]['fields']['battery_voltage']['value'], 53.1)
+        self.collector.reset(preserve_counters=True)
+        self.assertEqual(self.collector.records_view(), ())
+        self.assertEqual(len(view), 1)
+
+    def test_readonly_view_tracks_eviction_and_confirmed_reboot(self):
+        collector = NativeTelemetryCollector(max_records=2)
+        for index, command in enumerate(('QPIGS', 'QMOD', 'QID'), 1):
+            collector.receive(chunk(sequence=500 + index, timestamp=600000 + index * 100,
+                                    command=command), index)
+        before = collector.records_view()
+        self.assertEqual([item['command'] for item in before], ['QMOD', 'QID'])
+        collector.receive(chunk(sequence=1, timestamp=1000), 10)
+        collector.receive(chunk(sequence=2, timestamp=2000, command='QMOD'), 11)
+        self.assertEqual([item['sequence'] for item in collector.records_view()], [1, 2])
+        self.assertEqual([item['sequence'] for item in before], [502, 503])
+
+    def test_receive_view_preserves_chunk_validation_and_copy_isolation(self):
+        collector = NativeTelemetryCollector()
+        first = chunk(index=0, count=2, fields={
+            'battery_voltage': {'unit': 'V', 'value': 52.4},
+            'battery_capacity': {'unit': '%', 'value': 80}})
+        last = chunk(index=1, count=2, fields={'pv_input_power': {'unit': 'W', 'value': 0}})
+        self.assertIsNone(collector.receive_view(first, 1))
+        completed = collector.receive_view(last, 1.1)
+        self.assertIs(completed, collector.records_view()[0])
+        self.assertEqual(completed, collector.records()[0])
+        with self.assertRaises(TypeError):
+            completed['fields']['pv_input_power']['value'] = 99
+        last['fields']['pv_input_power']['value'] = 11
+        self.assertEqual(completed['fields']['pv_input_power']['value'], 0)
+        self.assertIsNone(collector.receive_view(copy.deepcopy(first), 2))
+        self.assertEqual(collector.diagnostics()['duplicate_messages'], 1)
+        self.assertIsNone(collector.receive_view(chunk(protocol='PI16'), 3))
+        self.assertEqual(collector.diagnostics()['drop_reasons'], {'peer_mismatch': 1})
 
     def test_invalid_limits_and_monotonic_time(self):
         for options in ({'max_assemblies': 0}, {'max_records': True}, {'expiry_seconds': math.inf}):

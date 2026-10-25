@@ -9,6 +9,7 @@
 #include "inverter_gateway/protocol/pi_protocols.hpp"
 
 #include <cerrno>
+#include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -183,6 +184,27 @@ bool valid_setter_value(const CommandDefinition &definition, const char *command
     }
     if (std::strcmp(definition.key, "DAT") == 0) {
         return valid_date(value, std::strlen(value));
+    }
+    if (std::strcmp(definition.key, "PSET") == 0 || std::strcmp(definition.key, "_PSET") == 0) {
+        // REVO's last two-digit item is a settings flag, not seconds. Validate
+        // the separate date/hour/minute fields before any bulk write.
+        const char *p = value;
+        for (int token = 0; token < 7; ++token) {
+            p = std::strchr(p, ' ');
+            if (!p) return false;
+            ++p;
+        }
+        char date[15]{};
+        const std::size_t widths[] = {4, 2, 2, 2, 2};
+        std::size_t used = 0;
+        for (const auto width : widths) {
+            std::memcpy(date + used, p, width);
+            used += width;
+            p += width;
+            if (*p++ != ' ') return false;
+        }
+        date[12] = '0'; date[13] = '0';
+        return valid_date(date, 14);
     }
     return true;
 }
@@ -471,6 +493,135 @@ CodecStatus decode_field(const FieldDefinition &field, const Token *tokens,
         ? CodecStatus::ok : CodecStatus::buffer_too_small;
 }
 
+int parallel_unit(const ProfileDefinition &profile, const CommandDefinition &definition,
+                  const char *command)
+{
+    const auto *key = definition.key;
+    const bool pi30 = profile.wire == WireFamily::pi30;
+    const bool pi18 = profile.wire == WireFamily::pi18;
+    if ((pi30 && (!std::strcmp(key, "MCHGC") || !std::strcmp(key, "MNCHGC") ||
+                  !std::strcmp(key, "MUCHGC") || !std::strcmp(key, "POPM") ||
+                  !std::strcmp(key, "PPCP"))) ||
+        (pi18 && (!std::strcmp(key, "MCHGC") || !std::strcmp(key, "MUCHGC") ||
+                  !std::strcmp(key, "PCP")))) {
+        return command[std::strlen(key)] - '0';
+    }
+    return -1;
+}
+
+void comparison_key(char (&out)[40], const char *label)
+{
+    // Match EnergyResponse's public normalized field identity, including its
+    // hash suffix for long labels, without allocating another 9 KB response.
+    std::uint32_t hash = 2166136261U;
+    char full[192]{};
+    std::size_t n = 0;
+    bool separator = false;
+    for (const unsigned char *p = reinterpret_cast<const unsigned char *>(label); *p; ++p) {
+        hash = (hash ^ *p) * 16777619U;
+        if (std::isalnum(*p)) {
+            if (separator && n && n < sizeof(full) - 1) full[n++] = '_';
+            separator = false;
+            if (n < sizeof(full) - 1) full[n++] = static_cast<char>(std::tolower(*p));
+        } else separator = true;
+    }
+    if (!n) std::strcpy(out, "value");
+    else if (n < sizeof(out)) std::memcpy(out, full, n + 1);
+    else std::snprintf(out, sizeof(out), "%.30s_%08x", full, static_cast<unsigned>(hash));
+}
+
+void observed_text(char (&out)[32], const char *text)
+{
+    std::snprintf(out, sizeof(out), "%s", text);
+    if (std::strlen(text) >= sizeof(out)) std::memcpy(out + sizeof(out) - 4, "...", 4);
+}
+
+struct SettingComparison {
+    const CommandDefinition &query;
+    const EnergyResponse &response;
+    bool available = true;
+    bool equal = true;
+    unsigned checked = 0;
+
+    const FieldDefinition *definition(unsigned token, int character = -1) const
+    {
+        for (unsigned i = 0; i < query.field_count; ++i) {
+            if (query.fields[i].token == token && query.fields[i].character == character)
+                return &query.fields[i];
+        }
+        return nullptr;
+    }
+    const EnergyField *observation(const FieldDefinition *field)
+    {
+        if (!field) { available = false; return nullptr; }
+        char key[40]{}; comparison_key(key, field->label);
+        const EnergyField *found = nullptr;
+        for (std::size_t i = 0; i < response.count; ++i) {
+            if (std::strcmp(response.fields[i].key, key)) continue;
+            if (found) { available = false; return nullptr; }
+            found = &response.fields[i];
+        }
+        char unit[8]{}; std::snprintf(unit, sizeof(unit), "%s", field->unit);
+        if (!found || std::strcmp(found->unit, unit)) { available = false; return nullptr; }
+        ++checked;
+        return found;
+    }
+    void number(unsigned token, double expected, int character = -1)
+    {
+        const auto *field = definition(token, character);
+        const auto *observed = observation(field);
+        if (!observed) return;
+        if (!observed->numeric || !std::isfinite(observed->value)) { available = false; return; }
+        equal = equal && std::fabs(observed->value - expected) < 0.000001;
+    }
+    void text(unsigned token, const char *expected)
+    {
+        const auto *observed = observation(definition(token));
+        if (!observed) return;
+        if (observed->numeric) { available = false; return; }
+        char encoded[32]{}; observed_text(encoded, expected);
+        equal = equal && !std::strcmp(observed->text, encoded);
+    }
+    void code(unsigned token, int expected, const char *raw = nullptr)
+    {
+        const auto *field = definition(token);
+        if (!field || (field->kind != FieldKind::option && field->kind != FieldKind::keyed)) {
+            available = false; return;
+        }
+        char digits[16]{}; std::snprintf(digits, sizeof(digits), "%d", expected);
+        const char *encoded = raw ? raw : digits;
+        const char *label = lookup_value(*field, encoded);
+        if (label == encoded) { available = false; return; }
+        char truncated[32]{}; observed_text(truncated, label);
+        // Long option labels are truncated on the wire. They verify a value
+        // only if their displayed representation still identifies it uniquely.
+        for (unsigned i = 0; i < field->lookup_count; ++i) {
+            if (!std::strcmp(field->lookup[i].key, encoded)) continue;
+            char other[32]{}; observed_text(other, field->lookup[i].value);
+            if (!std::strcmp(truncated, other)) { available = false; return; }
+        }
+        text(token, label);
+    }
+    void flag(int character, double expected)
+    {
+        number(0, expected, character);
+    }
+};
+
+bool numeric_parts(const char *text, double *values, std::size_t count, char separator = ',')
+{
+    for (std::size_t i = 0; i < count; ++i) {
+        char item[24]{};
+        const char *end = std::strchr(text, separator);
+        const auto size = end ? static_cast<std::size_t>(end - text) : std::strlen(text);
+        if (!size || size >= sizeof(item) || (end == nullptr) != (i + 1 == count)) return false;
+        std::memcpy(item, text, size);
+        if (!number_value(item, false, values[i])) return false;
+        if (end) text = end + 1;
+    }
+    return true;
+}
+
 } // namespace
 
 std::size_t pi_poll_command_count(EnergyProtocol id)
@@ -494,7 +645,107 @@ bool pi_command_info(EnergyProtocol id, const char *command, EnergyCommandInfo &
     info.name = definition->name;
     info.setter = definition->setter;
     info.readback_command = definition->readback;
+    const int unit = parallel_unit(*profile, *definition, command);
+    if (definition->setter && unit >= 0) {
+        static constexpr const char *pi30_queries[] = {
+            "QPGS0", "QPGS1", "QPGS2", "QPGS3", "QPGS4", "QPGS5", "QPGS6", "QPGS7", "QPGS8", "QPGS9"};
+        static constexpr const char *pi18_queries[] = {
+            "PRI0", "PRI1", "PRI2", "PRI3", "PRI4", "PRI5", "PRI6", "PRI7", "PRI8", "PRI9"};
+        const auto *query = profile->wire == WireFamily::pi18 ? pi18_queries[unit] : pi30_queries[unit];
+        info.readback_command = find_command(*profile, query) ? query : nullptr;
+    }
     return true;
+}
+
+bool pi_setting_readback(EnergyProtocol id, const char *set_command,
+    const char *read_command, const EnergyResponse &response, bool &matches)
+{
+    matches = false;
+    EnergyCommandInfo info{};
+    if (!pi_command_info(id, set_command, info) || !info.setter ||
+        !info.readback_command || !read_command || std::strcmp(info.readback_command, read_command) ||
+        response.rejected || response.acknowledged || response.count > EnergyResponse::maximum_fields) return false;
+    const auto *profile = profile_for(id);
+    const auto *setting = find_command(*profile, set_command);
+    const auto *query = find_command(*profile, read_command);
+    if (!query || query->setter) return false;
+    const auto *key = setting->key;
+    const auto *value = set_command + std::strlen(key);
+    SettingComparison compare{*query, response};
+    auto is = [&](const char *name) { return !std::strcmp(key, name); };
+    double parts[4]{};
+    auto scalar = [&]() { return numeric_parts(value, parts, 1); };
+    const int unit = parallel_unit(*profile, *setting, set_command);
+    if (profile->wire == WireFamily::pi17) {
+        if (is("PA") || is("PB") || is("PC") || is("PF")) {
+            compare.code(is("PF") ? 5 : static_cast<unsigned>(key[1] - 'A'), value[0] - '0');
+        } else if (is("PEA") || is("PDA")) compare.code(0, key[1] == 'E' ? 1 : 0);
+        else if (is("PE") || is("PD")) {
+            const int code = value[0] - 'A';
+            if (code >= 0 && code <= 10) compare.code(code, key[1] == 'E' ? 1 : 0);
+            else if (value[0] == 'M') compare.code(11, key[1] == 'E' ? 1 : 0);
+            else if (value[0] == 'N') compare.code(12, key[1] == 'E' ? 1 : 0);
+            else return false;
+        } else if (is("LON")) compare.code(16, value[0] - '0');
+        else if (is("GPMP0") && scalar()) compare.number(0, parts[0]);
+        else if (is("LST") && scalar()) compare.number(9, parts[0] * 30);
+        else if (is("SEP") && scalar()) compare.code(0, static_cast<int>(parts[0]), value);
+        else if (!std::strncmp(key, "ED", 2) && std::strlen(key) == 3) compare.code(key[2] - 'A' + 1, value[0] - '0');
+        else if (is("BT")) compare.code(10, value[0] - '0');
+        else if (is("MCHGV") && numeric_parts(value, parts, 2)) {
+            compare.number(1, parts[0] * 0.1); compare.number(2, parts[1] * 0.1);
+        } else if (is("MCHGC") && scalar()) compare.number(0, parts[0] * 0.1);
+        else if (is("MUCHGC") && scalar()) compare.number(16, parts[0] * 0.1);
+        else if (is("BDCM") && scalar()) compare.number(17, parts[0]);
+        else if (is("BATDV") && numeric_parts(value, parts, 4)) {
+            for (unsigned i = 0; i < 4; ++i) compare.number(6 + i, parts[i] * 0.1);
+        } else if (is("ACCB") && numeric_parts(value, parts, 2)) {
+            compare.code(13, static_cast<int>(parts[0])); compare.number(14, parts[1] * 0.1);
+        } else if (is("BCA") && numeric_parts(value, parts, 3)) {
+            compare.number(3, parts[0] * 0.1); compare.number(4, parts[1]); compare.number(5, parts[2] * 0.1);
+        } else if (is("ACCT") && id != EnergyProtocol::pi17infini) {
+            char start[5]{}; std::memcpy(start, value, 4);
+            compare.text(16, start); compare.text(17, value + 5);
+        } else return false;
+    } else if (profile->wire == WireFamily::pi18) {
+        if (std::strlen(key) == 3 && key[0] == 'P' && (key[1] == 'E' || key[1] == 'D') && key[2] >= 'A' && key[2] <= 'H') {
+            compare.code(key[2] - 'A', key[1] == 'E' ? 1 : 0);
+        } else if (is("LON")) compare.code(23, value[0] - '0');
+        else if (is("PBT") && scalar()) compare.code(13, static_cast<int>(parts[0]));
+        else if (is("POP") && scalar()) compare.code(17, static_cast<int>(parts[0]));
+        else if (is("PSP") && scalar()) compare.code(23, static_cast<int>(parts[0]));
+        else if (is("PCP")) compare.code(3, value[2] - '0');
+        else if ((is("MCHGC") || is("MUCHGC")) && numeric_parts(value + 2, parts, 1)) {
+            compare.number(is("MCHGC") ? 4 : 5, parts[0]);
+        } else if (is("MCHGV") && numeric_parts(value, parts, 2)) {
+            compare.number(11, parts[0] * 0.1); compare.number(12, parts[1] * 0.1);
+        } else if (is("PSDV") && scalar()) compare.number(10, parts[0] * 0.1);
+        else if (is("BUCD") && numeric_parts(value, parts, 2)) {
+            compare.number(8, parts[0] * 0.1); compare.number(9, parts[1] * 0.1);
+        } else return false;
+        if (unit >= 0) compare.code(0, 1); // Nonexistent parallel peers cannot verify settings.
+    } else if (profile->wire == WireFamily::pi30) {
+        if (is("PE") || is("PD")) {
+            for (const char *p = value; *p; ++p) compare.flag(*p, key[1] == 'E' ? 1 : 0);
+        } else if (is("MCHGC") || is("MNCHGC") || is("MUCHGC")) {
+            if (!numeric_parts(value + 1, parts, 1)) return false;
+            const bool utility = !is("MCHGC");
+            compare.number(utility ? 24 : 22, parts[0]);
+        } else if (is("POPM")) compare.code(20, value[1] - '0');
+        else if (is("PPCP")) compare.code(21, decimal_digits(value + 1, 2));
+        else if ((is("F") || is("PBCV") || is("PBDV") || is("PBFT") || is("PCVV") || is("PSDV")) && scalar()) {
+            compare.number(is("F") ? 3 : is("PBCV") ? 8 : is("PBDV") ? 22 : is("PBFT") ? 11 : is("PCVV") ? 10 : 9, parts[0]);
+        } else if ((is("PBT") || is("PCP") || is("PGR") || is("POP") || is("POPLG") || is("PPVOKC") || is("PSPB")) && scalar()) {
+            compare.code(is("PBT") ? 12 : is("PCP") ? 17 : is("PGR") ? 15 : is("POP") ? 16 : is("POPLG") ? 26 : is("PPVOKC") ? 23 : 24, static_cast<int>(parts[0]));
+        } else if (is("PBATMAXDISC") && scalar() && parts[0] > 0) compare.number(9, parts[0]);
+        else if ((is("PLEDE") || is("PLEDS") || is("PLEDM")) && scalar()) {
+            compare.code(is("PLEDE") ? 0 : is("PLEDS") ? 1 : 2, static_cast<int>(parts[0]));
+        } else if ((is("PLEDB") || is("PLEDT")) && scalar()) compare.number(is("PLEDB") ? 3 : 4, parts[0]);
+        else return false;
+        if (unit >= 0) compare.code(0, 1);
+    } else return false;
+    matches = compare.equal && compare.available && compare.checked;
+    return compare.available && compare.checked;
 }
 
 CodecStatus pi_build_request(EnergyProtocol id, const char *command,
@@ -629,6 +880,18 @@ CodecStatus pi_decode_response(EnergyProtocol id, const char *command,
         if (token_count >= maximum_tokens) return CodecStatus::buffer_too_small;
         tokens[token_count++] = {begin + start, i - start};
         start = i + 1;
+    }
+    if ((id == EnergyProtocol::pi30 || id == EnergyProtocol::pi30mst) &&
+        !std::strcmp(command, "QPIGS2")) {
+        // PI30 SCC2/SCC3 replies have twelve tokens, while dual-MPPT MAX
+        // firmware uses three. Their third tokens are different quantities:
+        // SCC battery voltage versus PV2 power. Select a complete known layout
+        // before decoding so a truncated reply cannot publish voltage as watts.
+        // Some devices append a space immediately before their CRC.
+        while (token_count && !tokens[token_count - 1].size) --token_count;
+        const auto layout = token_count == 3 ? EnergyProtocol::pi30max : EnergyProtocol::pi30mst;
+        if (token_count != 3 && token_count != 12) return CodecStatus::invalid_frame;
+        definition = find_command(*profile_for(layout), "QPIGS2");
     }
     for (std::size_t i = 0; i < definition->field_count; ++i) {
         const auto result = decode_field(definition->fields[i], tokens, token_count,

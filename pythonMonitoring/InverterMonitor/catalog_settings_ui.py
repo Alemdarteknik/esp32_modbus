@@ -1,6 +1,5 @@
 """Searchable catalog editor for documented MQTT settings and service actions."""
 import json
-import math
 import time
 import re
 import tkinter as tk
@@ -8,6 +7,11 @@ from tkinter import ttk, messagebox
 
 from settings_catalog import load_catalog, INTERLOCKS
 from settings_selection import setting_member_matches
+from settings_results import (begin_write, finish_write, write_problem,
+                              named_write_result, failure_details,
+                              normalize_setting_value)
+from settings_polling import (SettingsReadPolicy, settings_index, snapshot_setting,
+                              valid_setting_read)
 
 
 class CatalogSettings:
@@ -16,6 +20,7 @@ class CatalogSettings:
     def __init__(self, monitor, parent):
         self.monitor = monitor
         self.catalog = load_catalog()
+        self._settings_index = settings_index(self.catalog)
         self.ready = False
         self.pending = None
         self.cache = {}
@@ -23,6 +28,7 @@ class CatalogSettings:
         self.selected = None
         self.dirty = False
         self.last_read = {}
+        self.read_policy = SettingsReadPolicy(self.last_read)
         self.frame = parent
         self.search = tk.StringVar()
         self.domain = tk.StringVar(value='All domains')
@@ -102,6 +108,8 @@ class CatalogSettings:
             if text not in f'{item.name} {item.description} {item.meaning}'.casefold():
                 continue
             current = self.format(item, self.cache[key]) if key in self.cache else 'Unknown'
+            if item.name == 'OnOffSet' and key in self.cache:
+                current += ' (command register)'
             self.table.insert('', 'end', iid=key, values=(item.name, item.description, item.domain, current, item.guard))
         self.update_count()
 
@@ -109,10 +117,12 @@ class CatalogSettings:
         self.count.configure(text=f'{len(self.table.get_children())} / {len(self.catalog)} settings | {len(self.cache)} values loaded')
 
     def next_read(self):
-        # Fresh snapshots already fill most rows. Read missing values first,
-        # then rotate through older values, independently of row selection.
+        # Firmware snapshots fill most rows. Only missing/stale values need a
+        # fallback getter; the selected row has a shorter refresh interval.
+        now = time.monotonic()
         candidates = [key for key, item in self.catalog.items()
-                      if item.readable and key not in self.unreadable]
+                      if item.readable and key not in self.unreadable
+                      and self.read_policy.due(key, now, focused=key == self.selected)]
         if not candidates:
             return None
         return min(candidates, key=lambda key: self.last_read.get(key, 0))
@@ -121,7 +131,7 @@ class CatalogSettings:
         item = self.catalog.get(self.selected)
         writing = self.pending and self.pending[1] == 'set'
         enabled = self.ready and not self.monitor.disconnecting and item is not None and not writing
-        can_write = enabled and not item.blocked and item.name not in self.TIME_FIELDS
+        can_write = enabled and not item.blocked and item.name not in self.TIME_FIELDS and not write_problem(self.monitor, self)
         self.input.configure(state=('readonly' if item.choices else 'normal') if can_write else 'disabled')
         self.button.configure(state='normal' if can_write else 'disabled')
 
@@ -153,6 +163,8 @@ class CatalogSettings:
                 notes += ' This item also accepts an integer; quote a numeric ASCII cell, e.g. "12".'
         if re.fullmatch(r'PeriodTime(?:Start|End)\d+', item.name):
             notes += '\nThis editor accepts HH:MM and sends the documented packed numeric value.'
+        if item.name == 'OnOffSet':
+            notes += '\nCurrent value is the command register, not the operating state. On/Off is confirmed only after the ESP checks the inverter operating state.'
         if item.blocked:
             notes += '\n' + item.blocked
         self.details.configure(state='normal')
@@ -163,6 +175,9 @@ class CatalogSettings:
         self.value.set(self.format(item, self.cache[key]) if key in self.cache else '')
         self.dirty = False
         self.status.configure(text='Current value updates automatically; enter a value then press Set.')
+        problem = write_problem(self.monitor, self)
+        if problem:
+            self.status.configure(text=problem)
         if item.name in self.TIME_FIELDS:
             self.status.configure(text='Use the System time field above the list to edit the complete date/time with Seconds last.')
         self.controls()
@@ -178,11 +193,13 @@ class CatalogSettings:
         self.monitor.root.after(1000, self.refresh)
 
     def reset(self):
+        if self.pending and self.pending[1] == 'set':
+            finish_write(self.monitor, self, uncertain=True)
         self.ready = False
         self.pending = None
         self.cache.clear()
         self.unreadable.clear()
-        self.last_read.clear()
+        self.read_policy.reset()
         self.value.set('')
         self.dirty = False
         self.ack.set(False)
@@ -198,6 +215,11 @@ class CatalogSettings:
         if key is None:
             return
         item = self.catalog[key]
+        if operation == 'set':
+            problem = write_problem(self.monitor, self)
+            if problem or item.blocked:
+                self.status.configure(text=problem or item.blocked)
+                return
         if operation == 'get' and (not item.readable or key in self.unreadable):
             self.status.configure(text='Current value is not readable for this command.')
             return
@@ -207,20 +229,25 @@ class CatalogSettings:
         if operation == 'get':
             payload['category'] = 'configuration'
         else:
+            begin_write(self.monitor, self)
             payload.update(value=value, confirmed=True)
             if item.guard in INTERLOCKS:
                 payload[INTERLOCKS[item.guard]] = True
         self.pending = (cid, operation, key, value)
         if operation == 'get':
-            self.last_read[key] = time.monotonic()
+            self.read_policy.attempted(key, time.monotonic())
         self.controls()
         try:
             result = self.monitor.mqtt_client.publish(self.monitor.mqtt_topic.rsplit('/', 1)[0] + '/command',
-                                                     json.dumps(payload), qos=1, retain=False)
+                                                     json.dumps(payload), qos=0 if operation == 'set' else 1, retain=False)
             if result.rc != 0:
                 raise RuntimeError(f'MQTT publish failed ({result.rc})')
         except Exception as error:
+            if operation == 'set':
+                finish_write(self.monitor, self)
             self.pending = None
+            if operation == 'get':
+                self.read_policy.failed(key, time.monotonic())
             self.status.configure(text=str(error))
             self.controls()
             return
@@ -234,6 +261,10 @@ class CatalogSettings:
         if self.pending and self.pending[1] == 'set':
             return
         item = self.catalog[self.selected]
+        problem = write_problem(self.monitor, self)
+        if problem:
+            self.status.configure(text=problem)
+            return
         if item.name in self.TIME_FIELDS:
             return
         try:
@@ -259,60 +290,67 @@ class CatalogSettings:
             _, operation, key, _ = self.pending
             self.pending = None
             if operation == 'set':
+                finish_write(self.monitor, self, uncertain=True)
                 self.cache.pop(key, None)
                 self.status.configure(text='Write unconfirmed: no matching result. No automatic write retry.')
-            elif key == self.selected:
-                self.status.configure(text='Read timed out; waiting for the next automatic refresh.')
+            else:
+                self.read_policy.failed(key, time.monotonic())
+                if key == self.selected:
+                    self.status.configure(text='Read timed out; waiting for the next automatic refresh.')
             self.controls()
 
-    def update_current(self, key, value):
-        changed = key not in self.cache or self.cache[key] != value
+    def update_current(self, key, value, retained=False):
+        value = normalize_setting_value(self.catalog[key], value)
+        added = key not in self.cache
+        changed = added or self.cache[key] != value
         self.cache[key] = value
-        self.last_read[key] = time.monotonic()
+        if not retained and valid_setting_read(self.catalog[key], value):
+            self.read_policy.received(key, time.monotonic())
         item = self.catalog[key]
         display = self.format(item, value)
-        if self.table.exists(key):
-            self.table.set(key, 'current', display)
+        if changed and self.table.exists(key):
+            self.table.set(key, 'current', display + (' (command register)' if item.name == 'OnOffSet' else ''))
         if key == self.selected and (changed or not self.dirty):
             self.value.set(display)
             self.dirty = False
-        self.update_count()
+        if added:
+            self.update_count()
 
-    def receive(self, topic, data):
+    def receive(self, topic, data, retained=False):
         if not setting_member_matches(self.monitor, data):
             return
         base = self.monitor.mqtt_topic.rsplit('/', 1)[0]
         if topic.startswith(base + '/snapshot/'):
-            candidates = [x for x in self.catalog.values() if x.name == data.get('name')
-                          and x.domain.casefold() == str(data.get('domain', '')).casefold()]
-            if len(candidates) > 1:
-                candidates = [x for x in candidates if x.description == data.get('description')]
-            if len(candidates) == 1 and 'value' in data:
-                self.update_current(candidates[0].key, data['value'])
+            item = snapshot_setting(self._settings_index, data)
+            if (item is not None and 'value' in data
+                    and valid_setting_read(item, normalize_setting_value(item, data['value']))
+                    and (not retained or item.key not in self.read_policy.fresh_at)):
+                self.update_current(item.key, data['value'], retained=retained)
             return
-        if topic != base + '/result' or not self.pending:
+        if topic != base + '/result' or not self.pending or retained:
             return
         cid, operation, key, expected = self.pending
         item = self.catalog[key]
-        if str(data.get('command_id')) != cid or data.get('operation') != operation or data.get('name') != item.name:
+        if (str(data.get('command_id')) != cid or data.get('operation') != operation or data.get('name') != item.name
+                or ('domain' in data and str(data['domain']).casefold() != item.domain.casefold())
+                or ('description' in data and data['description'] != item.description)):
             return
         self.pending = None
         outcome = data.get('outcome', 'invalid result')
-        if outcome == 'confirmed' and 'value' in data and data['value'] is not None:
-            actual = data['value']
-            self.update_current(key, actual)
-            equal = actual == expected
-            if isinstance(actual, (int, float)) and isinstance(expected, (int, float)):
-                equal = math.isclose(actual, expected, rel_tol=1e-9, abs_tol=1e-9)
-            if operation == 'set':
-                self.status.configure(text=f'Confirmed: {self.format(item, actual)}' if equal else f'Read-back mismatch: {actual}; requested {expected}')
-        elif outcome == 'sent_unverifiable':
-            self.status.configure(text='Sent but not verifiable: inverter action has no read-back. No automatic retry.')
+        if operation == 'set':
+            result = named_write_result(item, expected, data)
+            finish_write(self.monitor, self, uncertain=result['uncertain'])
+            if result['value_available']:
+                self.update_current(key, result['value'])
+            self.status.configure(text=(result['message'] or f'Confirmed: {self.format(item, result["value"])}'))
+        elif outcome == 'confirmed' and valid_setting_read(item, data.get('value')):
+            self.update_current(key, data['value'])
         else:
+            self.read_policy.failed(key, time.monotonic())
             if outcome in ('not_readable', 'not_documented'):
                 self.unreadable.add(key)
                 if self.table.exists(key):
                     self.table.set(key, 'current', 'Not readable')
             if operation == 'set' or key == self.selected:
-                self.status.configure(text=f'Not confirmed: {outcome}. {data.get("message", "")}')
+                self.status.configure(text=f'Not confirmed: {outcome}. {failure_details(data)}')
         self.controls()

@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, patch
 
 from settings_catalog import load_catalog
 from catalog_settings_ui import CatalogSettings
+from settings_polling import SettingsReadPolicy, settings_index
 
 
 class CatalogTests(unittest.TestCase):
@@ -57,6 +58,7 @@ class CatalogTests(unittest.TestCase):
     def make_ui(self, item):
         ui = CatalogSettings.__new__(CatalogSettings)
         ui.catalog = self.catalog
+        ui._settings_index = settings_index(self.catalog)
         ui.selected = item.key
         ui.ready = True
         ui.pending = None
@@ -64,6 +66,7 @@ class CatalogTests(unittest.TestCase):
         ui.unreadable = set()
         ui.dirty = False
         ui.last_read = {}
+        ui.read_policy = SettingsReadPolicy(ui.last_read)
         ui.monitor = MagicMock()
         ui.monitor.disconnecting = False
         ui.monitor.mqtt_topic = 'inverter/INV-AABBCCDDEEFF/inverter/0/live'
@@ -115,9 +118,13 @@ class CatalogTests(unittest.TestCase):
             with self.subTest(setting=item.key):
                 ui = self.make_ui(item)
                 ui.request('set', 1)
+                if item.blocked:
+                    ui.monitor.mqtt_client.publish.assert_not_called()
+                    continue
                 payload = json.loads(ui.monitor.mqtt_client.publish.call_args.args[1])
                 self.assertEqual(payload['name'], item.name)
                 self.assertEqual(payload['description'], item.description)
+                self.assertEqual(ui.monitor.mqtt_client.publish.call_args.kwargs, dict(qos=0, retain=False))
                 if item.guard == 'commissioning_only':
                     self.assertTrue(payload['commissioning_interlock'])
                 if item.guard == 'service_only':
@@ -147,6 +154,48 @@ class CatalogTests(unittest.TestCase):
         with patch('catalog_settings_ui.messagebox.askyesno', return_value=False):
             ui.write()
         ui.monitor.mqtt_client.publish.assert_not_called()
+
+    def test_fresh_snapshots_skip_global_getters_and_selected_row_refreshes_sooner(self):
+        item = self.item('BatteryType')
+        ui = self.make_ui(item)
+        base = ui.monitor.mqtt_topic.rsplit('/', 1)[0]
+        with patch('catalog_settings_ui.time.monotonic', return_value=100):
+            for setting in ui.catalog.values():
+                if setting.readable:
+                    ui.receive(base + '/snapshot/setting', dict(member_id=0, name=setting.name,
+                        domain=setting.domain, description=setting.description, value=1))
+            ui.refresh()
+        ui.monitor.mqtt_client.publish.assert_not_called()
+        with patch('catalog_settings_ui.time.monotonic', return_value=129.9):
+            ui.refresh()
+        ui.monitor.mqtt_client.publish.assert_not_called()
+        with patch('catalog_settings_ui.time.monotonic', return_value=130):
+            ui.refresh()
+        self.assertEqual(ui.pending[2], item.key)
+
+    def test_retained_snapshot_does_not_overwrite_a_fresh_observation(self):
+        item = self.item('BatteryType')
+        ui = self.make_ui(item)
+        base = ui.monitor.mqtt_topic.rsplit('/', 1)[0]
+        data = dict(member_id=0, name=item.name, domain=item.domain,
+                    description=item.description, value=1)
+        ui.receive(base + '/snapshot/setting', data)
+        ui.receive(base + '/snapshot/setting', dict(data, value=0), retained=True)
+        self.assertEqual(ui.cache[item.key], 1)
+
+    def test_invalid_numeric_snapshots_cannot_suppress_fallback_validation(self):
+        item = self.item('BatteryType')
+        ui = self.make_ui(item)
+        base = ui.monitor.mqtt_topic.rsplit('/', 1)[0]
+        data = dict(member_id=0, name=item.name, domain=item.domain,
+                    description=item.description, value=1)
+        for invalid in ('garbage', None, float('nan'), True):
+            ui.receive(base + '/snapshot/setting', dict(data, value=invalid))
+        self.assertNotIn(item.key, ui.cache)
+        self.assertNotIn(item.key, ui.read_policy.fresh_at)
+        ui.receive(base + '/snapshot/setting', dict(data, value=999))
+        self.assertEqual(ui.cache[item.key], 999)
+        self.assertIn(item.key, ui.read_policy.fresh_at)
 
 
 if __name__ == '__main__':

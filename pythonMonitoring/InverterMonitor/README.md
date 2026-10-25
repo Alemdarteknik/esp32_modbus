@@ -2,6 +2,7 @@
 
 Streamlit browser UI and Tkinter desktop UI with live telemetry, gateway health, and protocol-specific device commands. AOHAI retains its existing live display and all 201 catalog settings. Both interfaces also support the 25 PI, JK, Daly and VE.Direct profiles added to the ESP firmware. The browser entry point is `app.py`; the desktop entry point is `inverter_monitor.py`.
 Keep `MQTT_Register_Command_API.md` beside the Python modules: the settings catalog reads it at runtime.
+Keep `settings_results.py` beside them as well; both interfaces share its write-result validation.
 Keep `native_protocols.py`, `native_live.py` and `protocol_catalog.json` beside them for the native profiles. No additional Python packages are required for these profiles.
 
 ## Run with the existing shared environment
@@ -34,7 +35,26 @@ py -m venv .venv
 & .\.venv\Scripts\python.exe -m streamlit run app.py
 ```
 
-Open `http://localhost:8501` if the browser does not open automatically. Enter the installation's inverter ID, select the same protocol as the ESP installer, choose the logical member (0 through 9), and press Connect. Member 0 is the coordinator's local inverter; choose the assigned member number for an ESP-NOW inverter member. Gateway health is read from member 0 for every selected inverter. Broker configuration is in `mqtt_backend.py`.
+Open `http://localhost:8501` if the browser does not open automatically. Enter the installation's inverter ID, select the same protocol as the ESP installer, choose the logical member (0 through 9), and press Connect. Member 0 is the coordinator's local inverter; choose the assigned member number for an ESP-NOW inverter member. Gateway health is read from member 0 for every selected inverter.
+
+### Broker connection errors
+
+The default endpoint is `wss://mqtt-esp.alemdarteknik.com:443/mqtt`. A WebSocket handshake error happens before MQTT connects. After an upgrade failure, the app makes a bounded diagnostic HTTP upgrade request and displays the server response without sending inverter commands.
+
+The WebSocket client identifies itself with `User-Agent: InverterMonitor/1.0`. The broker's proxy may challenge clients that omit this header; Paho's default handshake omits it. The diagnostic uses the same User-Agent, Host and Origin headers as the app.
+
+If the error reports `HTTP 403` and a Cloudflare browser challenge, inspect Cloudflare Security Events for this hostname and `/mqtt` path. Adjust the specific challenging rule to permit the MQTT endpoint while keeping broker authentication/access controls. Cloudflare Bot Fight Mode does not support skip rules; see [Cloudflare security interoperability](https://developers.cloudflare.com/waf/feature-interoperability/). A browser challenge cannot be completed by the Python MQTT client.
+
+To use another broker listener, set these environment variables in the terminal before starting Streamlit:
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `INVERTER_MQTT_HOST` | `mqtt-esp.alemdarteknik.com` | Hostname without scheme/path |
+| `INVERTER_MQTT_TRANSPORT` | `websockets` | `websockets` or `tcp`; TLS enabled for both |
+| `INVERTER_MQTT_PORT` | `443` for WebSockets, `8883` for TCP | Port of the configured broker listener |
+| `INVERTER_MQTT_PATH` | `/mqtt` | WebSocket path; unused for TCP |
+
+For example, `$env:INVERTER_MQTT_HOST = 'your-broker.example.com'` in PowerShell, or `export INVERTER_MQTT_HOST=your-broker.example.com` on macOS/Linux. A raw MQTT/TLS listener must be configured separately on the broker; changing the client transport cannot create it. The browser app and `MonitorSession` callers use these variables; the legacy AOHAI Tkinter transport retains its module constants.
 
 ## Additional protocol profiles
 
@@ -64,20 +84,39 @@ Device totals are preferred; complete reported power channels/phases may be
 summed. A missing channel stays missing, and apparent power is never treated as
 active power. Each reading keeps its own update age.
 
+For base PI30, selecting two or three PV inputs in the ESP installer enables
+the optional second-tracker query automatically. Supported inverters publish
+PV2 current, voltage and power; models with the extended response also publish
+PV3 and a measured whole-device PV total. Both interfaces show these readings
+in the PV measurements table. The PV power card uses the measured total or all
+selected tracker powers. It stays unavailable while a selected tracker has no
+power reading, and becomes stale if any component expires. A real zero from
+one tracker remains valid. Older single-tracker firmware keeps its existing
+PV1 display. A device that rejects the optional query cannot supply PV2 data.
+
 Primary readings are polled about every two seconds; secondary/status readings
-every five seconds. Identity is read once per device connection. Configuration
-and supported energy totals are read every 60 seconds, with changed settings
-published automatically. The normal MQTT `/live` snapshot refreshes every five
-seconds and includes cached identity/settings with their sample ages.
+every five seconds. Identity and supported charging-current lists are read once
+per device connection. Current settings refresh every 120 seconds and after
+writes; supported energy totals refresh every 60 seconds. Auxiliary diagnostics
+and clock reads refresh every ten seconds. Manufacturer defaults (`QDI`/`DI`)
+are manual diagnostics and never replace active settings in the normal display.
+The normal MQTT `/live` snapshot refreshes every five seconds and includes cached
+identity/settings with their actual sample ages.
 
 Current firmware publishes complete native observations on
 `inverter/INV-ID/inverter/MEMBER/protocol/COMMAND`, with `record_complete:true`
-and `sample_age_ms`. Native live snapshots also carry `native_records`. The
+and `sample_age_ms`. Detailed records publish initially and on value changes,
+with a fresh publication after reconnect. Unchanged manual queries still receive
+their command result immediately and fresh values in the next live snapshot.
+Native live snapshots also carry `native_records`. The
 monitor subscribes to these observations with QoS 1, deduplicates redelivery,
 and never treats cached publication as a fresh sensor reading. Older chunked
 telemetry is also supported: every chunk is required before measurements
 update, and partial assemblies expire after five seconds. Advanced diagnostics
 show raw records and reasons for dropped/expired/conflicting records.
+Native publications may also carry `connected_pv_inputs` for the gateway's
+local inverter. For remote members without this metadata, the monitor infers
+additional trackers from their own reported PV2/PV3 fields.
 
 For a native profile, the Commands/Settings view lists its documented queries,
 setting formats, examples and readback queries. Enter a complete supported
@@ -90,7 +129,10 @@ undocumented settings are unavailable; some BMS profiles and PI16 provide
 monitoring only.
 
 Native `/result` outcomes differ from AOHAI's result schema. A device ACK is
-shown as **accepted** and never promoted to confirmed readback equality. A
+shown as **accepted**. Only a successful fresh device readback comparison is
+shown as **verified** (`completed`, `setting_verified:true`). An explicit
+readback mismatch is shown separately. Addressed parallel commands use their
+addressed unit's documented query, never the local inverter's settings. A
 sent setting with an uncertain response, a lost result, or a timeout remains
 uncertain and blocks further settings in that monitor session; reads remain
 available. Check the actual device setting and resolve the connection before
@@ -100,6 +142,13 @@ Neither interface retries setting commands automatically.
 
 Select `AOHAI_MODBUS_RTU` for the existing Mexxsun/AOHAI installation; its
 get/set API, guarded settings and live payload handling are preserved.
+The AOHAI on/off control always sends the command once. The monitor only shows
+**inverter On/Off confirmed** when the ESP has verified its actual operating
+state (`completed`, `operating_state_confirmed:true`). A command-register
+readback alone is not that verification. Pending transitions remain unverified,
+and the command is never automatically retried. This controls the inverter's
+operating state; the connected battery/grid may keep its electronics powered.
+
 Selecting a native profile suppresses the automatic AOHAI catalog reads and
 hides the AOHAI controls. If the device reports a different native protocol,
 commands are blocked until you reconnect with the matching selection.
@@ -117,9 +166,12 @@ permission notice are in `protocol_catalog.json` and `LICENSE.mpp-solar.txt`.
 
 - MQTT uses TLS WebSockets at `mqtt-esp.alemdarteknik.com:443/mqtt`, without username/password. Each browser session owns its connection.
 - The UI refreshes every second using [Streamlit fragments](https://docs.streamlit.io/develop/api-reference/execution-flow/st.fragment). Live receipt becomes stale after 15 seconds; health after 90 seconds.
-- AOHAI settings reads rotate at most once per second. Initial loading may take several minutes; unsupported getters are skipped. Native monitoring is polled by the ESP, with optional manual queries in the app.
+- The desktop also refreshes native readings once per second while checking its event queue every 100 ms. Measurement tables reuse their rows, preserving selection and avoiding rebuilds when values are unchanged. Sample ages and stale indicators continue advancing without new packets.
+- Raw native records are copied and formatted only when their diagnostics view is open. Recent Streamlit versions load that view when its tab and expander are opened; older versions provide a checkbox. The complete validated observations remain available in the bounded collector.
+- AOHAI settings use the ESP's published snapshots. Background getters validate retained values and fill missing or older readings, with a ten-minute interval for inactive settings and a 30-second interval for the selected setting. Selecting a different setting requests its current value; repeated UI refreshes do not repeat that request. Dedicated clock and shortcut controls use a two-minute fallback. Failed getters back off, unsupported getters are skipped, and writes are never retried automatically. Native monitoring is polled by the ESP, with optional manual queries in the app.
 - An unsubmitted selection survives refreshes unless a different current value arrives.
-- Set requires explicit acknowledgement. Browser and native-profile commands are non-retained, under 2048 bytes, and use QoS 0 to avoid transport redelivery. Only a matching inverter result and read-back confirms an AOHAI write; native ACKs mean accepted. Lost commands/results remain unconfirmed or uncertain; writes are never automatically retried.
+- Set requires explicit acknowledgement. Setting commands in both interfaces are non-retained, under 2048 bytes, and use QoS 0 to avoid transport redelivery. Only a matching inverter result and read-back confirms an AOHAI setting; on/off additionally requires operating-state verification. Native ACKs mean accepted until an exact fresh readback verifies the setting. Lost commands/results remain unconfirmed or uncertain and block further settings in that monitor session; reads continue. Verify the device before reconnecting. Writes are never automatically retried.
+- Numeric AOHAI inputs use the documented API engineering scale and register step: for example, `ChargeRate` is a fraction from 0 to 1, 20 ms timer settings require multiples of 20, and battery voltage settings retain their documented voltage step. Model-dependent operating requirements remain enforced by the ESP. Calendar readbacks accept both the inverter's two-digit year and its four-digit year.
 - AOHAI time changes write six fields sequentially, seconds last. Failure stops remaining writes; partial changes are possible. Native time settings use only the documented command available in their own profile.
 - Reserved/unvalidated settings remain blocked, including the combined `flcdEn` bitfield.
 - Disconnect clears displayed data. Network failures require manual reconnect. A browser inactive for 90 seconds loses its connection. Avoid multiple controllers for one inverter.

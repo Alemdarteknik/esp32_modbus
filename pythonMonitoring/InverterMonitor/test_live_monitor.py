@@ -1,9 +1,10 @@
 import queue
+import json
 import time
 import tkinter as tk
 import unittest
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from inverter_monitor import InverterMonitor, freshness_text
 
@@ -57,6 +58,37 @@ class LiveMonitorTests(unittest.TestCase):
         self.assertEqual(records["Load active power"]["source"], "register")
         self.assertEqual(records["Load apparent power"]["source"], "")
         self.assertEqual(records["System generation"]["unit"], "kW")
+
+    def test_queue_coalesces_only_identical_snapshots_and_keeps_control_order(self):
+        monitor = InverterMonitor.__new__(InverterMonitor)
+        monitor.data_queue = queue.Queue()
+        initial = ('data', ({'fault': False}, 1, False))
+        newest = ('data', ({'fault': False}, 2, False))
+        fault = ('data', ({'fault': True}, 3, False))
+        result = ('setting_message', ('result', {'outcome': 'confirmed'}, False))
+        retained = ('data', ({'fault': True}, 4, True))
+        recovered = ('data', ({'fault': False}, 5, False))
+        for event in (initial, newest, fault, result, retained, recovered):
+            monitor.data_queue.put(event)
+        self.assertEqual(list(monitor.drain_ui_queue()),
+                         [newest, fault, result, retained, recovered])
+
+    def test_aohai_raw_json_is_formatted_only_when_visible(self):
+        root = tk.Tk()
+        root.withdraw()
+        try:
+            monitor = InverterMonitor(root)
+            with patch('inverter_monitor.json.dumps', wraps=json.dumps) as dumps:
+                monitor.update_data({'sections': {}, 'power_summary': {}})
+                dumps.assert_not_called()
+                monitor.notebook.select(monitor.raw_frame)
+                monitor.native_tab_changed()
+                dumps.assert_called_once()
+                monitor.native_tab_changed()
+                dumps.assert_called_once()
+            monitor.running = False
+        finally:
+            root.destroy()
 
 
 if __name__ == "__main__":

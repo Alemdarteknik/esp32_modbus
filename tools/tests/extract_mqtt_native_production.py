@@ -59,8 +59,15 @@ def main() -> None:
         "const char *protocol_outcome_name(", "template <std::size_t Size>",
         "bool topic_component(", "bool parse_named_category(", "bool parse_register_domain(",
         "const inverter::RegisterDescriptor *find_named_register(", "bool encode_named_value(",
+        "void add_register_details(", "void add_named_value(", "bool is_public_descriptor(",
+        "void make_topic_component(",
+        "std::uint8_t pv_input_index(", "bool descriptor_is_enabled(",
+        "const char *application_name(", "const char *engineering_unit(",
+        "double published_value(", "cJSON *add_decimal_value(", "void add_application_value(",
+        "bool contains_case_insensitive(", "bool is_alert_descriptor(", "const char *alert_severity(",
         "std::uint8_t member_from_topic(",
-        "bool protocol_poll_info(", "cJSON *protocol_record_json(", "const char *protocol_live_section(",
+        "bool protocol_poll_info(", "std::uint8_t native_connected_pv_inputs(",
+        "cJSON *protocol_record_json(", "const char *protocol_record_section(",
     ]
     methods = [
         "MqttBridge::MqttBridge(", "void MqttBridge::handle_event(",
@@ -71,6 +78,9 @@ def main() -> None:
         "void MqttBridge::publish_protocol_live_now(",
         "void MqttBridge::publish_protocol_command_result(",
         "void MqttBridge::publish_protocol_command_result_now(",
+        "void MqttBridge::publish_command_result_now(", "void MqttBridge::publish_setting_snapshot(",
+        "void MqttBridge::publish_snapshot(", "void MqttBridge::publish_alert_changes(",
+        "void MqttBridge::publish_firmware_identity(",
         "bool MqttBridge::ota_publisher_healthy()", "bool MqttBridge::ota_results_drained()",
         "void MqttBridge::make_topic(",
     ]

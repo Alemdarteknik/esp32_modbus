@@ -91,12 +91,15 @@ public:
     enum Metric : std::size_t { pv, grid, grid_apparent, output, output_apparent, load_percentage, battery, metric_count };
     static constexpr const char *names[metric_count] = {"pv_kw", "grid_kw", "grid_apparent_kva", "load_kw", "load_apparent_kva", "load_percentage", "battery_kw"};
 
-    explicit NativePowerSummary(protocol::EnergyProtocol profile) : profile_(profile) {}
+    explicit NativePowerSummary(protocol::EnergyProtocol profile, std::uint8_t connected_pv_inputs = 0xff)
+        : profile_(profile), connected_pv_inputs_(connected_pv_inputs) {}
 
     void observe(const protocol::EnergyField &field, std::uint32_t age, std::uint32_t observation = 0)
     {
         char key[40]{}; native_field_key(field.key, key);
         const auto eq = [&](const char *name) { return std::strcmp(key, name) == 0; };
+        if (!std::strncmp(key, "pv2_", 4)) pv2_observed_ = true;
+        if (!std::strncmp(key, "pv3_", 4)) pv3_observed_ = true;
         if (eq("battery_power_direction") && !field.numeric) {
             const int direction = !std::strcmp(field.text, "Charging") ? -1 :
                 !std::strcmp(field.text, "Discharging") ? 1 : !std::strcmp(field.text, "Idle") ? 0 : 2;
@@ -137,6 +140,7 @@ public:
             if (eq("pv_total_charging_power")) save(direct_[pv], 2);
             else if (eq("pv_input_power") || eq("pv_power") || eq("solar_power") ||
                      (profile_ == protocol::EnergyProtocol::ved && eq("ppv"))) save(direct_[pv]);
+            if (profile_ == protocol::EnergyProtocol::pi30 && eq("pv_input_power")) save(pv_channels_[0]);
             if (eq("ac_input_total_active_power")) save(direct_[grid], 2);
             else if (eq("grid_active_power") || eq("ac_input_active_power") || eq("grid_power")) save(direct_[grid]);
             if (eq("ac_output_total_active_power") || eq("total_output_active_power") || eq("total_ac_output_active_power")) save(direct_[output], 2);
@@ -172,6 +176,19 @@ public:
     Reading reading(Metric metric) const
     {
         const auto direct = metric == battery ? signed_battery() : direct_[metric];
+        if (metric == pv && profile_ == protocol::EnergyProtocol::pi30) {
+            const unsigned count = connected_pv_inputs_ != 0xff ? connected_pv_inputs_ :
+                pv3_observed_ ? 3 : (pv2_observed_ || direct.priority >= 2) ? 2 : 1;
+            if (count == 0 || count > 3) return {};
+            if (count > 1) {
+                // QPIGS is SCC1. A fresh PV1 value must not mask a missing or
+                // stale second tracker. A reported whole-device total wins.
+                if (direct.priority >= 2 && direct.fresh()) return direct;
+                const auto aggregate = sum(pv_channels_.data(), count, "pv_channel_sum");
+                return aggregate.fresh() || direct.priority < 2 ? aggregate : direct;
+            }
+            return pv_channels_[0];
+        }
         if (direct.fresh()) return direct;
         Reading aggregate{};
         if (metric == pv) {
@@ -298,6 +315,8 @@ private:
         return total;
     }
     protocol::EnergyProtocol profile_;
+    std::uint8_t connected_pv_inputs_;
+    bool pv2_observed_ = false, pv3_observed_ = false;
     std::array<Reading, metric_count> direct_{};
     std::array<Reading, 3> pv_channels_{};
     std::array<Reading, 2> output_phases_{}, apparent_phases_{};

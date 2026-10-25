@@ -4,22 +4,17 @@ Firmware hardening is not a 1,000-device capacity certification. No broker load 
 
 ## Automatic firmware updates
 
-See [OTA updates](OTA_Updates.md). Version 1.0.8 retains automatic HTTPS updates
+See [OTA updates](OTA_Updates.md). Version 1.0.9 retains automatic HTTPS updates
 for provisioned standalone Wi-Fi devices; a responding inverter is not required.
-Getters no longer reset the write-quiet gate. Existing random scheduling spreads
-startup checks over one hour, retries local postponements in 5-10 minutes, and
-spaces network attempts, including failures, by 6-7 hours. The first check is
-1-61 minutes after startup. The webpage does not force an immediate check.
-The narrow 1.0.7 fix accepts bounded chunked downloads and adds local last-failure
-diagnostics. Version 1.0.8 retains the connection guard of 64,000 free bytes and a
-32,768-byte largest block; after TLS opens and during transfer, separate guards
-require 32,768 free bytes and an 8,192-byte largest block. The local webpage shows
-failure-time available/required memory
-captured before cleanup, separately from current memory. These configurable
-guards need hardware measurements; they do not establish capacity or guarantee
-updates. The proposed broader retry rewrite is not integrated;
-`tools/ota_retry_policy.hpp` is an offline proposal only. Passing mocked
-actual-worker tests is not hardware update/rollback or fleet validation.
+The first check is 30–120 seconds after updater startup. Local postponements
+retry in 5–10 minutes; transient errors back off from 5–10 to 30–60 minutes.
+Completed checks and permanent rejections retain the 6–7 hour interval. The
+webpage displays the next scheduled check without forcing a request.
+Connection admission requires 64,000 free internal bytes and a 24,576-byte largest
+block; streaming requires 32,768 free bytes and an 8,192-byte largest block.
+The TLS allocator can place large buffers in PSRAM. Failure-time memory remains
+separate from current memory. These guards and host tests require hardware
+validation with concurrent MQTT/OTA traffic.
 
 This is not a fleet rollout controller. The shared latest-file endpoint has no
 per-device cohorts, kill switch or signed-release policy. Verify server TLS/download
@@ -30,7 +25,7 @@ need a one-time USB baseline or an HTTP 200 binary response with an exact positi
 Content-Length to download the fix at their next eligible scheduled check.
 Locally rebuilt firmware may retain an older version label while containing the
 framing fix; identify installed code from build provenance and diagnostics.
-The current updater blocked by `post_tls_memory` needs a physical 1.0.8 baseline.
+An old updater permanently blocked by its memory guard needs a physical 1.0.9 baseline.
 Changing the served binary or response framing cannot replace an updater that
 cannot pass its memory guard. Actual hardware OTA and rollback tests remain
 required after installation; no device flash or endpoint upload is included here.

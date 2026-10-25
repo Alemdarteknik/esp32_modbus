@@ -26,15 +26,15 @@ The fake image-header/descriptor layouts match the fields and byte offsets
 used by the worker in ESP-IDF 5.5.1. The fake APIs are deliberately a narrow
 subset, not a replacement SDK. They cannot be compiled with `ESP_PLATFORM`.
 
-Current status: **120/120 offline actual-worker cases pass** for the 1.0.8 source
-after separating connection and streaming memory reserves. The
+Current status: **130/130 offline actual-worker cases pass** after reducing
+transient allocations and correcting memory admission and retry scheduling. The
 suite compiles with `-Wall -Wextra -Werror`. This is host verification only; no
 device update, endpoint upload or hardware OTA validation is performed by these
 tests.
 
-The suite retains all previous 78 cases: the original 54, 22 streaming-framing
-regressions and two failure-diagnostic lifecycle scenarios. It adds 42 memory
-policy and diagnostic regressions:
+The suite retains the previous 120 cases (except updating the old network-error
+retry expectation) and adds coverage for the reported fragmented heap, PSRAM
+fallback and production scheduling policy:
 
 - Runtime and memory preflight deferrals, NVS/client/buffer allocation errors.
 - TLS/open failure, post-handshake heap pressure, HTTP status/length/slot errors.
@@ -64,9 +64,23 @@ policy and diagnostic regressions:
   check clears it before NVS access, and a subsequent failure replaces old stage,
   HTTP status and offered-version information. Fresh nonfailure cases contain no
   leftover failure diagnostics.
-- Connection admission still requires 64,000 internal free bytes and a 32,768-byte
+- Connection admission requires 64,000 internal free bytes and a 24,576-byte
   contiguous block. Exact boundaries pass; one byte below either boundary defers
   before NVS or a network request.
+- The reported 89.2 KiB free / 31 KiB largest-block memory sample starts a real
+  check instead of remaining permanently deferred by the former 32 KiB guard.
+  This tests admission, not actual TLS allocations on the device.
+- The download scratch buffer prefers PSRAM, with successful complete updates
+  when PSRAM allocation fails and the normal allocator must be used. The HTTP
+  configuration is checked for 1,024-byte RX / 512-byte TX buffers.
+- Startup is scheduled 30-120 seconds after health confirmation. Runtime and
+  local memory deferrals retry after 5-10 minutes. Transient network, HTTP
+  429/503, header transport and allocation failures start at 5-10 minutes,
+  back off to a maximum of 30-60 minutes, and recover automatically when local
+  blockers clear. Permanent HTTP/image errors retain the normal fleet interval.
+- The real worker exposes the next scheduled monotonic deadline while sleeping
+  and clears it before an actual check. Repeated failure and recovery scenarios
+  verify both backoff and deadline behavior.
 - Known-length and chunked images activate byte-for-byte with 48,000 internal free
   bytes and a 16,384-byte contiguous block throughout active TLS, below both
   connection reserves. Both framings also succeed at the exact streaming reserves:
@@ -109,8 +123,8 @@ fields, including compatibility with absent optional fields. They do not replace
 the actual-worker tests above.
 
 The suite explicitly characterizes existing limitations: HTTPS resources remain
-alive during quiesce, unsuccessful quiesce does not retain a pending activation
-record, and network errors currently use the normal fleet retry interval. Tests
+alive during quiesce and unsuccessful quiesce does not retain a pending activation
+record. Tests
 of these behaviors must be reviewed if those production behaviors change.
 
 Passing host tests is not production certification. These tests do not verify
@@ -121,3 +135,10 @@ is a programmable fake return value; real ESP-IDF validation remains necessary.
 HTTP reads supply decoded body bytes and configurable parser-completion signals;
 the suite does not implement or independently validate ESP-IDF's HTTP chunk parser.
 No test contacts an endpoint, broker, Wi-Fi network, serial port or inverter.
+
+Firmware configuration selects ESP-IDF's default mbedTLS allocator, allowing the
+16 KiB incoming record plus overhead to prefer PSRAM under the existing 16 KiB
+malloc threshold. Internal fallback remains available if PSRAM is absent. TLS
+record limits, certificate checks and image verification are unchanged. The host
+suite does not simulate that allocator or certify its real handshake footprint;
+check the generated firmware configuration and validate on ESP hardware.

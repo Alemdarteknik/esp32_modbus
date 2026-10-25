@@ -1,8 +1,149 @@
 # MQTT Streams, Getters and Setters - Complete Mosquitto CLI Reference
 
+## Communication reliability: version 1.0.6
+
+Command request formats and MQTT `live` payloads are unchanged. Version 1.0.6
+adds local USB/Modbus health counters and explicit coordinator-routing failure
+metadata. See [1.0.6 release notes](Firmware_Reliability_1.0.6.md).
+Version 1.0.9 changes OTA admission and retry scheduling as described below.
+
+## ESP firmware OTA
+
+Version 1.0.9 uses a PSRAM-aware TLS allocator and a 24 KiB contiguous internal
+block guard while retaining the 64,000-byte total-free guard and streaming
+reserves. Initial checks occur after 30–120 seconds; local blockers retry in
+5–10 minutes, and transient failures back off from 5–10 to 30–60 minutes.
+Completed checks and permanent rejections retain the 6–7 hour interval.
+`firmware_next_check_in_ms` in local HTTP status supplies the webpage countdown.
+An old installed updater that never passes admission needs one USB installation
+of the new baseline; uploading a new server binary cannot change its running guard.
+
+The ESP also publishes its running firmware identity once per MQTT connection:
+
+- Topic: `<prefix>/<device-id>/esp/ESP-<station-MAC>/firmware`.
+- QoS 1, retained; refreshed after reconnect, with failed enqueue retried.
+- Payload: `{"device_id":"ESP-44B176CF20EC","project":"esp32_modbus","version":"1.0.9"}`.
+
+This reports the Internet-facing ESP's application version, separately from
+inverter firmware fields. It is not an update command. Native live snapshots use
+the existing `sections_in_native_records:true` compact form to avoid duplicated
+measurements; complete observations, power summaries, age and settings remain.
+
+Monitoring reads current native settings every 120 seconds and after writes;
+immutable charging-current choices are read once per connection. Factory-default
+`QDI`/`DI` queries remain manual diagnostics. Core electrical readings, PV2 and
+fault/status checks retain their cadence. Complete `/live` snapshots remain every
+five seconds; detailed `/protocol/COMMAND` records publish initially, on changes,
+and after reconnect. Unchanged manual reads still receive their result immediately
+and update the next live snapshot. AOHAI retained setting snapshots are also
+change-only, while explicit command results and write confirmations remain immediate.
+
+Version 1.0.8 separates connection and streaming memory reserves and adds four
+local HTTP failure-memory fields. MQTT command/live formats, retry timing, write
+protection and polling remain unchanged. A device whose installed updater keeps
+failing the memory guard needs a physical current baseline; publishing a newer
+binary alone does not fix that installed updater.
+
+Version 1.0.7 fixes bounded HTTP chunked firmware downloads and adds local
+last-failure diagnostics. MQTT command/live formats, scheduling and write
+admission are unchanged. Original pre-fix 1.0.5/1.0.6 builds require a USB baseline or a
+server response with the exact positive Content-Length to obtain this fix; see
+[OTA bootstrap requirements](OTA_Updates.md#devices-stuck-on-an-older-updater).
+
+Version 1.0.5: getters no longer postpone scheduled update checks. Accepted
+semantic setters/register writes remain protected until completion/rejection
+plus a 30-second quiet interval. At activation, new requests and queued getters
+are rejected while an in-flight transaction is allowed to finish. Confirmation
+delivery is best-effort; never blindly retry a write. Live fields, command
+schemas, power calculations and polling intervals are unchanged.
+The local status API additionally exposes `firmware_update_reason`,
+`firmware_internal_free_bytes`, and `firmware_internal_largest_block_bytes`.
+These describe current conditions, not the exact historical failed preflight.
+
+Version 1.0.7 adds `firmware_failure_stage`, `firmware_failure_code`,
+`firmware_failure_http_status` and `firmware_failure_error` to the read-only local
+HTTP `/api/status` response, not MQTT `live`. They describe the last failed update
+attempt, separate from the current blocker. Stage/error are empty and code/HTTP
+are zero when cleared. A new actual check or reboot clears them; a locally
+postponed check can retain the previous failure. HTTP 200 is response context and
+can accompany a later image/read/flash error. The webpage labels these as
+**Last update error** and shows unavailable when older firmware omits the fields.
+No MQTT check/update trigger or persistent failure history is added.
+
+Version 1.0.8 adds `firmware_failure_internal_free_bytes`,
+`firmware_failure_internal_largest_block_bytes`,
+`firmware_failure_required_free_bytes` and
+`firmware_failure_required_largest_block_bytes` to the same local `/api/status`
+response. The card labels these **Internal memory at last error** and compares
+available free/largest-block bytes with the active requirements before cleanup.
+Current memory can be higher after TLS is released. The values describe the
+active budget even when a nonmemory error caused the failure; they do not by
+themselves identify its cause. They clear to zero with the failure record at a
+new actual check or reboot and survive local postponements. Missing older fields
+show unavailable, not zero; no recorded stage displays **None recorded**.
+
+When the local inverter is unavailable, commands return `STATE_UNAVAILABLE`
+(semantic) or `state_unavailable` (register commands). They are not queued for
+later execution and do not extend the OTA quiet period. USB connection alone is
+not sufficient: a recent successful poll is required. Pending commands are
+discarded with rejection results when the USB session ends. MQTT delivery remains
+best-effort; never blindly retry a write whose result was lost.
+
+[OTA updates](OTA_Updates.md) are an opt-in standalone HTTPS feature, not an
+inverter setter. No new MQTT update command is defined in this version. Existing
+live payloads are unchanged. During the short activation window, new local
+commands are rejected without sending an inverter write (`rejected` for semantic
+commands, `state_not_allowed` for register commands); delivery of a result before
+reboot is best-effort. Never blindly replay a write after a missing confirmation.
+
+## Power timing correction
+
+### Last-known display values
+
+Existing numeric keys are preserved. New top-level `power_quality` contains an entry for each PV/grid/inverter/load/battery power and load percentage: `available`, `stale`, `state` (`valid`, `last_known`, or `unavailable`), and `since_valid_ms`. The latter is time since the result last passed validation, NOT measurement age. A previously valid value stays visible if the next computation is unavailable; it is marked stale and never used as a calculation input. Section entries restored this way have `source: last_known`, `stale: true`, and `since_valid_ms`. Never-successful readings remain null. History clears on detected member restart or gateway restart. When all live messages stop, the app must also use its own receive-time timeout.
+
+This supersedes earlier statements that every timing failure makes summary values null: only never-valid values remain null; held values require checking `power_quality`. Existing source/basis fields describe current computations and may be absent/unavailable during holdover. Grid interpretation remains provisional R320, even when its data passes timing validation.
+
+Priority polling attempts four-register reads for adjacent EPS apparent/active pairs (R332, R336, R340) and battery discharge/charge (R349). A failed combined read disables batching for that pair for the current adapter session and retries individual pairs. The 850 ms bus gap is unchanged. Support and achieved timing must be verified on hardware.
+
+The scheduler repeats the essential power group (grid/PV electrical readings, PV total, inverter active total, EPS active/apparent phases, battery charge/discharge), interleaves due critical status reads, and grants one rotating background read per pass. This replaces simple full-plan reordering. The bus gap is unchanged; failures or three-phase reads can still exceed calculation age/skew limits and must produce unavailable values. No whole-payload simultaneity guarantee is made. Validate timing on hardware.
+
+`grid_kw` temporarily uses R320-R321 (unsigned 32-bit, high word first, 0.1 W / 1000 = kW), as explicitly approved for validation. Its grid-intake interpretation is UNVERIFIED: the original workbook only says total AC power to user. The grid direction fields have been removed from live telemetry; the grid section source is `unverified_R320_register`, and its `power_factor` is null because PF is not used. R320 is included in priority polling. Missing or timing-invalid reads still yield null; no V*I*PF fallback is used. Topics and keys remain unchanged.
+
+MQTT topics and field names are unchanged. Power calculations require source samples at most 15000 ms old relative to the newest received source timestamp, gateway cache age at most 15000 ms, and at most 5000 ms between contributing samples. Configure these limits in `project_config.hpp`. Essential power requests are grouped, but remain sequential with status reads interleaved; missing/late inputs yield null, not zero. This does not guarantee that all independent summary fields describe one simultaneous snapshot. Transport delay before gateway receipt remains unmeasured.
+
+`grid_kw` temporarily uses R320-R321 (unsigned 32-bit, high word first, 0.1 W / 1000 = kW), as explicitly approved for validation. Its grid-intake interpretation is UNVERIFIED: the original workbook only says total AC power to user. The grid direction fields have been removed from live telemetry; the grid section source is `unverified_R320_register`, and its `power_factor` is null because PF is not used. R320 is included in priority polling. Missing or timing-invalid reads still yield null; no V*I*PF fallback is used. Topics and keys remain unchanged.
+
 This document lists every possible MQTT getter that reads data from the inverter and every permitted MQTT setter that writes a setting or command to the inverter. Each executable catalog row has its own `mosquitto_pub` command. The safety classes remain defined in `AOHAI_Modbus_RTU_V2.14_Register_Classes.md`.
 
 ## Document map
+
+Runtime optimization keeps the live payload and command formats unchanged.
+Health reports add `live_json_failures`, `live_publish_deferrals`,
+`result_queue_drops`, `json_allocation_failures`, `heap_internal_free_bytes`,
+`heap_internal_largest_block_bytes`, and `heap_psram_free_bytes`. Their meanings
+and limitations are in [Production readiness](Production_Readiness.md#health-subscription).
+Version 1.0.6 also adds `usb_rx_dropped_bytes`, `usb_rx_overflow_events`,
+`usb_disconnect_count`, `usb_reconnect_count`, `modbus_crc_errors`,
+`modbus_timeouts`, `modbus_incomplete_responses`, and
+`modbus_rx_overflow_failures`. These are per-boot, saturating uint32 counters
+for the Internet-facing ESP's own USB/Modbus path, not per-slave counters.
+After an attempted inverter write, the cached operating state is invalidated;
+a following guarded command may report state unavailable until a fresh status
+read succeeds. Do not blindly retry a write after a missing result.
+
+Production hardening details and remaining release gates: [Production_Readiness.md](Production_Readiness.md). The Internet-facing gateway also publishes `<prefix>/<device-id>/inverter/<member-id>/health` every 30 seconds (QoS 0, not retained), independent of inverter-read success. Subscribe using `mosquitto_sub -v -t 'inverter/INV-44B176CDC70C/inverter/0/health'`. Its memory, stack, queue and age fields are documented in that guide.
+
+Retained command deliveries and payloads above 2048 bytes are rejected. During MQTT outages telemetry is drained/dropped rather than queued indefinitely. Cached input values become stale after 120 seconds (slow counters: 900 seconds), checked when another input message arrives; a member uptime rollback invalidates its old input cache. Last-known register values remain visible but stale inputs are excluded from calculations. The server must still detect missing messages and uncertain write outcomes. Deduplication remains RAM-only and is not an exactly-once guarantee.
+
+### Live measurement validity and power meanings
+
+- Live uses only grid, inverter and load AC power groups. `load_kw` and `load_apparent_kva` are EPS-terminal active/apparent power; `sections.load` replaces `sections.output`. Duplicate output/local-load/power-to-user summary fields and raw power-register entries are removed from live; named register inquiries remain available.
+- `grid_kw` remains an estimate using voltage, signed current and reported power factor. Its sign is not yet verified as import/export for every inverter model.
+- Select rated output power on the webpage: 3, 4, 5, 6, 8, 12, 15 or 20 kW. Local load percentage uses the saved rating, or the requested 12 kW default for an unset legacy rating. `rated_power_kw` and `rating_source` expose the effective choice. This is a configured assumption, not automatic nameplate detection. Remote-member rating forwarding is still pending. This setting never writes to the inverter.
+- `bms_configured` replaces the old configuration meaning of `bms_connected`; `bms_connected` is now null (unknown), not inferred from all-zero BMS registers. `battery_installed` and `generator_installed` remain configuration choices.
+- Raw register entries include `age_ms` measured since gateway cache receipt and `stale`. Display stale values as last-known, not live. Samples are sequential, not simultaneous, and transport delay is not included. `core_status_fresh` covers only the status block. `power_summary.freshness_limit_ms` describes the cache-age ceiling and `sampling` is `sequential_cached_readings`. Expiry of a previously received primary power register produces null rather than silently selecting a fallback source. On startup a source can still change as primary registers are first discovered.
+- Battery subtraction requires both charge and discharge readings. Calculated PV total requires all configured PV inputs. Unknown power is null, not a fabricated zero.
 
 1. MQTT topic tree, subscriptions, retention and polling timing.
 2. Terminus/Linux and Windows CLI quick-start.
@@ -45,6 +186,131 @@ Blinking defaults to 500 ms on / 500 ms off. Priority follows the table from Blu
 
 For inverter-attached ESPs, freshness means telemetry from their own inverter. For a separate Internet Gateway, it means telemetry arriving from any downstream inverter. ESP-NOW members do not need Wi-Fi/MQTT themselves. Green is not a guarantee that every parallel member is online, that every register is valid, or that the broker acknowledged the last live message. Cyan on an ESP-NOW member reflects discovery state, not a radio acknowledgement on every packet. These colours diagnose the ESP gateway, not inverter warning/fault codes. The LED does not issue inverter writes or introduce an MQTT LED setter.
 
+## Individual feature-flag controls
+
+Each control changes only its flag in `flcdEn`, preserving all other bits through an internal read-modify-write and full read-back. These semantic operations require a fresh standby/stopped inverter state, unlike the generic whole-field `hot_edit_guarded` setter. Send numeric `1` to enable or `0` to disable; the semantic API currently expects numbers, not JSON booleans. Bits 8 through 15 remain untouched. Feature names come from the map; support and behaviour depend on the inverter model. In particular, split-phase, generator and grid-feedback options must match the installation.
+
+Start this confirmation subscription in another terminal before publishing:
+
+```bash
+mosquitto_sub -v -t 'inverter/INV-44B176CDC70C/inverter/0/result'
+```
+
+Match `command_id` in the result. These semantic replies use uppercase `outcome`: `CONFIRMED` means read-back matched; `STATE_NOT_ALLOWED`, `STATE_UNAVAILABLE`, `COMMUNICATION_ERROR`, or `ADJUSTED` are not confirmed success. These operations currently do not refresh the setting snapshot automatically. To explicitly read the combined current flags, use the existing configuration getter for `flcdEn`. Update all ESP nodes that execute these new operations; older firmware will not recognize the added operations.
+
+### ECOMode_En
+
+Enable:
+
+```bash
+mosquitto_pub -q 1 -t 'inverter/INV-44B176CDC70C/inverter/0/command' -m "{\"command_id\":\"$(date +%s%N)\",\"operation\":\"set_eco_mode_enabled\",\"value\":1}"
+```
+
+Disable:
+
+```bash
+mosquitto_pub -q 1 -t 'inverter/INV-44B176CDC70C/inverter/0/command' -m "{\"command_id\":\"$(date +%s%N)\",\"operation\":\"set_eco_mode_enabled\",\"value\":0}"
+```
+
+### OverLoad_RestartEn
+
+Enable:
+
+```bash
+mosquitto_pub -q 1 -t 'inverter/INV-44B176CDC70C/inverter/0/command' -m "{\"command_id\":\"$(date +%s%N)\",\"operation\":\"set_overload_restart_enabled\",\"value\":1}"
+```
+
+Disable:
+
+```bash
+mosquitto_pub -q 1 -t 'inverter/INV-44B176CDC70C/inverter/0/command' -m "{\"command_id\":\"$(date +%s%N)\",\"operation\":\"set_overload_restart_enabled\",\"value\":0}"
+```
+
+### OverTemp_RestartEn
+
+Enable:
+
+```bash
+mosquitto_pub -q 1 -t 'inverter/INV-44B176CDC70C/inverter/0/command' -m "{\"command_id\":\"$(date +%s%N)\",\"operation\":\"set_overtemperature_restart_enabled\",\"value\":1}"
+```
+
+Disable:
+
+```bash
+mosquitto_pub -q 1 -t 'inverter/INV-44B176CDC70C/inverter/0/command' -m "{\"command_id\":\"$(date +%s%N)\",\"operation\":\"set_overtemperature_restart_enabled\",\"value\":0}"
+```
+
+### InputChange_RemEn
+
+Enable:
+
+```bash
+mosquitto_pub -q 1 -t 'inverter/INV-44B176CDC70C/inverter/0/command' -m "{\"command_id\":\"$(date +%s%N)\",\"operation\":\"set_input_change_reminder_enabled\",\"value\":1}"
+```
+
+Disable:
+
+```bash
+mosquitto_pub -q 1 -t 'inverter/INV-44B176CDC70C/inverter/0/command' -m "{\"command_id\":\"$(date +%s%N)\",\"operation\":\"set_input_change_reminder_enabled\",\"value\":0}"
+```
+
+### OPSplit_PhaseEn
+
+Enable:
+
+```bash
+mosquitto_pub -q 1 -t 'inverter/INV-44B176CDC70C/inverter/0/command' -m "{\"command_id\":\"$(date +%s%N)\",\"operation\":\"set_output_split_phase_enabled\",\"value\":1}"
+```
+
+Disable:
+
+```bash
+mosquitto_pub -q 1 -t 'inverter/INV-44B176CDC70C/inverter/0/command' -m "{\"command_id\":\"$(date +%s%N)\",\"operation\":\"set_output_split_phase_enabled\",\"value\":0}"
+```
+
+### Generator_AutoIPEn
+
+Enable:
+
+```bash
+mosquitto_pub -q 1 -t 'inverter/INV-44B176CDC70C/inverter/0/command' -m "{\"command_id\":\"$(date +%s%N)\",\"operation\":\"set_generator_auto_input_enabled\",\"value\":1}"
+```
+
+Disable:
+
+```bash
+mosquitto_pub -q 1 -t 'inverter/INV-44B176CDC70C/inverter/0/command' -m "{\"command_id\":\"$(date +%s%N)\",\"operation\":\"set_generator_auto_input_enabled\",\"value\":0}"
+```
+
+### DualChannel_LoadEn
+
+Enable:
+
+```bash
+mosquitto_pub -q 1 -t 'inverter/INV-44B176CDC70C/inverter/0/command' -m "{\"command_id\":\"$(date +%s%N)\",\"operation\":\"set_dual_channel_load_enabled\",\"value\":1}"
+```
+
+Disable:
+
+```bash
+mosquitto_pub -q 1 -t 'inverter/INV-44B176CDC70C/inverter/0/command' -m "{\"command_id\":\"$(date +%s%N)\",\"operation\":\"set_dual_channel_load_enabled\",\"value\":0}"
+```
+
+### ubridFeedBackEn
+
+Enable:
+
+```bash
+mosquitto_pub -q 1 -t 'inverter/INV-44B176CDC70C/inverter/0/command' -m "{\"command_id\":\"$(date +%s%N)\",\"operation\":\"set_grid_feedback_enabled\",\"value\":1}"
+```
+
+Disable:
+
+```bash
+mosquitto_pub -q 1 -t 'inverter/INV-44B176CDC70C/inverter/0/command' -m "{\"command_id\":\"$(date +%s%N)\",\"operation\":\"set_grid_feedback_enabled\",\"value\":0}"
+```
+
+
 ## Public device identity
 
 Live delivery note: any successful input-register update can trigger a live message, limited to the configured fast interval. A failed core-status block no longer suppresses other successful measurements. `core_status_fresh` and `core_status_age_ms` report the age of the cached core status; they do not certify freshness of every measurement. If all inverter reads stop succeeding, no new live measurement is generated.
@@ -69,6 +335,54 @@ MQTT -> gateway/coordinator -> optional UART -> optional ESP-NOW
      -> result returns to MQTT over the reverse route
 ```
 
+The separate gateway/coordinator UART queue rejects commands while offline and
+rechecks an observed-link generation and five-second local queue age before
+forwarding. Queued commands invalidated by an observed disconnect, local expiry,
+or generation change are not replayed into a later link session. The transfer
+has a bounded deadline; partial transmission or failed completion is uncertain.
+Neither case automatically retries a write.
+
+This does not add a remote execution deadline, peer boot/session nonce, durable
+result delivery or exactly-once execution. A short unobserved peer restart may
+not invalidate the local generation. Commands already forwarded cannot be recalled;
+normal results still arrive asynchronously. Treat a missing result as unknown.
+
+### Routing failure result fields
+
+`routing_status` is optional and appears for routing failures only. Existing
+successful result fields are unchanged; do not require this field on every result.
+
+| `routing_status` | Semantic operation result | Named register getter/setter result |
+|---|---|---|
+| `not_sent` | `outcome: "REJECTED"`, `write_sent: false` | `outcome: "state_not_allowed"`, `write_guard: null` |
+| `uncertain` | `outcome: "UNKNOWN"`, `write_sent: null` | `outcome: "communication_error"`, `write_guard: null` |
+
+`write_sent: null` means the gateway cannot establish whether the remote inverter
+wrote; it must not be interpreted as false. The register-result null guard means
+the gateway did not obtain a remote guard evaluation; it does not grant permission.
+These routing failures do not fabricate `modbus_status` or `modbus_exception`.
+
+Example semantic result for uncertain forwarding:
+
+```json
+{
+  "member_id": 1,
+  "command_id": "920010",
+  "operation": "set_buzzer_enabled",
+  "outcome": "UNKNOWN",
+  "routing_status": "uncertain",
+  "write_sent": null
+}
+```
+
+For local USB admission, client status `receive_busy` is numeric 12. It means
+the RX drain overlapped incoming data and no write was transmitted. Semantic
+results set `write_sent: false`; catalog results can include `modbus_status: 12`.
+This is a client diagnostic, not an inverter exception. A receive overflow after
+transmission is different: the write may have happened, but its confirmation is
+rejected. Never automatically repeat a setter to compensate for either a missing
+confirmation or an uncertain result; first obtain current state and reassess.
+
 Command topic:
 
 ```text
@@ -83,6 +397,7 @@ Published topics:
 <prefix>/<device-id>/inverter/<member-id>/result
 <prefix>/<device-id>/inverter/<member-id>/snapshot/<domain>/<name>/<description>
 <prefix>/<device-id>/inverter/<member-id>/availability
+<prefix>/<device-id>/inverter/<member-id>/health
 ```
 
 `member-id` is `0` for the standalone/coordinator inverter and `1...N` for parallel members.
@@ -95,6 +410,7 @@ In a parallel installation, the Internet-facing ESP publishes every inverter und
 | `result` | Correlated response to a named getter or setter | QoS 1, not retained |
 | `snapshot/#` | Serial/model/firmware and current configuration | QoS 1, retained per named item; refreshed after a confirmed setter |
 | `availability` | Device `online`/`offline` state | QoS 1, retained |
+| `health` | Internet-facing ESP memory, queue, timing and local USB/Modbus diagnostics | QoS 0, not retained; every 30 seconds while connected |
 
 `mosquitto_pub` sends a getter or setter. `mosquitto_sub` receives the asynchronous streams and the correlated result. A retained snapshot or alert-state message is delivered immediately when a new subscriber connects.
 
@@ -143,7 +459,6 @@ Signed battery power is published as `power_summary.battery_kw`: positive means 
 | `grid_kw` | kW | Signed grid active-power estimate from complete phase voltage/current readings and valid grid power factor; otherwise null |
 | `grid_apparent_kva` | kVA | Sum of phase voltage times current magnitude; null if any required phase is missing |
 | `inverter_kw` | kW | AC active-power total (ActPacAll), otherwise the sum of required ActPac phase readings; null if unavailable |
-| `system_generation_kw` | kW | Separate PSystem generation reading when available; not substituted for AC active power |
 | `inverter_apparent_kva` | kVA | Sum of inverter phase voltage times current magnitude, published independently of active power; otherwise null |
 | `output_kw` | kW | Sum of EPS phase active-power readings; otherwise null |
 | `output_apparent_kva` | kVA | Sum of EPS phase apparent-power readings, otherwise calculated from output voltage/current |
@@ -350,7 +665,8 @@ Example live message:
   "connected_pv_inputs": 2,
   "topology": "standalone_single_phase",
   "battery_installed": true,
-  "bms_connected": true,
+  "bms_configured": true,
+  "bms_connected": null,
   "generator_installed": false,
   "phase": "none",
   "operating_status": {
@@ -365,7 +681,6 @@ Example live message:
     "pv_kw": 3.3671,
     "pv_source": "register",
     "grid_kw": 1.1142,
-    "grid_direction": "positive follows inverter grid-current sign",
     "grid_phase_count": 1,
     "inverter_kw": 3.52,
     "inverter_source": "register",
@@ -501,10 +816,10 @@ Getter lifecycle:
 ```text
 server publishes get on command
 -> selected ESP reads the inverter
--> ESP publishes exactly one result with the same command_id
+-> ESP attempts to publish a result with the same command_id
 ```
 
-A getter response is not retained. Subscribe to `result` before publishing the getter. Use `snapshot/#` when the server needs retained identity/configuration immediately after connecting; use a getter when it needs a fresh on-demand read.
+A getter response is not retained and delivery is best-effort, not exactly-once. Subscribe to `result` before publishing the getter. Use `snapshot/#` when the server needs retained identity/configuration immediately after connecting; use a getter when it needs a fresh on-demand read.
 
 ## Setter command: write a setting or command to the inverter
 
@@ -586,7 +901,10 @@ Do not use sample values as an installation prescription. Parallel, battery/BMS,
 
 | Outcome | Meaning |
 |---|---|
-| `confirmed` | Read completed, write was already at the requested value, or write read-back matched. |
+| `confirmed` | Read completed, a persistent setting already matched, or setting read-back matched. Legacy OnOffSet register-only confirmation does not verify operating state. |
+| `completed` | OnOffSet write was accepted and actual operating state was verified; `operating_state_confirmed:true`. |
+| `transition_pending` | OnOffSet write was accepted, but its requested operating state is not yet verified. |
+| `readback_mismatch` | An actual setting readback differs from the requested value. |
 | `sent_unverifiable` | A write-only service action received a valid Modbus response but cannot be read back. Never retry automatically. |
 | `not_documented` | The requested name is absent from the catalog. |
 | `not_readable` | The requested name identifies a write-only command. |
@@ -2007,7 +2325,7 @@ MEMBER=0
 BASE="inverter/$DEVICE/inverter/$MEMBER"
 ```
 
-Start the confirmation subscription in terminal 1 BEFORE publishing from terminal 2. Keep it running for subsequent setters. The subscription only listens; it never writes to the inverter. Match the returned `command_id` with the printed request ID. `confirmed:true` in the request is your authorization, not a success result. Only a returned `outcome:"confirmed"` indicates successful read-back. A write-only action can return `sent_unverifiable`; verify its actual effect separately. Errors such as `state_not_allowed`, `communication_error` or an interlock requirement are not success. Malformed or duplicate requests may only be logged by firmware and produce no result.
+Start the confirmation subscription in terminal 1 BEFORE publishing from terminal 2. Match the returned `command_id` with the request. `confirmed:true` authorizes the request. Ordinary settings require `outcome:"confirmed"` and a matching readback. OnOffSet requires `outcome:"completed"` with `operating_state_confirmed:true`; its H0 command latch alone does not prove operating state. `transition_pending` means the write was accepted but the requested state is not verified. `readback_mismatch` means the observed setting differs. `sent_unverifiable` remains an action without verified readback. Missing or uncertain results must not trigger an automatic write retry. Malformed or duplicate requests may only be logged by firmware and produce no result.
 
 Illustrative confirmed result (additional fields may be present):
 

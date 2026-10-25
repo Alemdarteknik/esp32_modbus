@@ -21,6 +21,9 @@ const char *register_command_outcome_name(RegisterCommandOutcome outcome)
     case RegisterCommandOutcome::communication_error: return "communication_error";
     case RegisterCommandOutcome::confirmed: return "confirmed";
     case RegisterCommandOutcome::sent_unverifiable: return "sent_unverifiable";
+    case RegisterCommandOutcome::completed: return "completed";
+    case RegisterCommandOutcome::transition_pending: return "transition_pending";
+    case RegisterCommandOutcome::readback_mismatch: return "readback_mismatch";
     }
     return "unknown";
 }

@@ -30,6 +30,7 @@ struct HeapSample {
 struct State {
     std::vector<std::string> events;
     std::vector<TickType_t> delays;
+    std::vector<unsigned> allocation_caps;
     std::vector<unsigned char> body, flash_image;
     esp_app_desc_t running{};
     esp_partition_t partition{3U * 1024U * 1024U};
@@ -51,6 +52,7 @@ struct State {
     esp_err_t open_result = ESP_OK, begin_result = ESP_OK, end_result = ESP_OK;
     esp_err_t nvs_set_result = ESP_OK, commit_result = ESP_OK, boot_result = ESP_OK;
     bool fail_client_init = false, fail_buffer_alloc = false, missing_partition = false;
+    bool fail_psram_alloc = false;
     bool guard_available = true, guard_held = false, client_live = false;
     bool buffer_live = false, store_open = false, ota_active = false;
     bool healthy = true, quiesce_result = true, boot_selected = false, committed = false;
@@ -61,6 +63,7 @@ struct State {
     std::string remembered_version, written_version;
     std::function<void()> before_nvs_open;
     std::function<void()> after_heap_sample;
+    std::function<void(TickType_t)> before_delay;
 };
 State state;
 HeapSample &heap_at(HeapPhase phase)
@@ -135,14 +138,14 @@ bool quiesce(void *)
     return state.quiesce_result;
 }
 void resume(void *) { event("resume"); ++state.resumes; }
-void assert_clean()
+void assert_clean(bool single_check = true)
 {
     require(!state.client_live && !state.buffer_live && !state.store_open && !state.ota_active,
             "HTTP/buffer/NVS/OTA resources leaked");
     require(!state.guard_held && state.guard_acquires == state.guard_releases, "memory gate leaked");
     require(state.allocations == state.frees, "buffer allocations unbalanced");
     require(state.nvs_opens == state.nvs_closes, "NVS handles unbalanced");
-    require(state.opens <= 1, "mutable endpoint requested more than once in a check");
+    require(!single_check || state.opens <= 1, "mutable endpoint requested more than once in a check");
 }
 std::size_t index_of(const char *name)
 {
@@ -168,9 +171,11 @@ std::size_t heap_caps_get_largest_free_block(unsigned caps)
     if (fake::state.after_heap_sample) fake::state.after_heap_sample();
     return largest;
 }
-void *heap_caps_malloc(std::size_t size, unsigned)
+void *heap_caps_malloc(std::size_t size, unsigned caps)
 {
+    fake::state.allocation_caps.push_back(caps);
     if (fake::state.fail_buffer_alloc) return nullptr;
+    if (fake::state.fail_psram_alloc && (caps & MALLOC_CAP_SPIRAM)) return nullptr;
     fake::require(!fake::state.buffer_live, "more than one download buffer");
     auto *p = std::malloc(size);
     fake::require(p != nullptr, "host malloc failed");
@@ -193,6 +198,8 @@ esp_http_client_handle_t esp_http_client_init(const esp_http_client_config_t *co
     fake::require(config->disable_auto_redirect, "mutable download must not follow redirects");
     fake::require(config->crt_bundle_attach != nullptr, "HTTPS trust configuration missing");
     fake::require(config->timeout_ms > 0, "HTTP timeout missing");
+    fake::require(config->buffer_size == 1024 && config->buffer_size_tx == 512,
+                  "OTA HTTP buffers regressed to excess internal allocations");
     fake::require(std::string(config->url).rfind("https://", 0) == 0, "non-HTTPS endpoint");
     fake::event("http_init");
     if (fake::state.fail_client_init) return nullptr;
@@ -344,6 +351,7 @@ void vTaskDelay(TickType_t ticks)
 {
     auto &s = fake::state;
     s.delays.push_back(ticks);
+    if (s.before_delay) s.before_delay(ticks);
     if (s.stop_delay_number && s.delays.size() == s.stop_delay_number) throw fake::StopWorker{};
     s.time_us += static_cast<std::int64_t>(ticks) * 1000;
 }
@@ -510,9 +518,13 @@ void schedule_test(const char *name, const std::function<void()> &setup, std::ui
     catch (const fake::StopWorker &) {}
     fake::assert_clean();
     fake::require(fake::state.delays.size() == 2, "scheduler did not reach retry delay");
-    fake::require(fake::state.delays[0] == 60000 + fake::state.entropy % ota::ota_jitter_ms,
+    fake::require(fake::state.delays[0] == ota::ota_initial_check_min_ms +
+                  fake::state.entropy % ota::ota_initial_check_jitter_ms,
                   "wrong randomized startup delay");
     fake::require(fake::state.delays[1] == expected_retry, "wrong retry interval");
+    fake::require(ota::ota_status().next_check_ms ==
+                  fake::state.time_us / 1000 + expected_retry,
+                  "status does not expose the scheduled retry deadline");
     ++passed;
     std::cout << "PASS " << name << '\n';
 }
@@ -522,8 +534,9 @@ void memory_policy_tests()
         ota::ota_minimum_free_heap, ota::ota_minimum_largest_block};
     const fake::HeapSample streaming{
         ota::ota_stream_minimum_free_heap, ota::ota_stream_minimum_largest_block};
-    // Pin the approved budgets: lowering/removing a guard must fail this suite.
-    fake::require(connection.free_bytes == 64000 && connection.largest_block == 32768 &&
+    // Pin reserves while permitting a TLS record (16 KiB plus overhead) without
+    // the previous unrelated 32 KiB contiguous-block requirement.
+    fake::require(connection.free_bytes == 64000 && connection.largest_block == 24576 &&
                   streaming.free_bytes == 32768 && streaming.largest_block == 8192,
                   "OTA phase budgets differ from the reviewed memory policy");
     run("handshake admission accepts both exact boundaries", [&] {
@@ -531,6 +544,12 @@ void memory_policy_tests()
         fake::incoming_version("1.0.3");
     }, {"up_to_date"});
     fake::require(fake::state.opens == 1, "exact handshake boundary did not start a check");
+    run("reported 89.2 KiB free and 31 KiB largest block permits actual check", [&] {
+        fake::heap_at(fake::HeapPhase::before_open) = {91340, 31744};
+        fake::incoming_version("1.0.3");
+    }, {"up_to_date"});
+    fake::require(fake::state.opens == 1 && ota::status.last_check_ms != 0,
+                  "reported device memory remains stuck before the first GET");
     run("one byte below handshake free reserve defers without TLS", [&] {
         fake::heap_at(fake::HeapPhase::before_open) =
             {connection.free_bytes - 1, connection.largest_block};
@@ -639,6 +658,76 @@ void memory_policy_tests()
     }, {"check_failed", 1, 0, 1});
     expect_failure("image_verification", ESP_ERR_INVALID_CRC);
     expect_failure_memory(stream_failed, streaming);
+}
+void retry_scheduler_tests()
+{
+    schedule_test("network failure retries after 5-10 minutes", [] {
+        fake::state.open_result = ESP_FAIL;
+    }, 300007);
+    schedule_test("HTTP 429 retries after 5-10 minutes", [] {
+        fake::state.http_status = 429;
+    }, 300007);
+    schedule_test("HTTP 503 retries after 5-10 minutes", [] {
+        fake::state.http_status = 503;
+    }, 300007);
+    schedule_test("header transport failure retries after 5-10 minutes", [] {
+        fake::state.content_length = -1;
+    }, 300007);
+    schedule_test("memory allocation failure retries after 5-10 minutes", [] {
+        fake::state.fail_client_init = true;
+    }, 300007);
+    schedule_test("permanent HTTP 404 retains fleet interval", [] {
+        fake::state.http_status = 404;
+    }, ota::ota_check_interval_ms + 7);
+    schedule_test("permanent corrupt image retains fleet interval", [] {
+        fake::set_incoming([](auto &h, auto &) { h.hash_appended = 0; });
+    }, ota::ota_check_interval_ms + 7);
+
+    reset_case();
+    fake::state.open_result = ESP_FAIL;
+    fake::state.stop_delay_number = 8;
+    fake::state.before_delay = [](auto ticks) {
+        fake::require(ota::ota_status().next_check_ms ==
+                      fake::state.time_us / 1000 + ticks,
+                      "scheduled deadline missing while the worker sleeps");
+    };
+    fake::state.before_nvs_open = [] {
+        fake::require(ota::ota_status().next_check_ms == 0,
+                      "old retry deadline survived into actual check");
+    };
+    try { ota::worker(nullptr); }
+    catch (const fake::StopWorker &) {}
+    fake::assert_clean(false);
+    const std::array<TickType_t, 7> retries{
+        300007, 600007, 1200007, 1800007, 1800007, 1800007, 1800007};
+    fake::require(fake::state.opens == retries.size(), "transient retries did not run automatically");
+    for (std::size_t i = 0; i < retries.size(); ++i)
+        fake::require(fake::state.delays[i + 1] == retries[i],
+                      "transient backoff did not grow and saturate below one hour");
+    ++passed;
+    std::cout << "PASS repeated transient failures retry with bounded backoff and accurate deadlines\n";
+
+    reset_case();
+    fake::state.open_result = ESP_FAIL;
+    fake::state.stop_delay_number = 4;
+    fake::state.before_delay = [](auto) {
+        if (fake::state.delays.size() == 2) fake::state.guard_available = false;
+        if (fake::state.delays.size() == 3) {
+            fake::state.guard_available = true;
+            fake::state.open_result = ESP_OK;
+            fake::incoming_version("1.0.3");
+        }
+    };
+    try { ota::worker(nullptr); }
+    catch (const fake::StopWorker &) {}
+    fake::assert_clean(false);
+    fake::require(fake::state.opens == 2 && fake::state.delays[1] == 300007 &&
+                  fake::state.delays[2] == 300007 &&
+                  fake::state.delays[3] == ota::ota_check_interval_ms + 7 &&
+                  std::string(ota::status.state) == "up_to_date",
+                  "local blocker recovery did not restore normal successful check scheduling");
+    ++passed;
+    std::cout << "PASS failed check followed by local deferral recovers automatically\n";
 }
 void memory_diagnostic_lifecycle_tests()
 {
@@ -866,7 +955,15 @@ int main()
         run("boot selection failure resumes safely", [] { fake::state.boot_result = ESP_FAIL; }, {"check_failed", 1, 0, 1, 1, 1, 1});
         expect_failure("boot_selection", ESP_FAIL);
         run("newer image activates only after validation and cleanup", [] {}, {"restarting", 1, 0, 1, 1, 0, 1, true});
+        fake::require(fake::state.allocation_caps == std::vector<unsigned>{MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT},
+                      "download scratch buffer did not prefer PSRAM");
         fake::require(fake::state.http_was_live_at_quiesce, "current TLS-lifetime characterization changed: review expectations");
+        run("absent PSRAM falls back to the normal allocator", [] {
+            fake::state.fail_psram_alloc = true;
+        }, {"restarting", 1, 0, 1, 1, 0, 1, true});
+        fake::require(fake::state.allocation_caps == std::vector<unsigned>{
+                      MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT, MALLOC_CAP_8BIT},
+                      "missing PSRAM did not retain the internal-memory fallback");
         run("fragmented HTTP reads reconstruct exact image", [] { fake::state.read_chunk = 61; }, {"restarting", 1, 0, 1, 1, 0, 1, true});
         run("chunked unknown-length image completes safely", [] {
             fake::chunked_response();
@@ -951,7 +1048,7 @@ int main()
         diagnostic_lifecycle_tests();
         schedule_test("local deferral scheduler uses 5-10 minute window", [] { fake::state.block_from = 1; }, 300007);
         schedule_test("successful check scheduler uses configured fleet interval", [] { fake::incoming_version("1.0.3"); }, ota::ota_check_interval_ms + 7);
-        schedule_test("current network failure scheduler also uses fleet interval", [] { fake::state.open_result = ESP_FAIL; }, ota::ota_check_interval_ms + 7);
+        retry_scheduler_tests();
         reset_case();
         fake::state.task_create_ok = false;
         ota::start_ota_update({nullptr, fake::healthy, fake::blocker, fake::quiesce, fake::resume});
@@ -960,7 +1057,7 @@ int main()
         std::cout << "PASS task creation failure reported\n";
         std::cout << "PASS " << passed << " offline actual-worker tests\n";
         std::cout << "LIMITATIONS: fake image verification result, no real TLS/flash/power-cut/SMP/watchdog coverage.\n";
-        std::cout << "CHARACTERIZED: HTTPS resources remain alive during quiesce; failed quiesce is not retained for later activation; network failures currently use normal fleet retry.\n";
+        std::cout << "CHARACTERIZED: HTTPS resources remain alive during quiesce; failed quiesce is not retained for later activation.\n";
         return 0;
     } catch (const std::exception &error) {
         std::cerr << "FAIL " << error.what() << '\n';

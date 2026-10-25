@@ -1,7 +1,6 @@
 """Session-owned MQTT transport. No UI imports; no automatic write retries."""
 import copy
 import json
-import math
 import re
 import threading
 import time
@@ -9,8 +8,12 @@ from datetime import datetime
 
 import paho.mqtt.client as mqtt
 from settings_catalog import INTERLOCKS, load_catalog
+from mqtt_connection import BrokerConfig, MQTT_USER_AGENT, websocket_failure
 from native_protocols import PROTOCOL_IDS, NativeTelemetryCollector, classify_command
-from native_live import normalize_native_live
+from native_live import normalize_native_live, native_measurement_received_at
+from settings_results import named_write_result, normalize_setting_value
+from settings_polling import (SettingsReadPolicy, settings_index, snapshot_setting,
+                              valid_setting_read)
 
 TIME_FIELDS = ('Year', 'Month', 'Day', 'Hour', 'Minute', 'Second')
 
@@ -27,21 +30,26 @@ def display_value(item, value):
 class MonitorSession:
     def __init__(self):
         self.catalog = load_catalog()
+        self._settings_index = settings_index(self.catalog)
         self.lock = threading.RLock()
         self.stop = threading.Event()
         self.client = None
         self.active = False
         self.ready = False
         self.status = 'Disconnected'
+        self.connection_error = False
+        self.broker = BrokerConfig()
         self.notice = ''
         self.live = {}
         self.health = {}
         self.cache = {}
         self.last_read = {}
+        self.read_policy = SettingsReadPolicy(self.last_read)
         self.value_at = {}
         self.read_status = {}
         self.focus_key = None
         self.focus_domain = None
+        self._focus_refresh = False
         self.priority_turn = True
         self.unreadable = set()
         self.pending = None
@@ -55,9 +63,12 @@ class MonitorSession:
         self.member_id = 0
         self.protocol_mismatch = ''
         self.native_telemetry = NativeTelemetryCollector()
+        self.native_connected_pv_inputs = None
+        self.native_raw_live = {}
         self.native_pending = None
         self.native_result = {}
         self.native_write_blocked = False
+        self.aohai_write_blocked = False
 
     def select_protocol(self, protocol):
         with self.lock:
@@ -68,15 +79,18 @@ class MonitorSession:
             self.protocol = protocol
             self.protocol_mismatch = ''
             self.native_telemetry.reset()
+            self.native_raw_live = {}
+            self.native_connected_pv_inputs = None
             self.native_pending = None
             self.native_result = {}
             self.native_write_blocked = False
+            self.aohai_write_blocked = False
             self.live.clear()
             self.live_at = None
             self.cache.clear()
             self.value_at.clear()
             self.read_status.clear()
-            self.last_read.clear()
+            self.read_policy.reset()
             self.unreadable.clear()
             self.time_writing = False
             self.pending = None
@@ -91,30 +105,36 @@ class MonitorSession:
                 return
             if type(member_id) is not int or not 0 <= member_id <= 9:
                 raise ValueError('Logical member must be an integer from 0 to 9.')
+            self.broker = BrokerConfig.from_env()
             if protocol is not None:
                 self.select_protocol(protocol)
             self.member_id = member_id
             self.protocol_mismatch = ''
             self.native_telemetry.reset()
+            self.native_raw_live = {}
+            self.native_connected_pv_inputs = None
             self.native_pending = None
             self.native_result = {}
+            self.read_policy.reset()
             self.base = f'inverter/INV-{device_id}/inverter/{member_id}'
             self.stop.clear()
             self.heartbeat = time.monotonic()
-            self.client = mqtt.Client(client_id='', transport='websockets', protocol=mqtt.MQTTv311)
-            self.client.ws_set_options(path='/mqtt')
+            self.client = mqtt.Client(client_id='', transport=self.broker.transport, protocol=mqtt.MQTTv311)
+            if self.broker.transport == 'websockets':
+                self.client.ws_set_options(path=self.broker.path, headers={'User-Agent': MQTT_USER_AGENT})
             self.client.tls_set()
             self.client.on_connect = self.on_connect
             self.client.on_subscribe = self.on_subscribe
             self.client.on_message = self.on_message
             self.client.on_disconnect = self.on_disconnect
             self.active = True
+            self.connection_error = False
             self.status = 'Connecting…'
             threading.Thread(target=self.run, daemon=True).start()
 
     def run(self):
         try:
-            self.client.connect('mqtt-esp.alemdarteknik.com', 443, keepalive=30)
+            self.client.connect(self.broker.host, self.broker.port, keepalive=30)
             while not self.stop.is_set():
                 if self.client.loop(timeout=0.2) != mqtt.MQTT_ERR_SUCCESS:
                     raise RuntimeError('MQTT connection lost. Reconnect manually; writes are not retried.')
@@ -123,14 +143,20 @@ class MonitorSession:
                         raise RuntimeError('Browser inactive for 90 seconds; connection closed.')
                     self.tick()
         except Exception as error:
+            detail = (websocket_failure(self.broker, error)
+                      if isinstance(error, mqtt.WebsocketConnectionError)
+                      else f'MQTT connection failed at {self.broker.endpoint}: {error}')
             with self.lock:
-                self.status = str(error)
+                self.status = detail
+                self.connection_error = True
         finally:
-            self.client.disconnect()
+            try:
+                self.client.disconnect()
+            except Exception:
+                pass  # Connection state and pending commands must still be cleared.
             with self.lock:
                 self.active = self.ready = False
-                if self.jobs or (self.pending and self.pending['operation'] == 'set'):
-                    self.notice = 'Write unconfirmed; some time fields may have changed. No automatic retry.'
+                self._abandon_named('Connection closed before a matching device result.')
                 self._abandon_native('Connection closed before a matching device result.')
                 self.pending = None
                 self.jobs.clear()
@@ -141,16 +167,33 @@ class MonitorSession:
                 self.read_status.clear()
                 self.live_at = self.health_at = None
                 self.native_telemetry.reset(preserve_counters=True)
+                self.native_raw_live = {}
+                self.native_connected_pv_inputs = None
 
     def close(self):
         with self.lock:
             self.stop.set()
             self.ready = False
             self.status = 'Disconnected'
+            self.connection_error = False
+            self._abandon_named('Disconnected before a matching device result.')
             self.jobs.clear()
             self._abandon_native('Disconnected before a matching device result.')
             self.native_telemetry.reset(preserve_counters=True)
+            self.native_raw_live = {}
+            self.native_connected_pv_inputs = None
             self.live_at = None
+
+    def _abandon_named(self, detail):
+        if self.pending and self.pending['operation'] == 'set':
+            self.aohai_write_blocked = True
+            self.notice = 'Setting outcome uncertain. ' + detail + ' Check the inverter before reconnecting; no retry.'
+        elif self.time_writing:
+            self.aohai_write_blocked = True
+            self.notice = 'Time change interrupted; some fields may have changed. Check inverter time before reconnecting; no retry.'
+        self.pending = None
+        self.jobs.clear()
+        self.time_writing = False
 
     def _abandon_native(self, detail):
         if self.native_pending and self.native_pending['write']:
@@ -166,18 +209,24 @@ class MonitorSession:
         with self.lock:
             if rc != 0:
                 self.status = f'MQTT connection rejected ({rc})'
+                self.connection_error = True
                 self.stop.set()
                 return
             self.status = 'Connected'
             self.connected_at = time.monotonic()
+            self.read_policy.reset()
             # Start a new broker subscription epoch. Historical complete or
             # partial observations must not become fresh after reconnection.
             self.native_telemetry.reset(preserve_counters=True)
+            self.native_raw_live = {}
+            self.native_connected_pv_inputs = None
             self.live_at = None
+            suffixes = ('/live', '/health', '/result',
+                        '/snapshot/#' if self.protocol == 'AOHAI_MODBUS_RTU' else '/protocol/#')
             client.subscribe([(self.health_topic if suffix == '/health' else self.base + suffix,
                                0 if suffix == '/health' or (self.protocol == 'AOHAI_MODBUS_RTU'
                                     and suffix in ('/live', '/protocol/#')) else 1)
-                              for suffix in ('/live', '/health', '/result', '/snapshot/#', '/protocol/#')])
+                              for suffix in suffixes])
 
     @property
     def health_topic(self):
@@ -192,8 +241,11 @@ class MonitorSession:
     def on_disconnect(self, client, userdata, rc):
         with self.lock:
             self.ready = False
+            self._abandon_named('Broker disconnected before a matching device result.')
             self._abandon_native('Broker disconnected before a matching device result.')
             self.native_telemetry.reset(preserve_counters=True)
+            self.native_raw_live = {}
+            self.native_connected_pv_inputs = None
             self.live_at = None
 
     def on_message(self, client, userdata, message):
@@ -229,9 +281,11 @@ class MonitorSession:
                 # Every record carries its own sample age and complete fields;
                 # cached publication never refreshes an existing observation.
                 for record in records:
-                    self.native_telemetry.receive(record, now)
-                self.live_at = normalize_native_live(self.native_telemetry.records(),
-                    self.protocol, self.member_id, now)['received_at']
+                    self.native_telemetry.receive_view(record, now)
+                self.native_raw_live = data
+                self._receive_native_pv_inputs(data)
+                self.live_at = native_measurement_received_at(
+                    self.native_telemetry.records_view(), self.protocol, self.member_id)
                 return
             self.live = data
             if not retained:
@@ -258,61 +312,72 @@ class MonitorSession:
             command = data.get('command')
             if suffix != '/protocol' and (not isinstance(command, str) or suffix != '/protocol/' + command):
                 return
-            completed = self.native_telemetry.receive(data, now)
+            completed = self.native_telemetry.receive_view(data, now)
             if completed is not None:
+                self._receive_native_pv_inputs(data)
                 # Mode, identity and settings queries have separate freshness;
                 # they cannot make missing PV/grid/battery sensors look live.
-                self.live_at = normalize_native_live(self.native_telemetry.records(),
-                    self.protocol, self.member_id, now)['received_at']
+                self.live_at = native_measurement_received_at(
+                    self.native_telemetry.records_view(), self.protocol, self.member_id)
             return
         if self.protocol != 'AOHAI_MODBUS_RTU':
             if topic == self.base + '/result' and not retained:
                 self._receive_native_result(data)
             return
         if topic.startswith(self.base + '/snapshot/'):
-            matches = [s for s in self.catalog.values() if s.name == data.get('name')
-                       and s.domain.casefold() == str(data.get('domain', '')).casefold()]
-            if len(matches) > 1:
-                matches = [s for s in matches if s.description == data.get('description')]
-            if len(matches) == 1 and 'value' in data:
-                key = matches[0].key
+            item = snapshot_setting(self._settings_index, data)
+            if item is not None and 'value' in data:
+                key = item.key
+                value = normalize_setting_value(item, data['value'])
+                if not valid_setting_read(item, value):
+                    return
                 # A retained snapshot is a starting value, not a fresh device
                 # read, and must not overwrite a subsequently confirmed read.
-                if not retained or key not in self.value_at:
-                    self.cache[key] = data['value']
+                if not retained or (key not in self.value_at and key not in self.read_policy.fresh_at):
+                    self.cache[key] = value
                     self.read_status[key] = 'Cached snapshot' if retained else 'Snapshot received'
+                    if not retained:
+                        self.read_policy.received(key, now)
             return
         pending = self.pending
         if topic != self.base + '/result' or not pending or retained:
             return
         item = self.catalog[pending['key']]
         if (str(data.get('command_id')) != pending['command_id']
-                or data.get('operation') != pending['operation'] or data.get('name') != item.name):
+                or data.get('operation') != pending['operation'] or data.get('name') != item.name
+                or ('domain' in data and str(data['domain']).casefold() != item.domain.casefold())
+                or ('description' in data and data['description'] != item.description)):
             return
         self.pending = None
         outcome = data.get('outcome', 'invalid result')
-        actual = data.get('value')
-        valid = outcome == 'confirmed' and actual is not None
+        actual = normalize_setting_value(item, data.get('value'))
+        valid = outcome == 'confirmed' and valid_setting_read(item, actual)
         if valid:
             self.cache[item.key] = actual
             self.value_at[item.key] = now
             self.read_status[item.key] = 'Read confirmed'
+            self.read_policy.received(item.key, now)
         elif outcome in ('not_readable', 'not_documented'):
             self.unreadable.add(item.key)
             self.read_status[item.key] = 'Not readable'
         else:
             self.read_status[item.key] = f'Read failed: {outcome}'
+            if pending['operation'] == 'get':
+                self.read_policy.failed(item.key, now)
         if pending['operation'] == 'set':
             expected = pending['value']
-            equal = actual == expected
-            if type(actual) in (int, float) and type(expected) in (int, float):
-                equal = math.isclose(actual, expected, rel_tol=1e-9, abs_tol=1e-9)
-            if not valid or not equal:
+            result = named_write_result(item, expected, data)
+            if result['value_available']:
+                self.cache[item.key] = result['value']
+            if not result['confirmed']:
                 self.jobs.clear()
                 self.time_writing = False
-                self.notice = f'Not confirmed: {outcome}; read-back {actual}, requested {expected}. No retry; time changes may be partial.'
+                self.aohai_write_blocked |= result['uncertain']
+                self.notice = result['message']
+                self.read_status[item.key] = ('Operating state not verified' if item.name == 'OnOffSet' else f'Write not confirmed: {outcome}')
             else:
-                self.notice = f'Confirmed: {item.description} = {display_value(item, actual)}'
+                self.notice = result['message'] or f'Confirmed: {item.description} = {display_value(item, actual)}'
+                self.read_status[item.key] = 'Operating state verified' if item.name == 'OnOffSet' else 'Read confirmed'
                 if self.time_writing and not self.jobs:
                     self.time_writing = False
                     self.notice = 'All six time fields confirmed. Reading inverter time…'
@@ -329,6 +394,8 @@ class MonitorSession:
         if operation == 'get':
             payload['category'] = 'configuration'
         else:
+            if self.aohai_write_blocked:
+                raise ValueError('Earlier setting outcome is uncertain. Check the inverter before reconnecting; reads remain available.')
             payload.update(value=value, confirmed=True)
             if item.guard in INTERLOCKS:
                 payload[INTERLOCKS[item.guard]] = True
@@ -339,9 +406,15 @@ class MonitorSession:
         # inverter result, not MQTT delivery, is the only write confirmation.
         result = self.client.publish(self.base + '/command', encoded, qos=0, retain=False)
         self.last_sent = time.monotonic()
-        self.last_read[key] = self.last_sent
+        if operation == 'get':
+            self.read_policy.attempted(key, self.last_sent)
+            if key == self.focus_key:
+                self._focus_refresh = False
         if result.rc != 0:
+            if operation == 'get':
+                self.read_policy.failed(key, self.last_sent)
             self.jobs.clear()
+            self.time_writing = False
             self.notice = 'Publish failed. No automatic write retry.'
             return
         self.pending = dict(command_id=cid, operation=operation, key=key,
@@ -365,10 +438,13 @@ class MonitorSession:
         if self.pending and now > self.pending['deadline']:
             self.read_status[self.pending['key']] = 'Timed out; awaiting refresh'
             if self.pending['operation'] == 'set':
+                self.aohai_write_blocked = True
                 self.cache.pop(self.pending['key'], None)
                 self.jobs.clear()
                 self.time_writing = False
                 self.notice = 'Write timed out; not confirmed. Time changes may be partial. No retry.'
+            else:
+                self.read_policy.failed(self.pending['key'], now)
             self.pending = None
         if not self.ready or self.protocol_mismatch or self.pending or now - self.last_sent < 1:
             return
@@ -378,18 +454,26 @@ class MonitorSession:
             keys = [k for k, s in self.catalog.items() if s.readable and k not in self.unreadable]
             if keys:
                 key = self.next_read(keys, now)
-                self.send('get', key)
+                if key is not None:
+                    self.send('get', key)
 
     def set_focus(self, key=None, domain=None):
         with self.lock:
+            if key != self.focus_key:
+                self._focus_refresh = key is not None
             self.focus_key = key
             self.focus_domain = domain
 
     def next_read(self, keys, now):
-        """Alternate priority and global slots so unopened settings never starve."""
+        """Read stale/missing values, alternating focus and global fallback slots."""
+        keys = [key for key in keys if self.read_policy.due(key, now,
+                focused=key == self.focus_key,
+                force=key == self.focus_key and self._focus_refresh)]
+        if not keys:
+            return None
         candidates = keys
         if self.priority_turn:
-            if self.focus_key in keys and now - self.last_read.get(self.focus_key, 0) >= 5:
+            if self.focus_key in keys:
                 candidates = [self.focus_key]
             elif self.focus_domain:
                 candidates = [k for k in keys if self.catalog[k].domain == self.focus_domain] or keys
@@ -402,10 +486,12 @@ class MonitorSession:
                 raise ValueError('AOHAI settings require a matching AOHAI device.')
             if not self.ready or self.jobs or (self.pending and self.pending['operation'] == 'set'):
                 raise ValueError('Connect and wait for the previous write to finish.')
+            if self.aohai_write_blocked:
+                raise ValueError('Earlier setting outcome is uncertain. Check the inverter before reconnecting; reads remain available.')
             item = self.catalog[key]
             if item.name in TIME_FIELDS:
                 raise ValueError('Use the system time editor.')
-            if not acknowledged:
+            if acknowledged is not True:
                 raise ValueError('Acknowledge the requirements before sending.')
             value = item.parse(text)
             self.pending = None  # Supersede an automatic read, never a write.
@@ -416,8 +502,10 @@ class MonitorSession:
         with self.lock:
             if self.protocol != 'AOHAI_MODBUS_RTU' or self.protocol_mismatch:
                 raise ValueError('The six-field time editor is for AOHAI devices.')
-            if not acknowledged or not self.ready or self.jobs or (self.pending and self.pending['operation'] == 'set'):
+            if acknowledged is not True or not self.ready or self.jobs or (self.pending and self.pending['operation'] == 'set'):
                 raise ValueError('Acknowledge the time change, connect, and wait for any pending write.')
+            if self.aohai_write_blocked:
+                raise ValueError('Earlier setting outcome is uncertain. Check the inverter before reconnecting; reads remain available.')
             if not isinstance(stamp, datetime) or not 2022 <= stamp.year <= 2050:
                 raise ValueError('Year must be between 2022 and 2050.')
             values = (stamp.year, stamp.month, stamp.day, stamp.hour, stamp.minute, stamp.second)
@@ -477,7 +565,13 @@ class MonitorSession:
             return
         if outcome == 'acknowledged' and (not pending['write'] or data['write_sent'] is not True):
             return
-        if outcome == 'completed' and pending['write']:
+        if outcome == 'completed' and pending['write'] and (data['write_sent'] is not True or data.get('setting_verified') is not True):
+            return
+        if outcome == 'completed' and not pending['write'] and data['write_sent'] is not False:
+            return
+        if 'setting_verified' in data and data['setting_verified'] is not None and type(data['setting_verified']) is not bool:
+            return
+        if data.get('setting_verified') is True and not pending['write']:
             return
         self.native_result = copy.deepcopy(data)
         self.native_pending = None
@@ -485,25 +579,37 @@ class MonitorSession:
             if outcome in ('uncertain', 'invalid_response') or data['write_sent'] is None:
                 self.native_write_blocked = True
                 self.notice = 'Setting outcome uncertain. Check the device before further settings; no retry.'
+            elif outcome == 'completed':
+                self.notice = 'Setting verified by a fresh device readback.'
             elif outcome == 'acknowledged':
-                self.notice = 'Setting accepted by the device. Readback measurements must be checked separately.'
+                self.notice = ('Setting accepted, but its fresh readback did not match. Check the device setting; no automatic retry.'
+                               if data.get('setting_verified') is False else
+                               'Setting accepted by the device. Readback measurements must be checked separately.')
             else:
                 self.notice = f'Setting {outcome}: {data.get("detail", "")}. No retry.'
         else:
             self.notice = f'Query {outcome}: {data.get("detail", "")}'
 
-    def snapshot(self):
+    def _receive_native_pv_inputs(self, data):
+        count = data.get('connected_pv_inputs')
+        if type(count) is int and 0 <= count <= 16:
+            self.native_connected_pv_inputs = count
+
+    def snapshot(self, *, include_records=True):
+        """Return isolated UI state; raw records are optional diagnostics data."""
         with self.lock:
             self.heartbeat = time.monotonic()
             self.native_telemetry.expire(self.heartbeat)
             state = copy.deepcopy({key: getattr(self, key) for key in (
-                'active', 'ready', 'status', 'notice', 'live', 'health', 'cache',
+                'active', 'ready', 'status', 'connection_error', 'notice', 'live', 'health', 'cache',
                 'live_at', 'health_at', 'connected_at', 'pending', 'jobs', 'value_at', 'read_status',
                 'protocol', 'member_id', 'protocol_mismatch', 'native_pending', 'native_result',
-                'native_write_blocked')})
-            state['native_records'] = copy.deepcopy(self.native_telemetry.records())
-            state['native_live'] = normalize_native_live(state['native_records'],
-                self.protocol, self.member_id, self.heartbeat)
+                'native_write_blocked', 'aohai_write_blocked', 'native_connected_pv_inputs')})
+            state['native_records'] = self.native_telemetry.records() if include_records else []
+            state['native_raw_live'] = copy.deepcopy(self.native_raw_live) if include_records else {}
+            state['native_live'] = normalize_native_live(self.native_telemetry.records_view(),
+                self.protocol, self.member_id, self.heartbeat,
+                connected_pv_inputs=self.native_connected_pv_inputs)
             state['native_diagnostics'] = self.native_telemetry.diagnostics()
             state['native_incomplete'] = self.native_telemetry.incomplete_count
             state['native_drops'] = self.native_telemetry.dropped_count

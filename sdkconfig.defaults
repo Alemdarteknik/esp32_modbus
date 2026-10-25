@@ -19,6 +19,10 @@ CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
 CONFIG_ESP_TASK_WDT_PANIC=y
 CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
 CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_FULL=y
+# Use ESP-IDF malloc's PSRAM preference for large TLS record buffers. Unlike
+# SPIRAM-only allocation this retains the internal-memory fallback.
+CONFIG_MBEDTLS_INTERNAL_MEM_ALLOC=n
+CONFIG_MBEDTLS_DEFAULT_MEM_ALLOC=y
 
 # JK Bluetooth BMS transport shares the existing Wi-Fi runtime.
 CONFIG_BT_ENABLED=y

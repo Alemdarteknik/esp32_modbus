@@ -126,31 +126,11 @@ void ProductionPoller::run_due(std::uint16_t enabled_features)
                 if (request.space == RegisterSpace::input && request.first_register == address &&
                     poll_request_is_enabled(request, enabled_features) && due(index, request, now_ms)) {
                     last_poll_was_critical_ = false;
-                    // Try only adjacent documented power pairs, never reserved gaps.
-                    if (!batch_disabled_[index] &&
-                        (address == 332 || address == 336 || address == 340 || address == 349)) {
-                        auto combined = request;
-                        combined.register_count = 4;
-                        if (read_request(index, combined, now_ms, enabled_features)) {
-                            for (std::size_t other = 0; other < plan.size; ++other) {
-                                if (plan.data[other].space == RegisterSpace::input &&
-                                    plan.data[other].first_register == address + 2) {
-                                    last_poll_ms_[other] = last_poll_ms_[index];
-                                    completed_once_[other] = true;
-                                }
-                            }
-                            if (power_cursor_ < power_count && power_addresses[power_cursor_] == address + 2)
-                                ++power_cursor_;
-                            return;
-                        }
-                        batch_disabled_[index] = true;
-                        // Retry this pair individually on the next scheduler call,
-                        // allowing critical status handling between transactions.
-                        last_poll_ms_[index] = 0;
+                    if (!read_due_request(index, request, now_ms, enabled_features)) {
+                        // A rejected batch retries the original request on the
+                        // next turn, allowing critical state reads in between.
                         --power_cursor_;
-                        return;
                     }
-                    read_request(index, request, now_ms, enabled_features);
                     return;
                 }
             }
@@ -169,7 +149,9 @@ void ProductionPoller::run_due(std::uint16_t enabled_features)
         if (poll_request_is_enabled(request, enabled_features) && due(index, request, now_ms)) {
             next_poll_index_ = (index + 1) % plan.size;
             last_poll_was_critical_ = request.cadence == PollCadence::critical;
-            read_request(index, request, now_ms, enabled_features);
+            if (!read_due_request(index, request, now_ms, enabled_features)) {
+                next_poll_index_ = index;
+            }
             return;
         }
     }
@@ -188,21 +170,96 @@ bool ProductionPoller::due(std::size_t index, const PollRequest &request,
            now_ms - last_poll_ms_[index] >= cadence_interval_ms(request.cadence);
 }
 
+std::uint16_t ProductionPoller::effective_register_count(
+    const PollRequest &request, std::uint16_t enabled_features) const
+{
+    if (request.space == RegisterSpace::input && request.first_register == 40) {
+        return static_cast<std::uint16_t>(
+            24U + 2U * std::min<std::uint8_t>(connected_pv_inputs_, 2));
+    } else if (request.space == RegisterSpace::input && request.first_register == 68) {
+        return connected_pv_inputs_ > 2
+                             ? static_cast<std::uint16_t>(2U * (connected_pv_inputs_ - 2U))
+                             : 0;
+    } else if (request.space == RegisterSpace::input && request.first_register == 252) {
+        return static_cast<std::uint16_t>(2U * connected_pv_inputs_);
+    } else if (request.space == RegisterSpace::input && request.first_register == 125 &&
+               (enabled_features & feature_bms) == 0) {
+        // R130..132 belong to lithium BMS status, not the battery-only block.
+        return 5;
+    }
+    return request.register_count;
+}
+
+bool ProductionPoller::read_due_request(std::size_t index, const PollRequest &request,
+                                        std::int64_t now_ms,
+                                        std::uint16_t enabled_features)
+{
+    // Combine only enabled, due, adjacent requests in the documented live-power
+    // area. Never cross a gap, pull a future sample forward, or combine safety,
+    // identity/settings and energy-counter requests. Eight words bounds the
+    // optional request to four ordinary power pairs on model-specific firmware.
+    constexpr std::uint16_t maximum_batch_registers = 8;
+    if (request.space != RegisterSpace::input || request.cadence != PollCadence::fast ||
+        request.first_register < 250 || request.first_register >= 369 ||
+        batch_disabled_[index]) {
+        read_request(index, request, now_ms, enabled_features);
+        return true;
+    }
+    const auto plan = default_poll_plan();
+    auto combined = request;
+    combined.register_count = effective_register_count(request, enabled_features);
+    std::array<bool, maximum_requests> included{};
+    included[index] = true;
+    bool expanded = true;
+    std::size_t included_count = 1;
+    while (expanded) {
+        expanded = false;
+        for (std::size_t other = 0; other < plan.size; ++other) {
+            const auto &candidate = plan.data[other];
+            if (included[other] || batch_disabled_[other] ||
+                candidate.space != RegisterSpace::input ||
+                candidate.cadence != PollCadence::fast ||
+                candidate.first_register < 250 || candidate.first_register >= 369 ||
+                !poll_request_is_enabled(candidate, enabled_features) ||
+                !due(other, candidate, now_ms)) continue;
+            const auto count = effective_register_count(candidate, enabled_features);
+            if (count == 0 || count + combined.register_count > maximum_batch_registers) continue;
+            const bool before = candidate.first_register + count == combined.first_register;
+            const bool after = combined.first_register + combined.register_count == candidate.first_register;
+            if (!before && !after) continue;
+            if (before) combined.first_register = candidate.first_register;
+            combined.register_count += count;
+            included[other] = true;
+            ++included_count;
+            expanded = true;
+        }
+    }
+    if (included_count == 1) {
+        read_request(index, request, now_ms, enabled_features);
+        return true;
+    }
+    if (read_request(index, combined, now_ms, enabled_features)) {
+        for (std::size_t other = 0; other < plan.size; ++other) {
+            if (!included[other]) continue;
+            last_poll_ms_[other] = last_poll_ms_[index];
+            completed_once_[other] = true;
+        }
+        return true;
+    }
+    // An optional wider request may be unsupported. Disable batching for all
+    // of its constituents until reconnect, then use the original short reads.
+    for (std::size_t other = 0; other < plan.size; ++other) {
+        if (included[other]) batch_disabled_[other] = true;
+    }
+    last_poll_ms_[index] = 0;
+    return false;
+}
+
 bool ProductionPoller::read_request(std::size_t index, const PollRequest &request,
                                     std::int64_t, std::uint16_t enabled_features)
 {
     std::array<std::uint16_t, 125> values{};
-    std::uint16_t register_count = request.register_count;
-    if (request.space == RegisterSpace::input && request.first_register == 40) {
-        register_count = static_cast<std::uint16_t>(
-            24U + 2U * std::min<std::uint8_t>(connected_pv_inputs_, 2));
-    } else if (request.space == RegisterSpace::input && request.first_register == 68) {
-        register_count = connected_pv_inputs_ > 2
-                             ? static_cast<std::uint16_t>(2U * (connected_pv_inputs_ - 2U))
-                             : 0;
-    } else if (request.space == RegisterSpace::input && request.first_register == 252) {
-        register_count = static_cast<std::uint16_t>(2U * connected_pv_inputs_);
-    }
+    const std::uint16_t register_count = effective_register_count(request, enabled_features);
     if (register_count == 0 || register_count > values.size()) return false;
     const bool success = request.space == RegisterSpace::holding
                              ? client_.read_holding(request.first_register, register_count,

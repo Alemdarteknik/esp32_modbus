@@ -25,6 +25,10 @@ public:
 
 private:
     bool due(std::size_t index, const PollRequest &request, std::int64_t now_ms) const;
+    std::uint16_t effective_register_count(const PollRequest &request,
+                                           std::uint16_t enabled_features) const;
+    bool read_due_request(std::size_t index, const PollRequest &request,
+                           std::int64_t now_ms, std::uint16_t enabled_features);
     bool read_request(std::size_t index, const PollRequest &request,
                       std::int64_t now_ms, std::uint16_t enabled_features);
     void emit(const PollRequest &request, const std::uint16_t *values,

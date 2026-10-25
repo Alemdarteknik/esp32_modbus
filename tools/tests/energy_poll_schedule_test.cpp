@@ -66,11 +66,12 @@ void profile_coverage()
             if (poll.poll_class == EnergyPollClass::identity)
                 check(poll.interval_ms == 0 && poll.publish_on_change, "identity once per session");
             if (poll.poll_class == EnergyPollClass::configuration)
-                check(poll.interval_ms == 60000 && poll.publish_on_change, "configuration slow and changed-only");
+                check((poll.interval_ms == 120000 || poll.interval_ms == 0) && poll.publish_on_change,
+                      "settings are slow and capabilities once, both changed-only");
         }
         check(primary != 0, "all native profiles have a core telemetry request");
         constexpr unsigned expected[] = {
-            0, 9, 21, 21, 21, 10, 15, 15, 18, 27, 27, 7, 28, 27, 19,
+            0, 9, 20, 20, 20, 10, 14, 14, 18, 26, 26, 7, 27, 26, 18,
             2, 2, 2, 3, 1, 3, 2, 1, 9, 9, 2,
         };
         check(count == expected[raw], "resolved native profile has all expected fixed queries");
@@ -84,8 +85,8 @@ void profile_coverage()
             energy_background_poll_command(protocol, index, poll);
             const auto found = history.find(poll.command);
             check(found != history.end(), "every profile command gets a bounded slot");
-            if (poll.poll_class == EnergyPollClass::identity)
-                check(found->second.size() == 1, "identity not repeated while connected");
+            if (poll.poll_class == EnergyPollClass::identity || poll.interval_ms == 0)
+                check(found->second.size() == 1, "static metadata not repeated while connected");
         }
     }
 }
@@ -104,8 +105,8 @@ void pi30_frequency()
     check(history.at("QPI").size() == 1 && history.at("QID").size() == 1 &&
           history.at("QVFW").size() == 1 && history.at("QVFW2").size() == 1,
           "protocol, serial, and firmware identity once each");
-    check(history.at("QPIRI").size() >= 2 && history.at("QPIRI").size() <= 3 &&
-          history.at("QFLAG").size() <= 3, "configuration at minute cadence");
+    check(history.at("QPIRI").size() == 2 && history.at("QFLAG").size() == 2,
+          "configuration at two-minute cadence");
     check(history.at("QMOD").size() >= 25, "mode follows actual device regularly");
     schedule.reset(EnergyProtocol::pi30, 8, 200000);
     const auto reconnect = run(schedule, 200000, 260000);
@@ -164,6 +165,61 @@ void identity_failures_and_write_refresh()
     schedule.observe("QPIRI", true, 0);
     check(run(schedule, 0, 20000).count("QPIRI") == 0, "write readback avoids duplicate background settings read");
 }
+void economical_refresh_policy()
+{
+    for (unsigned raw = 1; raw < static_cast<unsigned>(EnergyProtocol::count); ++raw) {
+        const auto protocol = static_cast<EnergyProtocol>(raw);
+        EnergyPollScheduler schedule;
+        schedule.reset(protocol, 1);
+        const auto history = run(schedule, 0, 360000, 100);
+        for (const auto *command : {"QDI", "DI"}) {
+            check(history.count(command) == 0,
+                  "manufacturer defaults are not read as current telemetry");
+            EnergyCommandInfo info{};
+            if (!energy_command_info(protocol, command, info)) continue;
+            check(!info.setter, "manufacturer defaults remain available as explicit readonly queries");
+            std::uint8_t request[256]{};
+            std::size_t size = 0;
+            check(energy_build_request(protocol, command, 1, request, sizeof(request), size) == CodecStatus::ok,
+                  "manual manufacturer default query retains its wire encoding");
+        }
+        for (const auto *command : {"QMCHGCR", "QMUCHGCR", "MCHGCR", "MUCHGCR"}) {
+            const auto found = history.find(command);
+            if (found == history.end()) continue;
+            EnergyPollInfo info{};
+            check(energy_poll_info(protocol, command, info) &&
+                  info.poll_class == EnergyPollClass::configuration && info.interval_ms == 0 &&
+                  info.publish_on_change && !info.primary,
+                  "charging choices are immutable capability metadata");
+            check(found->second.size() == 1, "charging choices are not repeatedly read");
+        }
+        schedule.refresh_configuration(360100);
+        const auto after_write = run(schedule, 360100, 390000, 100);
+        for (const auto *command : {"QMCHGCR", "QMUCHGCR", "MCHGCR", "MUCHGCR"})
+            check(after_write.count(command) == 0,
+                  "a settings write does not reread unchanged capability choices");
+        for (const auto *command : {"Q1", "QT", "T"}) {
+            const auto found = history.find(command);
+            if (found == history.end()) continue;
+            EnergyPollInfo info{};
+            check(energy_poll_info(protocol, command, info) && info.interval_ms == 10000 &&
+                  !info.primary, "diagnostic and clock reads fit existing live freshness");
+            check(found->second.size() >= 25 && found->second.size() <= 37,
+                  "diagnostic and clock reads continue at their slower cadence");
+        }
+    }
+
+    EnergyPollScheduler schedule;
+    schedule.reset(EnergyProtocol::pi30, 1);
+    const auto first = run(schedule, 0, 119000, 100);
+    check(first.at("QPIRI").size() == 1 && first.at("QFLAG").size() == 1,
+          "unchanged current settings are not reread every minute");
+    schedule.refresh_configuration(119100);
+    schedule.observe("QPIRI", true, 119100);
+    const auto refreshed = run(schedule, 119100, 140000, 100);
+    check(!refreshed.count("QPIRI") && refreshed.count("QFLAG"),
+          "direct settings readback coalesces only its own periodic refresh");
+}
 void bluetooth_prerequisite()
 {
     for (auto protocol : {EnergyProtocol::jk02, EnergyProtocol::jk02_32, EnergyProtocol::jk04, EnergyProtocol::jkv11}) {
@@ -192,7 +248,8 @@ void manual_query_classification()
     check(energy_poll_info(EnergyProtocol::pi30max, "QED20261011", info) &&
           info.poll_class == EnergyPollClass::energy, "explicit historical query is energy");
     check(energy_poll_info(EnergyProtocol::pi30, "QMCHGCR", info) &&
-          info.poll_class == EnergyPollClass::configuration, "charging range is configuration, not live current");
+          info.poll_class == EnergyPollClass::configuration && info.interval_ms == 0,
+          "charging range is a static device capability, not live current");
     check(!energy_poll_info(EnergyProtocol::pi30, "POP02", info), "setter excluded from telemetry schedule");
     check(!energy_poll_info(EnergyProtocol::pi30, "invented", info), "unknown query not classified as valid telemetry");
     check(energy_poll_info(EnergyProtocol::jkpb, "getBalancerData", info) &&
@@ -226,7 +283,7 @@ void supplemental_telemetry()
         require(id, "Q1", EnergyPollClass::live);
     }
     require(EnergyProtocol::pi30revo, "QLITH0", EnergyPollClass::live);
-    for (auto id : {EnergyProtocol::pi30max, EnergyProtocol::pi30mst, EnergyProtocol::pi30m044,
+    for (auto id : {EnergyProtocol::pi30, EnergyProtocol::pi30max, EnergyProtocol::pi30mst, EnergyProtocol::pi30m044,
                     EnergyProtocol::pi30m045, EnergyProtocol::pi41})
         require(id, "QPIGS2", EnergyPollClass::live);
     for (auto id : {EnergyProtocol::pi18lvx, EnergyProtocol::pi18sv}) {
@@ -248,6 +305,82 @@ void supplemental_telemetry()
     }
     check(rejected_bms == 1 && core >= 50 && pv2 >= 15,
           "unsupported optional battery queries stop while inverter and second tracker stay live");
+}
+void pi30_optional_second_tracker()
+{
+    EnergyPollInfo classified{};
+    check(energy_poll_info(EnergyProtocol::pi30, "QPIGS2", classified) &&
+          classified.poll_class == EnergyPollClass::live && !classified.primary &&
+          !classified.publish_on_change && classified.interval_ms == 5000 &&
+          classified.minimum_pv_inputs == 2,
+          "base PI30 second tracker is a supplemental repeated live observation");
+    for (const auto protocol : {EnergyProtocol::pi30max, EnergyProtocol::pi30mst,
+                               EnergyProtocol::pi30m044, EnergyProtocol::pi30m045}) {
+        check(energy_poll_info(protocol, "QPIGS2", classified) && classified.minimum_pv_inputs == 0,
+              "existing specialized PI30 profiles retain their complete measurement query");
+        EnergyPollScheduler schedule;
+        schedule.reset(protocol, 1, 0, 1);
+        check(run(schedule, 0, 30000, 250).count("QPIGS2") != 0,
+              "the base PI30 PV-count condition does not change existing specialized profiles");
+    }
+    check(energy_poll_info(EnergyProtocol::pi41, "QPIGS2", classified) &&
+          classified.minimum_pv_inputs == 0,
+          "PI41 QPIGS2 is a second output phase and is independent of PV count");
+    EnergyPollScheduler pi41;
+    pi41.reset(EnergyProtocol::pi41, 1, 0, 0);
+    check(run(pi41, 0, 30000, 250).count("QPIGS2") != 0,
+          "PI41 continues reading its second phase even when no PV is connected");
+    for (const std::uint8_t pv_count : {0, 1, 2, 3, 16}) {
+        EnergyPollScheduler schedule;
+        schedule.reset(EnergyProtocol::pi30, pv_count + 1, 1000, pv_count);
+        const bool enabled = pv_count >= 2;
+        check(schedule.count() == energy_background_poll_count(EnergyProtocol::pi30) - (enabled ? 0 : 1),
+              "only configured second tracker changes the base PI30 schedule size");
+        const auto history = run(schedule, 1000, 121000, 250);
+        check((history.count("QPIGS2") != 0) == enabled,
+              "second tracker is polled only when at least two PV inputs are configured");
+        check(history.at("QPIGS").size() >= 50 && history.at("QPI").size() == 1 &&
+              history.at("QVFW2").size() == 1,
+              "PV count never suppresses normal readings or identity");
+        if (enabled) {
+            const auto &tracker = history.at("QPIGS2");
+            check(tracker.size() >= 15, "second tracker is refreshed regularly");
+            for (std::size_t i = 1; i < tracker.size(); ++i)
+                check(tracker[i] - tracker[i - 1] >= 5000 && tracker[i] - tracker[i - 1] <= 15000,
+                      "supplemental tracker honors its cadence without metadata starvation");
+        }
+    }
+
+    for (const auto failure : {CodecStatus::rejected, CodecStatus::unsupported,
+                              CodecStatus::invalid_command, CodecStatus::invalid_frame}) {
+        EnergyPollScheduler schedule;
+        schedule.reset(EnergyProtocol::pi30, 1, 0, 2);
+        unsigned attempts = 0, core = 0;
+        std::vector<std::uint64_t> attempt_times;
+        const bool transient = failure == CodecStatus::invalid_frame;
+        for (std::uint64_t now = 0; now <= 180000; now += 250) {
+            const auto *poll = schedule.next(now);
+            if (!poll) continue;
+            const bool tracker = command_is(poll, "QPIGS2");
+            if (tracker) { ++attempts; attempt_times.push_back(now); }
+            if (command_is(poll, "QPIGS")) ++core;
+            schedule.record(!tracker, now, failure);
+            if (tracker && !transient) schedule.refresh_live(now);
+        }
+        check(attempts == (transient ? 3U : 1U),
+              "unsupported PV2 stops immediately; transient PV2 failures have bounded attempts");
+        check(core >= 70, "failed PV2 never stops primary PI30 telemetry");
+        if (transient)
+            check(attempt_times[1] - attempt_times[0] >= 10000 &&
+                  attempt_times[2] - attempt_times[1] >= 60000,
+                  "PV2 transient retry backs off instead of thrashing the inverter");
+        schedule.reset(EnergyProtocol::pi30, 2, 200000, 2);
+        check(run(schedule, 200000, 230000, 250).count("QPIGS2") != 0,
+              "a new USB session probes the configured second tracker again");
+        schedule.reset(EnergyProtocol::pi30, 3, 240000, 1);
+        check(run(schedule, 240000, 270000, 250).count("QPIGS2") == 0,
+              "a setup change back to one PV removes second tracker reads");
+    }
 }
 void daly_read_context()
 {
@@ -304,9 +437,11 @@ int main()
     profile_coverage();
     pi30_frequency();
     identity_failures_and_write_refresh();
+    economical_refresh_policy();
     bluetooth_prerequisite();
     manual_query_classification();
     supplemental_telemetry();
+    pi30_optional_second_tracker();
     daly_read_context();
     std::printf("Energy poll schedule: %u checks passed across all 25 native profiles\n", checks);
 }

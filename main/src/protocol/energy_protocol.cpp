@@ -42,13 +42,15 @@ bool pi(EnergyProtocol id){return id>=EnergyProtocol::pi16&&id<=EnergyProtocol::
 
 // Fixed, documented queries only. Each is admitted through the selected
 // profile's command catalog; historical/date and parallel-index reads remain
-// explicit user queries because they require additional context.
+// explicit user queries because they require additional context. QDI/DI are
+// manufacturer defaults, not current settings; keep those manual so defaults
+// never overwrite current settings in a combined live view.
 constexpr const char *extra_background_commands[] = {
     "QVFW", "QVFW2", "QVFW3", "VERFW", "VFW", "VFW2",
     "QGMN", "QMN", "MD", "DM", "QBOOT",
-    "QPIBI", "INGS", "EMINFO", "BMS", "Q1", "QBMS", "QLITH0",
-    "GPMP", "HECS", "DI", "MCHGCR", "MUCHGCR", "ACCT", "ACLT",
-    "QDI", "QMCHGCR", "QMUCHGCR", "QOPM", "QOPPT", "QCHPT",
+    "QPIBI", "INGS", "EMINFO", "BMS", "Q1", "QBMS", "QLITH0", "QPIGS2",
+    "GPMP", "HECS", "MCHGCR", "MUCHGCR", "ACCT", "ACLT",
+    "QMCHGCR", "QMUCHGCR", "QOPM", "QOPPT", "QCHPT",
     "QBEQI", "QLED", "QDOP", "batteryCapacity",
     "QET", "QLT", "ET", "QT", "T",
 };
@@ -74,19 +76,26 @@ EnergyPollInfo classify_poll(EnergyProtocol id, const char *command)
         result.poll_class = EnergyPollClass::identity;
         result.interval_ms = 0;
         result.prerequisite = bluetooth_jk(id) && eq(command, "getInfo");
+    } else if (eq(command, "QMCHGCR") || eq(command, "QMUCHGCR") ||
+               eq(command, "MCHGCR") || eq(command, "MUCHGCR")) {
+        // Keep supported choices in the settings category used by clients,
+        // but read the immutable capability lists only once per connection.
+        result.poll_class = EnergyPollClass::configuration;
+        result.interval_ms = 0;
     } else if (eq(command, "QPIRI") || eq(command, "PIRI") ||
         eq(command, "QFLAG") || eq(command, "FLAG") || eq(command, "BATS") ||
         eq(command, "PQSE") || eq(command, "getAdditionalInfo") ||
         eq(command, "QDI") || eq(command, "DI") ||
-        eq(command, "QMCHGCR") || eq(command, "QMUCHGCR") ||
-        eq(command, "MCHGCR") || eq(command, "MUCHGCR") ||
         eq(command, "QOPM") || eq(command, "QOPPT") || eq(command, "QCHPT") ||
         eq(command, "QBEQI") || eq(command, "QLED") || eq(command, "QDOP") ||
         eq(command, "GPMP") || eq(command, "GPMP0") || eq(command, "HECS") ||
         eq(command, "ACCT") || eq(command, "ACLT") || eq(command, "batteryCapacity") ||
         eq(command, "PRI")) {
         result.poll_class = EnergyPollClass::configuration;
-        result.interval_ms = 60000;
+        // Settings still refresh for front-panel changes, and immediately
+        // after a write through refresh_configuration(). Keep this below the
+        // existing five-minute settings freshness window in all clients.
+        result.interval_ms = 120000;
     } else if (eq(command, "ET") || eq(command, "QET") || eq(command, "QLT") ||
         eq(command, "QEH") || eq(command, "QED") || eq(command, "QEM") ||
         eq(command, "QEY") || eq(command, "QLY") || eq(command, "QLM") ||
@@ -108,6 +117,15 @@ EnergyPollInfo classify_poll(EnergyProtocol id, const char *command)
         (eq(command, "getCellData") && id != EnergyProtocol::jk232) ||
         (eq(command, "getBalancerData") && id != EnergyProtocol::jkpb);
     if (result.primary) result.interval_ms = 2000;
+    // Diagnostic temperatures, fan details and clock values do not require
+    // the same traffic as measured PV/grid/load/battery values. Ten seconds
+    // remains inside the existing fifteen-second live freshness window.
+    if (eq(command, "Q1") || eq(command, "QT") || eq(command, "T"))
+        result.interval_ms = 10000;
+    // Probe the optional extension only when selected for the base profile.
+    // Existing variants retain their model-specific background queries.
+    if (eq(command, "QPIGS2") && id == EnergyProtocol::pi30)
+        result.minimum_pv_inputs = 2;
     result.publish_on_change = result.poll_class == EnergyPollClass::identity ||
         result.poll_class == EnergyPollClass::configuration ||
         result.poll_class == EnergyPollClass::status;

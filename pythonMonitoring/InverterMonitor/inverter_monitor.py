@@ -1,6 +1,7 @@
 import tkinter as tk
 from tkinter import ttk
 import json
+import copy
 import threading
 import queue
 import re
@@ -12,6 +13,7 @@ from time_settings import TimeSettings
 from catalog_settings_ui import CatalogSettings
 from mqtt_backend import MonitorSession
 from native_protocols import PROFILES, PROTOCOL_IDS, classify_command
+from settings_results import reset_write_session
 
 
 # ============================================================
@@ -28,6 +30,7 @@ MQTT_PASSWORD = None
 
 LIVE_TIMEOUT_SECONDS = 15
 HEALTH_TIMEOUT_SECONDS = 90
+NATIVE_UI_REFRESH_SECONDS = 1
 AOHAI_PROTOCOL = "AOHAI_MODBUS_RTU"
 
 
@@ -61,8 +64,11 @@ def native_result_text(result):
         return "No command result yet."
     outcome = result.get("outcome", "unknown")
     messages = {
-        "acknowledged": "Accepted by device; check the readback before treating the value as confirmed.",
-        "completed": "Read completed; measurements arrive on the protocol telemetry topic.",
+        "acknowledged": ("Accepted, but the fresh readback did not match the request. Check the device setting; no automatic retry."
+                         if result.get("setting_verified") is False else
+                         "Accepted by device; check the readback before treating the value as confirmed."),
+        "completed": ("Setting verified by a fresh device readback." if result.get("setting_verified") is True
+                      else "Read completed; measurements arrive on the protocol telemetry topic."),
         "uncertain": "Outcome uncertain. Do not repeat the setting; verify the device before reconnecting.",
         "rejected": "Device rejected the command.",
         "unsupported": "Command or protocol is unsupported by the selected device.",
@@ -103,12 +109,20 @@ class InverterMonitor:
         self.tabs = {}
 
         self.latest_data = {}
+        self.raw_aohai_data = None
         self.last_live_received = None
         self.last_health_received = None
         self.connected_at = None
         self.native_session = None
         self.native_last_render = None
+        self.native_last_raw_render = None
+        self.native_last_received = None
         self.native_snapshot = {}
+        self.next_native_refresh = 0
+        self.native_health_render = None
+        self.native_control_signature = None
+        self.tree_rows = {}
+        self.native_widget_options = {}
 
 
         # ====================================================
@@ -200,6 +214,7 @@ class InverterMonitor:
         # ====================================================
 
         raw_frame = ttk.Frame(self.notebook)
+        self.raw_frame = raw_frame
 
         self.notebook.add(
             raw_frame,
@@ -293,6 +308,7 @@ class InverterMonitor:
         self.aohai_frames = (power_frame, main_frame, status_frame, self.settings_outer)
         self.native_frames = self.create_native_tabs()
         self.select_protocol()
+        self.notebook.bind("<<NotebookTabChanged>>", self.native_tab_changed)
 
 
         # ====================================================
@@ -504,15 +520,25 @@ class InverterMonitor:
         if not hasattr(self, "native_send_button"):
             return
         snapshot = self.native_snapshot
+        signature = (self.protocol_id.get(), self.native_command.get(),
+                     self.native_confirmed.get(), self.disconnecting,
+                     bool(snapshot.get("ready")), bool(snapshot.get("native_pending")),
+                     bool(snapshot.get("native_write_blocked")), snapshot.get("protocol_mismatch"))
+        if signature == self.native_control_signature:
+            return
+        self.native_control_signature = signature
         ready = bool(snapshot.get("ready")) and not self.disconnecting
         pending = bool(snapshot.get("native_pending"))
         write = False
         valid = False
         hint = "Select a documented command."
         try:
-            write = classify_command(self.protocol_id.get(), self.native_command.get())["setter"]
+            definition = classify_command(self.protocol_id.get(), self.native_command.get())
+            write = definition["setter"]
             valid = True
             hint = "Setting: explicit confirmation is required." if write else "Read-only command."
+            if write:
+                hint += f' Readback for this command: {definition["readback"]}.' if definition.get('readback') else ' No documented readback query for this command.'
         except (ValueError, KeyError, TypeError) as error:
             if self.native_command.get():
                 hint = str(error)
@@ -539,7 +565,7 @@ class InverterMonitor:
             )
             self.native_confirmed.set(False)
             self.native_result_label.configure(text=f"Command {command_id} sent once; waiting for its result.")
-            self.native_snapshot = self.native_session.snapshot()
+            self.native_snapshot = self.native_session.snapshot(include_records=False)
         except (ValueError, RuntimeError) as error:
             self.native_result_label.configure(text=str(error))
         self.update_native_controls()
@@ -548,7 +574,10 @@ class InverterMonitor:
         session = self.native_session
         if session is None:
             return
-        snapshot = session.snapshot()
+        selected_tab = self.notebook.select()
+        diagnostics_visible = selected_tab == str(self.native_frames[2])
+        raw_visible = selected_tab == str(self.raw_frame)
+        snapshot = session.snapshot(include_records=diagnostics_visible or raw_visible)
         self.native_snapshot = snapshot
         ready = bool(snapshot.get("ready"))
         active = bool(snapshot.get("active"))
@@ -572,10 +601,11 @@ class InverterMonitor:
         records = snapshot.get("native_records", [])
         signature = tuple((record.get("command"), record.get("sequence"), record.get("timestamp_ms"))
                           for record in records)
-        if signature != self.native_last_render:
+        if diagnostics_visible and signature != self.native_last_render:
             self.native_last_render = signature
             self.clear_tree(self.native_tree)
             self.native_row_received = {}
+            self.native_row_freshness = {}
             for record in records:
                 for key, field in record.get("fields", {}).items():
                     row = self.native_tree.insert("", "end", values=(
@@ -583,18 +613,27 @@ class InverterMonitor:
                         record.get("command", ""), record.get("protocol", ""), record.get("sequence", ""), ""
                     ))
                     self.native_row_received[row] = record.get("received_at")
-            self.time_label.configure(text="Last update: " + datetime.now().strftime("%H:%M:%S") if records else "Last update: --")
+        received_at = snapshot.get("native_live", {}).get("received_at")
+        if received_at != self.native_last_received:
+            self.native_last_received = received_at
+            self.time_label.configure(text="Last update: " + datetime.now().strftime("%H:%M:%S") if received_at is not None else "Last update: --")
+        if raw_visible and signature != self.native_last_raw_render:
+            self.native_last_raw_render = signature
             self.raw_text.delete("1.0", tk.END)
             self.raw_text.insert(tk.END, json.dumps(records, indent=2, ensure_ascii=False))
         health = snapshot.get("health", {})
-        self.clear_tree(self.trees["Gateway Health"])
-        for key, value in health.items():
-            self.insert_value(self.trees["Gateway Health"], key, value)
+        if health != self.native_health_render:
+            self.native_health_render = copy.deepcopy(health)
+            self.clear_tree(self.trees["Gateway Health"])
+            for key, value in health.items():
+                self.insert_value(self.trees["Gateway Health"], key, value)
         now = time.monotonic()
         self.render_native_live(snapshot)
-        for row, received_at in getattr(self, "native_row_received", {}).items():
-            if self.native_tree.exists(row):
-                self.native_tree.set(row, "freshness", freshness_text(received_at, now, LIVE_TIMEOUT_SECONDS))
+        for row, received_at in (getattr(self, "native_row_received", {}).items() if diagnostics_visible else ()):
+            value = freshness_text(received_at, now, LIVE_TIMEOUT_SECONDS)
+            if value != self.native_row_freshness.get(row) and self.native_tree.exists(row):
+                self.native_tree.set(row, "freshness", value)
+                self.native_row_freshness[row] = value
         received = snapshot.get("native_live", {}).get("received_at")
         live = freshness_text(received, now, LIVE_TIMEOUT_SECONDS, snapshot.get("connected_at"))
         health_freshness = freshness_text(snapshot.get("health_at"), now, HEALTH_TIMEOUT_SECONDS, snapshot.get("connected_at"))
@@ -610,10 +649,25 @@ class InverterMonitor:
         self.native_notice_label.configure(text=snapshot.get("notice", ""))
         self.update_native_controls()
 
+    def native_tab_changed(self, event=None):
+        # Load diagnostics on demand, without slowing the normal measurements.
+        if self.native_session is not None:
+            self.next_native_refresh = time.monotonic() + NATIVE_UI_REFRESH_SECONDS
+            self.refresh_native()
+        elif self.notebook.select() == str(self.raw_frame):
+            self.render_aohai_raw()
+
+    def render_aohai_raw(self):
+        if self.raw_aohai_data is self.latest_data:
+            return
+        self.raw_aohai_data = self.latest_data
+        self.raw_text.delete("1.0", tk.END)
+        self.raw_text.insert(tk.END, json.dumps(self.latest_data, indent=4, ensure_ascii=False))
+
     def render_native_live(self, snapshot):
         live = snapshot.get("native_live", {})
         groups = live.get("groups", {})
-        self.native_live_notice.configure(text="Live electrical measurements received." if live.get("telemetry_available")
+        self.configure_native_widget(self.native_live_notice, text="Live electrical measurements received." if live.get("telemetry_available")
             else "Waiting for fresh electrical measurements. Operating mode and device information do not confirm live readings.")
         summary = live.get("power_summary", {})
         quality = live.get("power_quality", {})
@@ -625,8 +679,10 @@ class InverterMonitor:
         for index, (key, title) in enumerate(card_titles):
             if bms and key == "pv" and live.get("battery_metrics", {}).get("current", {}).get("name") == "balance_current":
                 title = "Balance current"
-            self.native_metric_frames[key].configure(text=title)
-            self.native_metric_frames[key].grid_configure(column=index)
+            self.configure_native_widget(self.native_metric_frames[key], text=title)
+            if getattr(self, "native_card_order", None) != bms:
+                self.native_metric_frames[key].grid_configure(column=index)
+        self.native_card_order = bms
         battery_card_keys = {"pv": "current", "grid": "state_of_charge",
                              "output": "temperature", "load": "cell_difference"}
         for key, summary_key in (("pv", "pv_kw"), ("grid", "grid_kw"),
@@ -647,7 +703,8 @@ class InverterMonitor:
             elif summary_key in summary:
                 value = native_power_value(summary, quality, summary_key,
                     unit="%" if summary_key == "load_percentage" else "kW", signed=summary_key == "battery_kw")
-            elif bms or key in ("pv", "load"):
+            elif (bms or key in ("pv", "load")) and not (
+                    key == "pv" and live.get("pv_total_requires_channels")):
                 field = group.get("primary") or {}
                 if bms and key == "battery" and field.get("unit") in ("W", "kW"):
                     field = next((group["fields"][name] for name in ("battery_voltage", "total_battery_voltage",
@@ -656,29 +713,36 @@ class InverterMonitor:
                     value = "Stale"
                 elif field.get("fresh"):
                     value = f"{field.get('value')} {field.get('unit', '')}".rstrip()
-            self.native_metric_labels[key].configure(text=value)
+            self.configure_native_widget(self.native_metric_labels[key], text=value)
         visible_row = 0
         for index, (key, tree) in enumerate(self.native_group_trees.items()):
-            self.clear_tree(tree)
             group = groups.get(key, {})
-            if bms and group.get("supported") is False:
-                tree.master.grid_remove()
-            else:
-                tree.master.grid(row=visible_row if bms else index // 2,
-                                 column=0 if bms else index % 2, columnspan=2 if bms else 1)
+            hidden = bms and group.get("supported") is False
+            layout = (hidden, visible_row if bms else index // 2,
+                      0 if bms else index % 2, 2 if bms else 1,
+                      8 if bms and key == "battery" else 4)
+            if getattr(tree, "native_layout", None) != layout:
+                if hidden:
+                    tree.master.grid_remove()
+                else:
+                    tree.master.grid(row=layout[1], column=layout[2], columnspan=layout[3])
+                    tree.configure(height=layout[4])
+                tree.native_layout = layout
+            if not hidden:
                 visible_row += 1
-                tree.configure(height=8 if bms and key == "battery" else 4)
             fields = group.get("fields", {})
+            rows = []
             for name, field in fields.items():
                 age = field.get("age_seconds")
                 state = "Stale" if field.get("stale") else "Fresh" if field.get("fresh") else "Unavailable"
                 updated = state + (f" · {int(age)}s ago" if age is not None else "")
                 value = field.get("value")
-                tree.insert("", "end", values=(name.replace("_", " ").capitalize(),
+                rows.append((name.replace("_", " ").capitalize(),
                     "Unavailable" if value is None else str(value), field.get("unit", ""), updated))
             if not fields:
                 waiting = "Not reported by this profile" if group.get("supported") is False else "Waiting for measurements"
-                tree.insert("", "end", values=(waiting, "Unavailable", "", ""))
+                rows.append((waiting, "Unavailable", "", ""))
+            self.sync_tree_rows(tree, rows)
         status = groups.get("status", {}).get("fields", {})
         mode = (status.get("device_mode") or status.get("mode") or status.get("operating_mode")
                 or status.get("working_mode"))
@@ -686,10 +750,34 @@ class InverterMonitor:
             age = mode.get("age_seconds")
             state = "Stale" if mode.get("stale") else "Fresh" if mode.get("fresh") else "Unavailable"
             age_text = f" · {int(age)}s ago" if age is not None else ""
-            self.native_mode_label.configure(text=f"Operating mode reported by inverter: {mode['value']} · {state}{age_text}")
+            self.configure_native_widget(self.native_mode_label, text=f"Operating mode reported by inverter: {mode['value']} · {state}{age_text}")
         else:
-            self.native_mode_label.configure(text="BMS operating flags and protections are shown below." if bms
+            self.configure_native_widget(self.native_mode_label, text="BMS operating flags and protections are shown below." if bms
                 else "Operating mode: unavailable; waiting for the inverter to report it.")
+
+    def configure_native_widget(self, widget, **options):
+        """Avoid scheduling a Tk redraw when a displayed value is unchanged."""
+        previous = self.native_widget_options.setdefault(widget, {})
+        changed = {key: value for key, value in options.items() if previous.get(key) != value}
+        if changed:
+            widget.configure(**changed)
+            previous.update(changed)
+
+    def sync_tree_rows(self, tree, rows):
+        """Keep row IDs, selection and scrolling while updating changed cells."""
+        rows = tuple(tuple(str(value) for value in row) for row in rows)
+        previous = self.tree_rows.get(tree, ())
+        if rows == previous:
+            return
+        children = tree.get_children()
+        for index, values in enumerate(rows):
+            if index >= len(children):
+                tree.insert("", "end", values=values)
+            elif index >= len(previous) or values != previous[index]:
+                tree.item(children[index], values=values)
+        if len(children) > len(rows):
+            tree.delete(*children[len(rows):])
+        self.tree_rows[tree] = rows
 
     def create_tree(self, parent, name):
 
@@ -867,6 +955,7 @@ class InverterMonitor:
         self.inverter_id.set(device_id)
         self.mqtt_topic = f"inverter/INV-{device_id}/inverter/{member}/live"
         self.clear_display()
+        reset_write_session(self)
         self.connection_active = True
         self.disconnecting = False
         self.id_entry.configure(state="readonly")
@@ -908,10 +997,13 @@ class InverterMonitor:
         self.last_live_received = None
         self.last_health_received = None
         self.freshness_label.configure(text="Live: -- | Gateway health: --")
+        self.next_native_refresh = 0
+        self.native_health_render = None
         for setting in self.setting_controls:
             setting.reset()
         """Remove the previous connection's telemetry from the UI."""
         self.latest_data = {}
+        self.raw_aohai_data = None
         self.update_sections({})
         for tree in self.trees.values():
             self.clear_tree(tree)
@@ -922,6 +1014,8 @@ class InverterMonitor:
             self.render_native_live({})
             self.native_delivery_label.configure(text="")
             self.native_last_render = None
+            self.native_last_raw_render = None
+            self.native_last_received = None
             self.native_snapshot = {}
             self.native_confirmed.set(False)
             self.native_result_label.configure(text="No command result yet.")
@@ -1132,6 +1226,8 @@ class InverterMonitor:
 
             if not isinstance(data, dict):
                 return
+            if message.retain and message.topic.endswith('/result'):
+                return
             if message.topic in (self.mqtt_topic, self.mqtt_topic.rsplit("/", 2)[0] + "/0/health"):
                 # Retained packets do not prove the publisher is currently alive.
                 kind = "data" if message.topic == self.mqtt_topic else "health"
@@ -1141,7 +1237,7 @@ class InverterMonitor:
             self.data_queue.put(
                 (
                     "data" if message.topic == self.mqtt_topic else "setting_message",
-                    data if message.topic == self.mqtt_topic else (message.topic, data)
+                    data if message.topic == self.mqtt_topic else (message.topic, data, message.retain)
                 )
             )
 
@@ -1157,14 +1253,29 @@ class InverterMonitor:
     # PROCESS QUEUE
     # ========================================================
 
+    def drain_ui_queue(self):
+        """Coalesce identical snapshots, preserving status and control events."""
+        pending = None
+        for _ in range(50):
+            try:
+                current = self.data_queue.get_nowait()
+            except queue.Empty:
+                break
+            kind, data = current
+            replace = (pending is not None and kind in ("data", "health")
+                       and kind == pending[0] and data[2] == pending[1][2]
+                       and data[0] == pending[1][0])
+            if pending is not None and not replace:
+                yield pending
+            pending = current
+        if pending is not None:
+            yield pending
+
     def process_queue(self):
 
         try:
 
-            for _ in range(50):
-
-                message_type, data = \
-                    self.data_queue.get_nowait()
+            for message_type, data in self.drain_ui_queue():
 
 
                 if message_type == "connection":
@@ -1267,7 +1378,10 @@ class InverterMonitor:
         if self.running:
 
             if self.native_session is not None:
-                self.refresh_native()
+                now = time.monotonic()
+                if now >= self.next_native_refresh:
+                    self.next_native_refresh = now + NATIVE_UI_REFRESH_SECONDS
+                    self.refresh_native()
 
             if self.native_session is None and self.connection_active and not self.disconnecting:
                 now = time.monotonic()
@@ -1344,19 +1458,8 @@ class InverterMonitor:
         # RAW JSON
         # ====================================================
 
-        self.raw_text.delete(
-            "1.0",
-            tk.END
-        )
-
-        self.raw_text.insert(
-            tk.END,
-            json.dumps(
-                data,
-                indent=4,
-                ensure_ascii=False
-            )
-        )
+        if self.notebook.select() == str(self.raw_frame):
+            self.render_aohai_raw()
 
 
     # ========================================================
@@ -2015,11 +2118,11 @@ class InverterMonitor:
         tree
     ):
 
-        for item in tree.get_children():
-
-            tree.delete(
-                item
-            )
+        if hasattr(self, "tree_rows"):
+            self.tree_rows.pop(tree, None)
+        children = tree.get_children()
+        if children:
+            tree.delete(*children)
 
 
     # ========================================================

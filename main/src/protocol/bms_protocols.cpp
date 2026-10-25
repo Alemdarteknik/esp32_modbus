@@ -56,20 +56,21 @@ constexpr const char *jkpb_poll[] = {"getCellData","getAdditionalInfo","getBalan
 constexpr const char *jkserial_poll[] = {"getBalancerData"};
 constexpr const char *ved_poll[] = {"vedtext"};
 
-bool decimal_suffix(const char *s, const char *prefix, double scale, std::uint32_t low,
+bool integer_suffix(const char *s, const char *prefix, std::uint32_t low,
                     std::uint32_t high, std::uint32_t &value) {
     const auto n = std::strlen(prefix);
     if (!s || std::strncmp(s, prefix, n) || !s[n]) return false;
-    const char *v = s + n;
-    // Decimal commands do not admit signs, whitespace, exponent or junk suffixes.
-    unsigned dots = 0;
-    for (const char *p = v; *p; ++p) {
-        if (*p == '.') { if (++dots > 1) return false; }
-        else if (*p < '0' || *p > '9') return false;
+    // These manufacturer settings are integers in cells, mV, mA or Ah.
+    // Do not accept rounded decimals, signs, whitespace or exponent notation.
+    std::uint32_t parsed = 0;
+    for (const char *p = s + n; *p; ++p) {
+        if (*p < '0' || *p > '9') return false;
+        const unsigned digit = static_cast<unsigned>(*p - '0');
+        if (parsed > high / 10 || (parsed == high / 10 && digit > high % 10)) return false;
+        parsed = parsed * 10 + digit;
     }
-    char *end = nullptr; const double d = std::strtod(v, &end) * scale;
-    if (end == v || *end || !std::isfinite(d) || d < low || d > high || std::fabs(d - std::round(d)) > 0.000001) return false;
-    value = static_cast<std::uint32_t>(std::round(d)); return true;
+    if (parsed < low) return false;
+    value = parsed; return true;
 }
 
 bool parse(Id id, const char *s, Command &c) {
@@ -95,9 +96,9 @@ bool parse(Id id, const char *s, Command &c) {
     }
     if (id == Id::jk485) {
         if (eq(s,"getBalancerData")) { c.name="getBalancerData";c.code=0xff;return true; }
-        if (decimal_suffix(s,"setCellCount",1,2,24,c.value)) { c.name="setCellCount";c.code=0xf0; }
-        else if (decimal_suffix(s,"setBalanceTrigger",1,2,1000,c.value)) { c.name="setBalanceTrigger";c.code=0xf2; }
-        else if (decimal_suffix(s,"setMaxBalanceCurrent",1,30,1000,c.value)) { c.name="setMaxBalanceCurrent";c.code=0xf4; }
+        if (integer_suffix(s,"setCellCount",2,24,c.value)) { c.name="setCellCount";c.code=0xf0; }
+        else if (integer_suffix(s,"setBalanceTrigger",2,1000,c.value)) { c.name="setBalanceTrigger";c.code=0xf2; }
+        else if (integer_suffix(s,"setMaxBalanceCurrent",30,1000,c.value)) { c.name="setMaxBalanceCurrent";c.code=0xf4; }
         else if (eq(s,"setBalanceOn") || eq(s,"setBalanceOff")) { c.name=eq(s,"setBalanceOn")?"setBalanceOn":"setBalanceOff";c.code=0xf6;c.value=eq(s,"setBalanceOn"); }
         else return false;
         c.setter=true;c.readback="getBalancerData";return true;
@@ -114,7 +115,7 @@ bool parse(Id id, const char *s, Command &c) {
         if (eq(s,"batteryCapacity")) { c.name="batteryCapacity";c.code=0x1000;return true; }
         // Manufacturer documented BMV-700/SmartShunt setting, not a generic
         // raw register writer. Other VE.Direct products can reject this ID.
-        if (decimal_suffix(s,"setBatteryCapacity",1,1,9999,c.value)) { c.name="setBatteryCapacity";c.code=0x1000;c.setter=true;c.readback="batteryCapacity";return true; }
+        if (integer_suffix(s,"setBatteryCapacity",1,9999,c.value)) { c.name="setBatteryCapacity";c.code=0x1000;c.setter=true;c.readback="batteryCapacity";return true; }
         return false;
     }
     return false;
@@ -446,6 +447,43 @@ const char *bms_poll_command(Id id,std::size_t index) {
 }
 bool bms_command_info(Id id,const char *command,EnergyCommandInfo &info) {
     Command c;if(!parse(id,command,c))return false;info={c.name,c.setter,c.readback};return true;
+}
+
+bool bms_setting_readback(Id id,const char *setting_command,const char *readback_command,
+                         const EnergyResponse &response,bool &matches) {
+    matches=false;
+    Command c;
+    if(!parse(id,setting_command,c)||!c.setter||!eq(c.readback,readback_command)||
+       response.acknowledged||response.rejected||response.count>EnergyResponse::maximum_fields)return false;
+    const char *key=nullptr,*label=nullptr,*unit="";
+    double expected=c.value;
+    bool toggle=false;
+    if(id==Id::jk02) {
+        if(c.code==0x1d){key="charge_enabled";label="Charge Enabled";}
+        else if(c.code==0x1e){key="discharge_enabled";label="Discharge Enabled";}
+        toggle=true;
+    } else if(id==Id::jk485) {
+        switch(c.code) {
+        case 0xf0:key="set_number_of_cells";label="Set Number of Cells";break;
+        case 0xf2:key="balance_trigger_voltage";label="Balance Trigger Voltage";unit="V";expected/=1000.0;break;
+        case 0xf4:key="max_balance_current";label="Max Balance Current";unit="A";expected/=1000.0;break;
+        case 0xf6:key="balance_on_off";label="Balance On / Off";toggle=true;break;
+        default:break;
+        }
+    } else if(id==Id::ved) {key="battery_capacity";label="Battery Capacity";unit="Ah";}
+    if(!key)return false;
+    const EnergyField *observed=nullptr;
+    for(std::size_t i=0;i<response.count;++i) {
+        const auto &field=response.fields[i];
+        // The standalone codec harness retains labels; production normalizes
+        // them to lower-case keys when adding fields to EnergyResponse.
+        if(!eq(field.key,key)&&!eq(field.key,label))continue;
+        if(observed||!field.numeric||!eq(field.unit,unit)||!std::isfinite(field.value))return false;
+        observed=&field;
+    }
+    if(!observed||(toggle&&observed->value!=0&&observed->value!=1))return false;
+    matches=std::fabs(observed->value-expected)<0.000001;
+    return true;
 }
 
 CodecStatus bms_build_request(Id id,const char *command,std::uint8_t address,std::uint8_t *out,std::size_t capacity,std::size_t &size) {

@@ -15,10 +15,15 @@ inline constexpr bool ota_enabled = true;
 inline constexpr char ota_download_url[] = "https://stock.alemdarteknik.com/download";
 inline constexpr std::uint32_t ota_check_interval_ms = 6 * 60 * 60 * 1000;
 inline constexpr std::uint32_t ota_jitter_ms = 60 * 60 * 1000;
+inline constexpr std::uint32_t ota_initial_check_min_ms = 30000;
+inline constexpr std::uint32_t ota_initial_check_jitter_ms = 90000;
 inline constexpr std::uint32_t ota_download_timeout_ms = 15 * 60 * 1000;
 // Internal-memory admission BEFORE creating the HTTPS connection.
 inline constexpr std::size_t ota_minimum_free_heap = 64000;
-inline constexpr std::size_t ota_minimum_largest_block = 32768;
+// The configured 16 KiB TLS receive record plus protocol overhead is the
+// largest TLS record allocation. Allow additional headroom without demanding
+// an unrelated 32 KiB block that may never exist after Wi-Fi/MQTT startup.
+inline constexpr std::size_t ota_minimum_largest_block = 24U * 1024U;
 // Once TLS/HTTP buffers exist, retain operating headroom instead of demanding
 // room for a second handshake. These are guards, not reserved allocations or
 // a hardware-validated guarantee that concurrent workloads always fit.

@@ -16,6 +16,7 @@ import re
 from collections import OrderedDict
 from datetime import datetime
 from pathlib import Path
+from types import MappingProxyType
 
 
 _CATALOG = json.loads(Path(__file__).with_name('protocol_catalog.json').read_text(encoding='utf-8'))
@@ -35,6 +36,23 @@ _DEFINITIONS = {
                      key=lambda item: item[2]['order'])
     for protocol, profile in PROFILES.items()
 }
+# Keep firmware precedence while avoiding a complete catalog scan for every
+# fixed command and every received measurement. Entries remain owned by the
+# catalog; these private indices are never exposed to callers.
+_FIXED_DEFINITIONS = {}
+_PATTERN_DEFINITIONS = {}
+_WIRE_QUERIES = {}
+for _protocol, _definitions in _DEFINITIONS.items():
+    _fixed = {}
+    for _definition in _definitions:
+        if _definition[2]['pattern'] is None:
+            _fixed.setdefault(_definition[2]['key'], []).append(_definition)
+    _FIXED_DEFINITIONS[_protocol] = {
+        key: tuple(definitions) for key, definitions in _fixed.items()}
+    _PATTERN_DEFINITIONS[_protocol] = tuple(
+        definition for definition in _definitions if definition[2]['pattern'] is not None)
+    _WIRE_QUERIES[_protocol] = frozenset(
+        entry['key'][:15] for entry in PROFILES[_protocol]['queries'] if entry['pattern'] is None)
 
 
 def classify_command(protocol, command):
@@ -50,12 +68,11 @@ def classify_command(protocol, command):
         raise ValueError('Command must contain 1–79 printable ASCII characters.')
     # Match the compiled firmware definition order: all fixed commands first,
     # then patterns.  Inheritance can add overlapping command prefixes.
-    for patterned in (False, True):
-        for group, index, entry in _DEFINITIONS[protocol]:
-            if (entry['pattern'] is not None) != patterned:
-                continue
-            matched = (_MATCHERS[(protocol, group, index)].fullmatch(command)
-                       if patterned else command == entry['key'])
+    for definitions in (_FIXED_DEFINITIONS[protocol].get(command, ()),
+                        _PATTERN_DEFINITIONS[protocol]):
+        for group, index, entry in definitions:
+            matched = (entry['pattern'] is None or
+                       _MATCHERS[(protocol, group, index)].fullmatch(command))
             if not matched:
                 continue
             if group == 'setters':
@@ -66,15 +83,30 @@ def classify_command(protocol, command):
                     continue
                 if entry['key'] == 'DAT' and not _valid_date(suffix):
                     continue
-                if entry.get('numeric'):
+                if protocol == 'PI30REVO' and entry['key'] in ('PSET', '_PSET'):
+                    parts = suffix.split(' ')
                     try:
-                        number = float(suffix)
+                        datetime(*(int(part) for part in parts[7:12]))
+                    except (ValueError, TypeError):
+                        continue
+                if entry.get('numeric'):
+                    if re.fullmatch(r'[0-9]+', suffix, flags=re.ASCII) is None:
+                        continue
+                    try:
+                        number = int(suffix)
                     except (ValueError, OverflowError):
                         continue
-                    if (not math.isfinite(number) or not entry['minimum'] <= number <= entry['maximum']
-                            or abs(number - math.floor(number + .5)) > .000001):
+                    if not entry['minimum'] <= number <= entry['maximum']:
                         continue
-            return dict(entry, setter=group == 'setters')
+            result = dict(entry, setter=group == 'setters')
+            if group == 'setters':
+                suffix = command[len(entry['key']):]
+                if suffix and suffix[0] in '0123456789':
+                    if protocol.startswith(('PI30', 'PI41')) and protocol != 'PI30REVO' and entry['key'] in ('MCHGC', 'MNCHGC', 'MUCHGC', 'POPM', 'PPCP'):
+                        result['readback'] = 'QPGS' + suffix[0]
+                    elif protocol.startswith('PI18') and entry['key'] in ('MCHGC', 'MUCHGC', 'PCP'):
+                        result['readback'] = None if protocol == 'PI18' else 'PRI' + suffix[0]
+            return result
     raise ValueError(f'Unsupported command or parameter for {protocol}.')
 
 
@@ -116,8 +148,7 @@ def _validated_chunk(data):
         raise ValueError('Invalid telemetry command.')
     # A valid setter ACK does not contain measurements.  Query results are the
     # only native messages eligible to update the monitoring snapshot.
-    wire_query = any(entry['pattern'] is None and command == entry['key'][:15]
-                     for entry in PROFILES[protocol]['queries'])
+    wire_query = command in _WIRE_QUERIES[protocol]
     if not wire_query and classify_command(protocol, command)['setter']:
         raise ValueError('Setting ACK is not telemetry.')
     member = data.get('member_id')
@@ -204,6 +235,9 @@ class NativeTelemetryCollector:
     def reset(self, preserve_counters=False):
         self._assemblies = OrderedDict()
         self._completed = OrderedDict()
+        self._completed_views = OrderedDict()
+        self._records_view = ()
+        self._revision = getattr(self, '_revision', -1) + 1
         self._invalid = OrderedDict()
         self._peer = None
         self._identity = None
@@ -240,6 +274,24 @@ class NativeTelemetryCollector:
     def records(self):
         return copy.deepcopy(list(self._completed.values()))
 
+    @property
+    def revision(self):
+        """Version of completed observations, independent of diagnostics/age."""
+        return self._revision
+
+    def records_view(self):
+        """Return immutable observations without copying the entire history.
+
+        Records and their nested field mappings are read-only; field values
+        are validated JSON scalars. The tuple remains a stable snapshot after
+        later receives or resets. This collector is not thread-safe: callers
+        must use their normal collector/session lock while obtaining the view.
+        ``records()`` remains the public mutable, defensive-copy API.
+        """
+        if self._records_view is None:
+            self._records_view = tuple(self._completed_views.values())
+        return self._records_view
+
     def expire(self, now):
         self._validate_now(now)
         for key, assembly in list(self._assemblies.items()):
@@ -268,6 +320,19 @@ class NativeTelemetryCollector:
         self._drop(reason)
 
     def receive(self, data, now):
+        """Accept a message and return a defensive copy of a completed record."""
+        return self._receive(data, now, copy_result=True)
+
+    def receive_view(self, data, now):
+        """Accept a message and return a read-only completed record, if any.
+
+        The callback path can inspect acceptance without allocating a mutable
+        copy of every measurement. The same locking contract as records_view
+        applies, and later receives cannot change this immutable record view.
+        """
+        return self._receive(data, now, copy_result=False)
+
+    def _receive(self, data, now, *, copy_result):
         self.expire(now)
         self._received_count += 1
         try:
@@ -302,7 +367,7 @@ class NativeTelemetryCollector:
             record = {name: chunk[name] for name in ('member_id', 'protocol', 'command', 'sequence', 'timestamp_ms')}
             record.update(fields=chunk['fields'], received_at=now - chunk['sample_age_ms'] / 1000.0,
                           sample_age_ms=chunk['sample_age_ms'])
-            return self._accept(record, identity, now)
+            return self._accept(record, identity, now, copy_result=copy_result)
         assembly = self._assemblies.get(key)
         if assembly is None:
             while len(self._assemblies) >= self.max_assemblies:
@@ -336,9 +401,9 @@ class NativeTelemetryCollector:
             fields.update(chunks[index])
         record = {key: chunk[key] for key in ('member_id', 'protocol', 'command', 'sequence', 'timestamp_ms')}
         record.update(fields=fields, received_at=now)
-        return self._accept(record, identity, now)
+        return self._accept(record, identity, now, copy_result=copy_result)
 
-    def _accept(self, record, identity, now):
+    def _accept(self, record, identity, now, *, copy_result=True):
         source_uptime = record['timestamp_ms'] + record.get('sample_age_ms', 0)
         if self._peer is None:
             self._peer = {'identity': identity, 'sequence': record['sequence'],
@@ -365,6 +430,7 @@ class NativeTelemetryCollector:
                         self._assemblies.clear()
                         self._invalid.clear()
                         self._completed.clear()
+                        self._completed_views.clear()
                         self._store(candidate)
                         self._peer = {'identity': identity, 'sequence': record['sequence'],
                                       'timestamp_ms': record['timestamp_ms'],
@@ -392,11 +458,18 @@ class NativeTelemetryCollector:
             self._drop('out_of_order_record')
             return None
         self._store(record)
-        return copy.deepcopy(record)
+        return copy.deepcopy(record) if copy_result else self._completed_views[record['command']]
 
     def _store(self, record):
         self._completed_count += 1
         self._completed[record['command']] = record
         self._completed.move_to_end(record['command'])
+        fields = MappingProxyType({name: MappingProxyType(item)
+                                   for name, item in record['fields'].items()})
+        self._completed_views[record['command']] = MappingProxyType(dict(record, fields=fields))
+        self._completed_views.move_to_end(record['command'])
         while len(self._completed) > self.max_records:
-            self._completed.popitem(last=False)
+            command, _ = self._completed.popitem(last=False)
+            del self._completed_views[command]
+        self._records_view = None
+        self._revision += 1

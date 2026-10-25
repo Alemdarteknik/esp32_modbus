@@ -59,8 +59,8 @@ constexpr PollRequest requests[] = {
     {RegisterSpace::input, 344, 1, PollCadence::fast, feature_three_phase, "load-percent"},
     {RegisterSpace::input, 345, 2, PollCadence::on_demand, feature_none, "system-generation-power"},
     {RegisterSpace::input, 347, 2, PollCadence::fast, feature_none, "self-consumption-power"},
-    {RegisterSpace::input, 353, 2, PollCadence::fast, feature_battery, "ac-battery-charge-power"},
-    {RegisterSpace::input, 355, 2, PollCadence::fast, feature_none, "extra-power-to-grid"},
+    {RegisterSpace::input, 353, 2, PollCadence::fast, feature_battery | feature_three_phase, "ac-battery-charge-power"},
+    {RegisterSpace::input, 355, 2, PollCadence::fast, feature_three_phase, "extra-power-to-grid"},
     {RegisterSpace::input, 357, 2, PollCadence::normal, feature_generator, "generator-r-apparent-power"},
     {RegisterSpace::input, 359, 4, PollCadence::normal, feature_generator | feature_three_phase, "generator-st-apparent-power"},
     {RegisterSpace::input, 363, 2, PollCadence::normal, feature_generator, "generator-r-active-power"},
@@ -68,7 +68,7 @@ constexpr PollRequest requests[] = {
     // Read energy in short groups so a model-specific counter does not hide
     // the other valid daily and lifetime counters.
     {RegisterSpace::input, 375, 8, PollCadence::slow, feature_none, "energy-generation-pv"},
-    {RegisterSpace::input, 383, 8, PollCadence::slow, feature_none, "energy-battery"},
+    {RegisterSpace::input, 383, 8, PollCadence::slow, feature_battery, "energy-battery"},
     {RegisterSpace::input, 391, 8, PollCadence::slow, feature_none, "energy-system"},
     {RegisterSpace::input, 399, 8, PollCadence::slow, feature_none, "energy-self-use"},
     {RegisterSpace::input, 407, 8, PollCadence::slow, feature_none, "energy-load-export"},

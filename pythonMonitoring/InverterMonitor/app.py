@@ -1,7 +1,8 @@
 """Run with: python -m streamlit run app.py"""
 import json
+import inspect
 import time
-from functools import partial
+from functools import lru_cache, partial
 from datetime import datetime, date
 
 import streamlit as st
@@ -11,6 +12,24 @@ from native_protocols import PROTOCOL_IDS, PROFILES, classify_command
 
 
 AOHAI_PROTOCOL = 'AOHAI_MODBUS_RTU'
+STATEFUL_CONTAINERS = ('on_change' in inspect.signature(st.tabs).parameters
+                       and 'on_change' in inspect.signature(st.expander).parameters)
+
+
+@lru_cache(maxsize=32)
+def native_command_catalog(protocol):
+    """Prepare static command labels once, independent of live session data."""
+    catalog = PROFILES[protocol]
+    entries = tuple((False, entry) for entry in catalog['queries']) + tuple(
+        (True, entry) for entry in catalog['setters'])
+    rows = tuple({'Command': entry['key'], 'Description': entry['label'],
+                  'Kind': 'Setting' if setter else 'Query',
+                  'Format': entry.get('pattern') or entry['key'],
+                  'Readback query': entry.get('readback') or ''}
+                 for setter, entry in entries)
+    labels = tuple(f'{entry["key"]} · {entry["label"]} · {"Setting" if setter else "Query"}'
+                   for setter, entry in entries)
+    return entries, rows, labels
 
 
 st.set_page_config(page_title='Inverter Monitor', page_icon='☀', layout='wide')
@@ -83,7 +102,12 @@ def freshness(received, connected, timeout):
 
 @st.fragment(run_every=1)
 def interface():
-    state = monitor.snapshot()
+    include_records = (st.session_state.get('monitor_tab', 'Live data') == 'Raw JSON'
+                       or (st.session_state.get('monitor_tab', 'Live data') == 'Advanced diagnostics'
+                           and st.session_state.get('native_diagnostics_open', False))) if STATEFUL_CONTAINERS else (
+                       st.session_state.get('load_native_diagnostics', False)
+                       or st.session_state.get('show_raw_json', False))
+    state = monitor.snapshot(include_records=include_records)
     st.title('Inverter Monitor')
     st.caption('Live telemetry & device settings')
     left, right = st.columns([4, 1], vertical_alignment='bottom')
@@ -100,7 +124,7 @@ def interface():
     st.caption('Member 0 is the gateway\'s local inverter; use the configured member number for a remote inverter. Select the same protocol as the ESP installer.')
     if not state['active'] and protocol != selected_protocol:
         monitor.select_protocol(protocol)
-        state = monitor.snapshot()
+        state = monitor.snapshot(include_records=include_records)
     if state['active']:
         if right.button('Disconnect', width='stretch'):
             monitor.close()
@@ -117,7 +141,10 @@ def interface():
             st.rerun()
         except Exception as error:
             st.error(str(error))
-    st.caption(state['status'])
+    if state.get('connection_error'):
+        st.error(state['status'])
+    else:
+        st.caption(state['status'])
     if not state['active']:
         st.info('Enter your inverter ID to connect. Data and controls will appear here.')
         return
@@ -131,9 +158,11 @@ def interface():
     if state.get('protocol_mismatch'):
         st.warning(f'Device reports {state["protocol_mismatch"]}; disconnect and select its matching protocol.')
 
-    live_tab, health_tab, settings_tab, raw_tab = st.tabs(
-        ['Live data', 'Gateway health', 'Manual settings', 'Advanced diagnostics'] if native
-        else ['Live data', 'Gateway health', 'All settings', 'Raw JSON'])
+    tabs_options = {'key': 'monitor_tab', 'on_change': 'rerun'} if STATEFUL_CONTAINERS else {}
+    tabs = st.tabs(
+        ['Live data', 'Gateway health', 'Manual settings', 'Raw JSON', 'Advanced diagnostics'] if native
+        else ['Live data', 'Gateway health', 'All settings', 'Raw JSON'], **tabs_options)
+    live_tab, health_tab, settings_tab, raw_tab = tabs[:4]
     with live_tab:
         if native:
             native_measurements(state)
@@ -154,15 +183,38 @@ def interface():
         else:
             settings(state)
     with raw_tab:
-        if native:
-            with st.expander('Protocol records and delivery diagnostics', expanded=False):
-                native_diagnostics(state)
-                st.json({'protocol': state['protocol'], 'member_id': state['member_id'],
-                         'records': records, 'result': state.get('native_result'),
-                         'incomplete_records': state.get('native_incomplete', 0),
-                         'dropped_records': state.get('native_drops', 0)})
-        else:
-            st.json(state['live'])
+        if (not STATEFUL_CONTAINERS or raw_tab.open) and (
+                STATEFUL_CONTAINERS or st.checkbox('Show raw JSON', key='show_raw_json')):
+            if native:
+                payload = state.get('native_raw_live')
+                if payload:
+                    st.caption('Latest received live JSON payload')
+                    st.json(payload)
+                else:
+                    st.caption('Collected protocol records')
+                    st.json({'protocol': state['protocol'], 'member_id': state['member_id'],
+                             'records': records})
+                if state.get('native_result'):
+                    st.caption('Latest command result')
+                    st.json(state['native_result'])
+            else:
+                st.json(state['live'])
+    if native:
+        diagnostics_tab = tabs[4]
+        with diagnostics_tab:
+            if STATEFUL_CONTAINERS and not diagnostics_tab.open:
+                return
+            options = {'key': 'native_diagnostics_open', 'on_change': 'rerun'} if STATEFUL_CONTAINERS else {}
+            diagnostics = st.expander('Protocol records and delivery diagnostics', expanded=False, **options)
+            with diagnostics:
+                load = diagnostics.open if STATEFUL_CONTAINERS else st.checkbox(
+                    'Load protocol diagnostics', key='load_native_diagnostics')
+                if load:
+                    native_diagnostics(state)
+                    st.json({'protocol': state['protocol'], 'member_id': state['member_id'],
+                             'records': records, 'result': state.get('native_result'),
+                             'incomplete_records': state.get('native_incomplete', 0),
+                             'dropped_records': state.get('native_drops', 0)})
 
 
 def aohai_measurements(state):
@@ -265,7 +317,8 @@ def native_measurements(state):
             value = native_power_value(summary, quality, summary_key, signed=summary_key == 'battery_kw')
             if value not in ('Unavailable', 'Stale'):
                 unit = '%' if summary_key == 'load_percentage' else 'kW'
-        elif fields and (bms or key in ('pv', 'load')):
+        elif fields and (bms or key in ('pv', 'load')) and not (
+                key == 'pv' and live.get('pv_total_requires_channels')):
             field = group.get('primary') or {}
             if bms and key == 'battery' and field.get('unit') in ('W', 'kW'):
                 field = next((fields[name] for name in ('battery_voltage', 'total_battery_voltage',
@@ -346,7 +399,7 @@ def native_settings(state):
     st.subheader('Protocol commands and settings')
     profile = state['protocol']
     catalog = PROFILES[profile]
-    entries = [(False, entry) for entry in catalog['queries']] + [(True, entry) for entry in catalog['setters']]
+    entries, catalog_rows, command_labels = native_command_catalog(profile)
     st.caption('Queries read the device. Settings require explicit confirmation and are sent once. Values shown in command examples are examples, not current device settings.')
     if state.get('notice'):
         st.info(state['notice'])
@@ -355,11 +408,7 @@ def native_settings(state):
     if not catalog['setters']:
         st.info('This profile has no documented settings commands in the firmware catalog.')
     with st.expander('All documented commands'):
-        table([{'Command': entry['key'], 'Description': entry['label'],
-                'Kind': 'Setting' if setter else 'Query',
-                'Format': entry.get('pattern') or entry['key'],
-                'Readback query': entry.get('readback') or ''}
-               for setter, entry in entries], all_rows=True)
+        table(catalog_rows, all_rows=True)
     pending = state.get('native_pending')
     if pending:
         st.info(f'Waiting for command {pending["command_id"]}: {pending["command"]}. No automatic retry.')
@@ -367,31 +416,40 @@ def native_settings(state):
     if result:
         outcome = result.get('outcome', 'unknown')
         if outcome == 'acknowledged':
-            st.success('Setting accepted by the device. An acknowledgement does not confirm that a measured value equals the requested value.')
+            if result.get('setting_verified') is False:
+                st.warning('Setting accepted, but its readback did not match the request. Check the inverter setting; no automatic retry.')
+            else:
+                st.success('Setting accepted by the device. An acknowledgement does not confirm that a measured value equals the requested value.')
         elif outcome == 'completed':
-            st.success('Query completed. Its measurements appear in Live data when received.')
+            st.success('Setting verified by a fresh device readback.' if result.get('setting_verified') is True
+                       else 'Query completed. Its measurements appear in Live data when received.')
         elif outcome == 'uncertain':
             st.warning('Command outcome uncertain. It may have reached the device. Check the device before sending another setting; do not retry automatically.')
         elif outcome in ('rejected', 'unsupported', 'invalid_response'):
             st.error('Command result: ' + outcome.replace('_', ' '))
         else:
             st.info('Command result: ' + outcome.replace('_', ' '))
-        table({key: result[key] for key in ('command_id', 'command', 'outcome', 'write_sent', 'detail') if key in result})
+        table({key: result[key] for key in ('command_id', 'command', 'outcome', 'write_sent', 'setting_verified', 'detail') if key in result})
     if not entries:
         return
     disabled = not state['ready'] or bool(pending) or bool(state.get('protocol_mismatch'))
     selected = st.selectbox('Documented command', list(range(len(entries))),
-                            format_func=lambda index: f'{entries[index][1]["key"]} · {entries[index][1]["label"]} · {"Setting" if entries[index][0] else "Query"}',
+                            format_func=lambda index: command_labels[index],
                             disabled=disabled, key='native_choice:' + profile)
     setter, entry = entries[selected]
     command_disabled = disabled or (setter and state.get('native_write_blocked', False))
     st.caption('Required format: ' + (entry.get('pattern') or entry['key']))
     if entry.get('minimum') is not None and entry.get('maximum') is not None:
         st.caption(f'Allowed value: {entry["minimum"]} to {entry["maximum"]} {entry.get("unit", "")}'.rstrip())
-    if entry.get('readback'):
-        st.caption('The ESP may issue this readback query after acceptance: ' + entry['readback'] + '. Inspect the returned measurements; equality is not automatically confirmed.')
     command = st.text_input('Full protocol command', value=entry.get('example') or entry['key'],
                             disabled=command_disabled, key=f'native_command:{profile}:{selected}')
+    try:
+        command_readback = classify_command(profile, command).get('readback')
+    except ValueError:
+        command_readback = None
+    if setter:
+        st.caption(('The ESP may verify this setting with ' + command_readback + '. Only a matching fresh readback is shown as verified.')
+                   if command_readback else 'No documented readback query for this command. An ACK alone is shown as accepted.')
     confirmed = False
     confirmation_revision_key = 'native_confirmation_revision:' + profile
     if setter:
@@ -421,7 +479,9 @@ def settings(state):
     if state['notice']:
         st.info(state['notice'])
     busy = bool(state['jobs'] or (state['pending'] and state['pending']['operation'] == 'set'))
-    disabled = not state['ready'] or busy
+    disabled = not state['ready'] or busy or state.get('aohai_write_blocked', False)
+    if state.get('aohai_write_blocked', False):
+        st.warning('Earlier setting outcome is uncertain. Check the inverter before reconnecting. Automatic reads continue; settings are blocked in this session.')
     with st.expander('System time'):
         values = {s.name: state['cache'].get(k) for k, s in monitor.catalog.items() if s.name in TIME_FIELDS}
         try:
@@ -449,21 +509,28 @@ def settings(state):
     domains = list(dict.fromkeys(s.domain for s in monitor.catalog.values()))
     category = st.selectbox('Category', ['All'] + domains,
                             format_func=lambda d: categories.get(d, d), disabled=busy)
-    keys = [k for k, s in monitor.catalog.items()
-            if (category == 'All' or s.domain == category)
-            and query.casefold() in f'{s.name} {s.description} {s.meaning}'.casefold()]
-    st.caption('Physical changes appear after the next confirmed device read. Selected setting: targeted about every 5 seconds when responsive; the full catalog continues rotating. Timeouts can delay refreshes.')
+    query_text = query.casefold()
+    groups = {}
+    keys = []
+    for key, item in monitor.catalog.items():
+        if ((category == 'All' or item.domain == category)
+                and query_text in f'{item.name} {item.description} {item.meaning}'.casefold()):
+            keys.append(key)
+            groups.setdefault(item.domain, []).append(key)
+    st.caption('Physical changes appear after the next confirmed device read. Fresh ESP settings snapshots avoid duplicate reads. The selected setting is checked about every 30 seconds; other values are read when missing or older than ten minutes. Timeouts can delay refreshes.')
     st.caption('Click a settings row to open its editor below the tables. Nothing is written until you confirm and press Set.')
+    now = time.monotonic()
     for domain in domains:
-        group = [k for k in keys if monitor.catalog[k].domain == domain]
+        group = groups.get(domain, [])
         if not group:
             continue
         st.markdown('#### ' + categories.get(domain, domain))
         table_key = f'settings_rows:{domain}:{query}'
         st.dataframe([{'Setting': monitor.catalog[k].description, 'Name': monitor.catalog[k].name,
-                'Current': display_value(monitor.catalog[k], state['cache'].get(k)),
+                'Current': display_value(monitor.catalog[k], state['cache'].get(k)) +
+                    (' (command register)' if monitor.catalog[k].name == 'OnOffSet' and k in state['cache'] else ''),
                 'Read status': state['read_status'].get(k, 'Waiting for read' if monitor.catalog[k].readable else 'Not readable'),
-                'Last confirmed': f'{int(time.monotonic() - state["value_at"][k])}s ago' if k in state['value_at'] else 'Not yet confirmed',
+                'Last confirmed': f'{int(now - state["value_at"][k])}s ago' if k in state['value_at'] else 'Not yet confirmed',
                 'Requirement': monitor.catalog[k].guard} for k in group],
                 hide_index=True, width='stretch', key=table_key, selection_mode='single-row',
                 on_select=partial(select_setting_row, st.session_state, table_key, tuple(group), monitor))
@@ -477,6 +544,8 @@ def settings(state):
     item = monitor.catalog[key]
     current = state['cache'].get(key)
     st.caption(f'Current: {display_value(item, current)} · Requirement: {item.guard}')
+    if item.name == 'OnOffSet':
+        st.caption('This current value is the on/off command register. Actual inverter On/Off is confirmed only after an operating-state check.')
     st.write(item.meaning)
     if item.blocked:
         st.warning(item.blocked)

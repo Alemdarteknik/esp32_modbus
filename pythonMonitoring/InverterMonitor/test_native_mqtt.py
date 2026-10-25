@@ -54,6 +54,7 @@ class NativeBackendTests(unittest.TestCase):
         self.assertIn((self.m.base + '/result', 1), subscriptions)
         self.assertIn((self.m.base + '/live', 1), subscriptions)
         self.assertIn((self.m.health_topic, 0), subscriptions)
+        self.assertNotIn((self.m.base + '/snapshot/#', 1), subscriptions)
 
     def test_aohai_live_health_qos_unchanged(self):
         self.m.select_protocol('AOHAI_MODBUS_RTU')
@@ -63,6 +64,7 @@ class NativeBackendTests(unittest.TestCase):
         self.assertIn((self.m.health_topic, 0), subscriptions)
         self.assertIn((self.m.base + '/result', 1), subscriptions)
         self.assertIn((self.m.base + '/snapshot/#', 1), subscriptions)
+        self.assertFalse(any(topic.startswith(self.m.base + '/protocol') for topic, _ in subscriptions))
 
     def test_native_mode_does_not_send_201_aohai_reads(self):
         for _ in range(5):
@@ -134,6 +136,29 @@ class NativeBackendTests(unittest.TestCase):
         self.assertNotIn('Confirmed:', self.m.notice)
         self.assertEqual(self.m.cache, {})
         self.assertFalse(self.m.native_write_blocked)
+
+    def test_verified_setter_requires_explicit_fresh_readback_flag(self):
+        self.m.send_native('POP02', confirmed=True)
+        for verified in (None, False, 1, 'true'):
+            self.result(outcome='completed', setting_verified=verified)
+            self.assertIsNotNone(self.m.native_pending)
+        self.result(outcome='completed', setting_verified=True)
+        self.assertIsNone(self.m.native_pending)
+        self.assertIn('verified by', self.m.notice)
+
+    def test_acknowledged_readback_mismatch_is_visible(self):
+        self.m.send_native('POP02', confirmed=True)
+        self.result(setting_verified=False)
+        self.assertIn('did not match', self.m.notice)
+        self.assertNotIn('verified by', self.m.notice)
+        self.assertEqual(self.m.client.publish.call_count, 1)
+
+    def test_query_cannot_claim_setting_verification(self):
+        self.m.send_native('QPIGS')
+        self.result(setting_verified=True)
+        self.assertIsNotNone(self.m.native_pending)
+        self.result(setting_verified=None)
+        self.assertIsNone(self.m.native_pending)
 
     def test_result_requires_matching_member_id_profile_command_and_operation(self):
         self.m.send_native('POP02', confirmed=True)
@@ -228,6 +253,12 @@ class NativeBackendTests(unittest.TestCase):
         self.assertEqual(state['native_live']['power_summary']['load_kw'], .45)
         self.assertEqual(state['native_live']['operating_status']['device_mode'], 'Standby')
         self.assertTrue(state['native_live']['telemetry_available'])
+        self.assertEqual(state['native_raw_live'], data)
+        state['native_raw_live']['native_records'][0]['fields'].clear()
+        self.assertTrue(self.m.snapshot()['native_raw_live']['native_records'][0]['fields'])
+        self.assertEqual(self.m.snapshot(include_records=False)['native_raw_live'], {})
+        self.m.close()
+        self.assertEqual(self.m.snapshot()['native_raw_live'], {})
         self.m.client.publish.assert_not_called()
 
     def test_periodic_cached_live_and_duplicate_atomic_do_not_refresh_sample(self):

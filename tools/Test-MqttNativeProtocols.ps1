@@ -28,6 +28,7 @@ try {
         ('-I' + (Join-Path $projectRoot 'main/include')) `
         ('-I' + $jsonPath) ('-I' + $testBuildPath) `
         (Join-Path $projectRoot 'main/src/inverter/inverter_command.cpp') `
+        (Join-Path $projectRoot 'main/src/inverter/register_command.cpp') `
         (Join-Path $projectRoot 'main/src/inverter/register_value.cpp') `
         (Join-Path $projectRoot 'main/src/inverter/aohai_register_catalog.generated.cpp') `
         (Join-Path $projectRoot 'main/src/protocol/energy_protocol.cpp') `

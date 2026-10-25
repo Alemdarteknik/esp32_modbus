@@ -5,6 +5,8 @@ from datetime import datetime
 import tkinter as tk
 from tkinter import ttk
 from settings_selection import setting_member_matches
+from settings_results import begin_write, finish_write, write_problem
+from settings_polling import SettingsReadPolicy, CONTROL_REFRESH_SECONDS
 
 
 class TimeSettings:
@@ -20,6 +22,7 @@ class TimeSettings:
         self.read_values = {}
         self.writing = False
         self.dialog = None
+        self.read_policy = SettingsReadPolicy(refresh_seconds=CONTROL_REFRESH_SECONDS)
         self.value = tk.StringVar(value='Unknown')
         style = ttk.Style(monitor.root)
         style.configure('Time.TSpinbox', fieldbackground='#111c30', foreground='#ffffff',
@@ -36,12 +39,15 @@ class TimeSettings:
         monitor.root.after(10000, self.refresh)
 
     def reset(self):
+        if self.writing:
+            finish_write(self.monitor, self, uncertain=True)
         self.ready = False
         self.pending = None
         self.jobs = []
         self.values = {}
         self.read_values = {}
         self.writing = False
+        self.read_policy.reset()
         self.value.set('Unknown')
         self.status.configure(text='Connect to read inverter time.')
         if self.dialog is not None:
@@ -51,7 +57,7 @@ class TimeSettings:
     def refresh(self):
         if not self.monitor.running:
             return
-        if self.dialog is None:
+        if self.dialog is None and self.read_policy.due('calendar', time.monotonic()):
             self.request('get')
         self.monitor.root.after(10000, self.refresh)
 
@@ -68,6 +74,7 @@ class TimeSettings:
         if operation != 'get':
             return
         self.read_values = {}
+        self.read_policy.attempted('calendar', time.monotonic())
         self.jobs = [('get', name, None) for name in self.FIELDS]
         self.send_next()
 
@@ -85,7 +92,7 @@ class TimeSettings:
         try:
             info = self.monitor.mqtt_client.publish(
                 self.monitor.mqtt_topic.rsplit('/', 1)[0] + '/command',
-                json.dumps(payload), qos=1, retain=False)
+                json.dumps(payload), qos=0 if operation == 'set' else 1, retain=False)
             if info.rc != 0:
                 raise RuntimeError(f'MQTT publish error {info.rc}')
         except Exception as error:
@@ -99,6 +106,10 @@ class TimeSettings:
 
     def fail(self, message):
         partial = self.writing
+        if not partial:
+            self.read_policy.failed('calendar', time.monotonic())
+        if partial:
+            finish_write(self.monitor, self, uncertain=True)
         self.jobs = []
         self.pending = None
         self.writing = False
@@ -106,8 +117,8 @@ class TimeSettings:
         self.value.set('Unknown')
         self.status.configure(text=('Time change not confirmed; some fields may have been written. ' if partial else '') + message)
 
-    def receive(self, topic, data):
-        if not setting_member_matches(self.monitor, data):
+    def receive(self, topic, data, retained=False):
+        if retained or not setting_member_matches(self.monitor, data):
             return
         base = self.monitor.mqtt_topic.rsplit('/', 1)[0]
         pending = self.pending
@@ -121,6 +132,8 @@ class TimeSettings:
             self.fail(f"{name}: {data.get('outcome', 'invalid result')}; invalid or unconfirmed value.")
             return
         value = int(raw)
+        if name == 'Year' and 0 <= value <= 99:
+            value += 2000
         if operation == 'set' and value != expected:
             self.fail(f'{name}: read-back mismatch ({value}, expected {expected}).')
             return
@@ -131,6 +144,7 @@ class TimeSettings:
             self.send_next()
         elif operation == 'set':
             self.writing = False
+            finish_write(self.monitor, self)
             self.status.configure(text='All six time fields confirmed. Reading inverter time...')
             self.request('get')
         else:
@@ -140,6 +154,7 @@ class TimeSettings:
                 self.fail(f'Invalid inverter time: {error}')
                 return
             self.values = dict(self.read_values)
+            self.read_policy.received('calendar', time.monotonic())
             self.value.set(stamp.strftime('%Y-%m-%d %H:%M:%S'))
             self.status.configure(text='Last read from inverter. Click the field to edit.')
 
@@ -148,6 +163,10 @@ class TimeSettings:
             self.dialog.lift()
             return
         if not self.ready or self.monitor.disconnecting or not self.values or self.writing:
+            return
+        problem = write_problem(self.monitor, self)
+        if problem:
+            self.status.configure(text=problem)
             return
         self.dialog = tk.Toplevel(self.monitor.root)
         self.dialog.title('Set inverter system time')
@@ -186,6 +205,10 @@ class TimeSettings:
             return
         if self.writing:
             return
+        problem = write_problem(self.monitor, self)
+        if problem:
+            self.status.configure(text=problem)
+            return
         try:
             values = {name: int(var.get()) for name, var in self.edit_values.items()}
             self.calendar(values)
@@ -194,6 +217,7 @@ class TimeSettings:
             return
         # Supersede a background getter so one Set click is sufficient.
         self.pending = None
+        begin_write(self.monitor, self)
         self.jobs = [('set', name, values[name]) for name in self.FIELDS]
         self.writing = True
         self.close_editor()

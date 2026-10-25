@@ -27,6 +27,7 @@ class Setting:
     raw_unit: str = ''
     bounds: tuple | None = None
     step: Decimal | None = None
+    encoding_bounds: tuple | None = None
     blocked: str = ''
     readable: bool = False
 
@@ -71,6 +72,8 @@ class Setting:
             raise ValueError('Value must be finite')
         if self.bounds and not self.bounds[0] <= number <= self.bounds[1]:
             raise ValueError(f'Allowed application range: {self.bounds[0]} to {self.bounds[1]}')
+        if self.encoding_bounds and not self.encoding_bounds[0] <= number <= self.encoding_bounds[1]:
+            raise ValueError(f'Value cannot be encoded by this setting ({self.encoding_bounds[0]} to {self.encoding_bounds[1]})')
         if self.step and number % self.step:
             raise ValueError(f'Value must be a multiple of {self.step}')
         if self.value_type == 'ascii_or_uint16' and (number != number.to_integral_value() or not 0 <= number <= 65535):
@@ -131,12 +134,18 @@ def load_catalog(path=None):
             item.blocked = 'Catalog marks this item reserved/unused; no validated write is available.'
         # Only infer engineering bounds for a single explicit range and known
         # linear source unit. Complex/model-dependent ranges remain visible.
-        match = re.fullmatch(r'\s*(-?\d+(?:\.\d+)?)\s*[~～]\s*(-?\d+(?:\.\d+)?)\s*', item.raw_range)
+        match = re.fullmatch(r'\s*(-?\d+(?:\.\d+)?)\s*(?:~|～|-)\s*(-?\d+(?:\.\d+)?)\s*', item.raw_range)
         unit = item.raw_unit.strip()
         factor = Decimal(1) if unit in ('', '-', 'Year', 'Month', 'Day', 'Hour', 'Minutes', 'Seconds') else None
-        scale = re.fullmatch(r'(0\.0*1|1|10|100)(V|A|Hz|W|s|%|Pn%|%Pn|min|DAY)', unit)
+        scale = re.fullmatch(r'(0\.\d+|\d+)(V|A|Hz|W|ms|s|%|Pn%|%Pn|Pn/min|Pn%/min|min|DAY)?', unit)
         if scale:
             factor = Decimal(scale[1])
+        if factor is not None and not item.choices and not item.value_type.startswith('ascii'):
+            item.step = factor
+            raw_limits = {'uint8': (0, 255), 'uint16': (0, 65535), 'sint16': (-32768, 32767)}
+            limits = raw_limits.get(item.value_type.split(';', 1)[0])
+            if limits:
+                item.encoding_bounds = tuple(Decimal(limit) * factor for limit in limits)
         if match and factor is not None and not item.choices and not item.value_type.startswith('ascii'):
             # Prefer an explicit engineering-value boundary example when one
             # exists (some catalog source units do not describe API scaling).
@@ -145,6 +154,10 @@ def load_catalog(path=None):
                 factor = abs(Decimal(example[1]) / Decimal(match[1]))
             item.bounds = tuple(sorted((Decimal(match[1]) * factor, Decimal(match[2]) * factor)))
             item.step = factor
+        if name == 'Year':
+            item.bounds, item.step = (Decimal(2022), Decimal(2050)), Decimal(1)
+        if name == 'Hour':
+            item.bounds = (Decimal(0), Decimal(23))
         if name == 'OnOffSet':
             item.choices = {k: v for k, v in item.choices.items() if v in (0, 1)}
         if name == 'NumberTimePeriods':

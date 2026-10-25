@@ -1,12 +1,14 @@
 """Exercise the native-protocol UI without opening an MQTT connection."""
 import copy
 import json
+import inspect
 import time
 import unittest
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from streamlit.testing.v1 import AppTest
+import streamlit as st
 from native_protocols import PROFILES, classify_command
 from mqtt_backend import MonitorSession
 from native_live import normalize_native_live
@@ -25,12 +27,15 @@ class NativeMonitorStub:
             'native_incomplete': 0, 'native_drops': 0,
         }
 
-    def snapshot(self):
+    def snapshot(self, *, include_records=True):
         state = copy.deepcopy(self.state)
         for record in state['native_records']:
             record.setdefault('member_id', state['member_id'])
         state['native_live'] = normalize_native_live(state['native_records'], state['protocol'],
-                                                     state['member_id'], time.monotonic())
+            state['member_id'], time.monotonic(),
+            connected_pv_inputs=state.get('native_connected_pv_inputs'))
+        if not include_records:
+            state['native_records'] = []
         return state
 
     def select_protocol(self, protocol):
@@ -57,6 +62,46 @@ class NativeMonitorStub:
 
 
 class NativeAppTests(unittest.TestCase):
+    def test_raw_json_tab_for_each_native_profile(self):
+        for protocol in PROFILES:
+            if protocol == 'AOHAI_MODBUS_RTU':
+                continue
+            with self.subTest(protocol=protocol):
+                session = NativeMonitorStub(protocol)
+                session.state['native_records'] = [dict(protocol=protocol, member_id=0,
+                    command=PROFILES[protocol]['polls'][0], sequence=7,
+                    timestamp_ms=7000, received_at=time.monotonic(),
+                    fields={'raw_value': {'value': 0, 'unit': ''}})]
+                app = self.app(session)
+                self.assertIn('Raw JSON', [tab.label for tab in app.tabs])
+                self.assertFalse(app.json)
+                app.session_state['monitor_tab'] = 'Raw JSON'
+                app.session_state['show_raw_json'] = True
+                app.run()
+                self.assertFalse(app.exception)
+                payload = json.loads(app.json[0].value)
+                self.assertEqual(payload['protocol'], protocol)
+                self.assertEqual(payload['records'][0]['fields']['raw_value']['value'], 0)
+                self.assertFalse(session.commands)
+
+    def test_raw_json_shows_original_live_payload_and_updates(self):
+        session = NativeMonitorStub()
+        session.state['native_raw_live'] = {'protocol': 'PI30', 'member_id': 0,
+            'sequence': 1, 'native_records': [], 'firmware_field': {'value': None}}
+        app = self.app(session)
+        app.session_state['monitor_tab'] = 'Raw JSON'
+        app.session_state['show_raw_json'] = True
+        app.run()
+        self.assertFalse(app.exception)
+        self.assertEqual(json.loads(app.json[0].value), session.state['native_raw_live'])
+        session.state['native_raw_live']['sequence'] = 2
+        # AppTest has no tab widget serializer; preserve the browser's active
+        # tab explicitly when simulating the next automatic fragment refresh.
+        app.session_state['monitor_tab'] = 'Raw JSON'
+        app.run()
+        self.assertEqual(json.loads(app.json[0].value)['sequence'], 2)
+        self.assertFalse(session.commands)
+
     def app(self, session):
         app = AppTest.from_file(str(Path(__file__).with_name('app.py')))
         app.session_state['monitor'] = session
@@ -66,6 +111,13 @@ class NativeAppTests(unittest.TestCase):
 
     def widget(self, collection, label):
         return next(widget for widget in collection if widget.label == label)
+
+    def open_diagnostics(self, app):
+        app.session_state['monitor_tab'] = 'Advanced diagnostics'
+        app.session_state['native_diagnostics_open'] = True
+        app.session_state['load_native_diagnostics'] = True
+        app.run()
+        self.assertFalse(app.exception)
 
     def choose(self, app, protocol, key, setter=False):
         entries = [(False, entry) for entry in PROFILES[protocol]['queries']]
@@ -104,6 +156,7 @@ class NativeAppTests(unittest.TestCase):
         session.state['native_incomplete'] = 1
         session.state['native_drops'] = 2
         app = self.app(session)
+        self.open_diagnostics(app)
         frames = [frame.value for frame in app.dataframe if 'name' in frame.value.columns]
         self.assertEqual(sum(len(frame) for frame in frames), 4)
         measured = frames[0].set_index('name')
@@ -213,7 +266,7 @@ class NativeAppTests(unittest.TestCase):
         session.receive(session.base + '/protocol/QPIGS',
                         dict(metadata, chunk_index=1, final_chunk=True,
                              fields={'load_power': {'value': 2400, 'unit': 'W'}}))
-        app.run()
+        self.open_diagnostics(app)
         measured = next(frame.value for frame in app.dataframe if 'name' in frame.value.columns).set_index('name')
         self.assertEqual(measured.loc['battery_voltage', 'value'], '52.4')
         self.assertEqual(measured.loc['load_power', 'unit'], 'W')
@@ -269,9 +322,15 @@ class NativeAppTests(unittest.TestCase):
         self.assertIn('Battery', headings)
         self.assertNotIn('QPIGS', headings)
         self.assertNotIn('QPI', headings)
-        for label in ('Manual commands and settings', 'Protocol records and delivery diagnostics'):
-            expander = next(item for item in app.expander if item.label == label)
-            self.assertFalse(expander.proto.expanded)
+        expander = next(item for item in app.expander if item.label == 'Manual commands and settings')
+        self.assertFalse(expander.proto.expanded)
+        self.assertFalse(app.json)
+        self.assertFalse(any('name' in frame.value.columns for frame in app.dataframe))
+        app.session_state['monitor_tab'] = 'Advanced diagnostics'
+        app.run()
+        expander = next(item for item in app.expander if item.label == 'Protocol records and delivery diagnostics')
+        self.assertFalse(expander.proto.expanded)
+        self.assertFalse(app.json)
         self.assertFalse(session.commands)
 
     def test_identity_and_standby_do_not_replace_missing_or_stale_power(self):
@@ -307,6 +366,30 @@ class NativeAppTests(unittest.TestCase):
         self.assertEqual(next(metric.value for metric in app.metric if metric.label == 'Battery'), 'Unavailable')
         self.assertEqual(next(metric.value for metric in app.metric if metric.label == 'Grid'), 'Unavailable')
         self.assertFalse(any('Waiting for fresh' in item.value for item in app.info))
+        self.assertFalse(session.commands)
+
+    def test_pi30_second_tracker_is_visible_and_a_missing_tracker_is_not_a_total(self):
+        from test_native_pv2 import trackers
+        session = NativeMonitorStub()
+        records = trackers()
+        now = time.monotonic()
+        for record in records:
+            record['received_at'] = now
+        session.state.update(native_records=records[:1], native_connected_pv_inputs=2)
+        app = self.app(session)
+        self.assertEqual(next(metric.value for metric in app.metric if metric.label == 'PV'), 'Unavailable')
+        session.state['native_records'] = records
+        app.run()
+        self.assertEqual(next(metric.value for metric in app.metric if metric.label == 'PV'), '1.905 kW')
+        pv = next(frame.value for frame in app.dataframe if 'Measurement' in frame.value.columns
+                  and 'Pv2 charging power' in frame.value['Measurement'].values).set_index('Measurement')
+        self.assertEqual(pv.loc['Pv2 input voltage', 'Value'], '327.3')
+        self.assertEqual(pv.loc['Pv2 input voltage', 'Unit'], 'V')
+        self.assertEqual(pv.loc['Pv2 input current', 'Value'], '3.1')
+        self.assertEqual(pv.loc['Pv2 charging power', 'Value'], '1049')
+        records[1]['received_at'] = now - 60
+        app.run()
+        self.assertEqual(next(metric.value for metric in app.metric if metric.label == 'PV'), 'Stale')
         self.assertFalse(session.commands)
 
     def test_power_view_distinguishes_active_apparent_and_signed_battery(self):
@@ -380,6 +463,51 @@ class NativeAppTests(unittest.TestCase):
         battery = next(frame.value for frame in app.dataframe
                        if 'Measurement' in frame.value.columns and 'Voltage cell01' in set(frame.value['Measurement']))
         self.assertEqual(len(battery), 6)
+        self.assertFalse(session.commands)
+
+    def test_hidden_diagnostics_omit_record_copies_and_reopen_current_data(self):
+        session = NativeMonitorStub()
+        session.state['native_records'] = [dict(protocol='PI30', command='QPIGS', sequence=1,
+            timestamp_ms=1, received_at=time.monotonic(),
+            fields={'pv_power': {'value': 830, 'unit': 'W'}})]
+        session.snapshot = Mock(wraps=session.snapshot)
+        app = self.app(session)
+        session.snapshot.assert_called_with(include_records=False)
+        self.assertFalse(app.json)
+        self.assertEqual(next(metric.value for metric in app.metric if metric.label == 'PV'), '0.83 kW')
+        self.open_diagnostics(app)
+        session.snapshot.assert_called_with(include_records=True)
+        self.assertTrue(app.json)
+        app.session_state['monitor_tab'] = 'Live data'
+        session.state['native_records'][0]['received_at'] -= 60
+        app.run()
+        session.snapshot.assert_called_with(include_records=False)
+        self.assertFalse(app.json)
+        self.assertEqual(next(metric.value for metric in app.metric if metric.label == 'PV'), 'Stale')
+        self.assertFalse(session.commands)
+
+    def test_older_streamlit_loads_diagnostics_only_after_explicit_toggle(self):
+        session = NativeMonitorStub()
+        session.state['native_records'] = [dict(protocol='PI30', command='QPIGS', sequence=1,
+            timestamp_ms=1, received_at=time.monotonic(),
+            fields={'pv_power': {'value': 830, 'unit': 'W'}})]
+        session.snapshot = Mock(wraps=session.snapshot)
+        signature = inspect.signature
+
+        def legacy_signature(function, *args, **kwargs):
+            return inspect.Signature() if function is st.tabs else signature(function, *args, **kwargs)
+
+        with patch('inspect.signature', side_effect=legacy_signature):
+            app = self.app(session)
+            self.assertFalse(app.json)
+            session.snapshot.assert_called_with(include_records=False)
+            self.widget(app.checkbox, 'Load protocol diagnostics').check().run()
+            self.assertFalse(app.exception)
+            session.snapshot.assert_called_with(include_records=True)
+            self.assertTrue(app.json)
+            self.widget(app.checkbox, 'Load protocol diagnostics').uncheck().run()
+            session.snapshot.assert_called_with(include_records=False)
+            self.assertFalse(app.json)
         self.assertFalse(session.commands)
 
 

@@ -5,6 +5,9 @@ struct OtaStatus {
     const char *state;
     char available_version[32]{};
     std::int64_t last_check_ms = 0;
+    // Monotonic deadline for the initial check or scheduled retry; zero while
+    // checking, disabled, or waiting for the trial boot to become healthy.
+    std::int64_t next_check_ms = 0;
     const char *reason = "";
     std::uint32_t internal_free_bytes = 0;
     std::uint32_t internal_largest_block_bytes = 0;

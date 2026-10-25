@@ -28,7 +28,7 @@ their command names are shared.
 | `PI18` | 13 query definitions | 11 patterns | USB HID or model's serial interface, 2400 |
 | `PI18LVX` | 20 query definitions; LVX framing policy | 26 patterns | USB HID or model's serial interface, 2400 |
 | `PI18SV` | 20 query definitions; SV framing policy | 26 patterns | USB HID or model's serial interface, 2400 |
-| `PI30` | 19 query definitions | 26 patterns | USB HID or model's serial interface, 2400 |
+| `PI30` | 20 query definitions | 26 patterns | USB HID or model's serial interface, 2400 |
 | `PI30MAX` | 35 query definitions | 32 patterns | USB HID or model's serial interface, 2400 |
 | `PI30MST` | 35 query definitions; MST layout | 32 patterns | USB HID or model's serial interface, 2400 |
 | `PI30REVO` | 7 query definitions; REVO framing | 2 patterns | USB HID or model's serial interface, 2400 |
@@ -123,8 +123,14 @@ AOHAI continues to use its existing semantic and register request forms.
 Results use `PREFIX/SITE/inverter/MEMBER/result`. Native outcomes are
 `completed`, `acknowledged`, `rejected`, `unsupported`, `unavailable`,
 `not_sent`, `uncertain` or `invalid_response`. An ACK establishes that the
-device accepted the command. A subsequent readback reports observed settings;
-it does not automatically establish equality for a multi-setting command.
+device accepted the command. Supported comparisons issue the correct readback
+query and compare every required setting field, including units, flags and
+addressed parallel-unit identity. A verified setter returns `completed` with
+`setting_verified:true`. A measured mismatch remains `acknowledged` with
+`setting_verified:false`; an unavailable or unsupported comparison has
+`setting_verified:null`. An ACK alone never establishes the requested setting.
+Commands such as save/default actions and relative calibration can remain
+unverifiable because the readback does not identify their complete effect.
 `write_sent:null` means the route could not establish whether the remote
 write was transmitted. A sent setting with a missing valid reply remains
 uncertain and is not automatically retried.
@@ -189,13 +195,18 @@ Current signs follow the [JK protocol implementation](https://github.com/syssi/e
 and [Victron VE.Direct protocol](https://www.victronenergy.com/upload/documents/VE.Direct-Protocol-3.33.pdf).
 
 Background polling reads primary measurements about every two seconds and
-secondary/status measurements every five seconds. Identity and firmware are
-read once per device connection; configuration and supported energy totals
-are read every 60 seconds. Optional rejected queries stop for that session;
-transient failures back off. Live MQTT snapshots refresh every five seconds.
-Identity, configuration and status command records publish when changed,
-with a 60-second refresh for unchanged polled records. Cached identity is also
-included in live snapshots for newly connected monitors, with its actual age.
+secondary/status measurements every five seconds. Identity, firmware and supported
+charging-current lists are read once per device connection. Current settings
+refresh every 120 seconds and immediately after writes; supported energy totals
+refresh every 60 seconds. Auxiliary `Q1` diagnostics and `QT`/`T` clock queries
+refresh every ten seconds. Manufacturer-default `QDI`/`DI` queries remain available
+manually but do not run in the background or replace active settings in the monitor.
+Optional rejected queries stop for that session; transient failures back off.
+Live MQTT snapshots refresh every five seconds with actual sample ages.
+Detailed command records publish initially and when values change; reconnects
+refresh them, and a failed enqueue remains eligible for retry. An unchanged manual
+query still receives an immediate command result and fresh values in the next live
+snapshot. Cached identity/settings remain available to newly connected monitors.
 
 Typed diagnostics use `PREFIX/SITE/inverter/MEMBER/protocol/COMMAND`.
 Each nonretained QoS 1 message contains one complete observation, up to 96
@@ -209,19 +220,61 @@ monitor accepts the previous chunked MQTT format for older firmware. See
 payload examples, limits and queue counters.
 
 The cache retains up to 32 distinct query observations, enough for every fixed
-background query in each profile. If a large snapshot exceeds the 32 KiB
-internal-RAM JSON buffer, it omits duplicated metadata section arrays and sets
-`metadata_in_native_records:true`. A further compact form omits the duplicated
-`sections` object and sets `sections_in_native_records:true`. Both forms retain
-every complete observation in `native_records`; the monitor reconstructs the
-same groups and values. The 48 KiB PSRAM buffer fits the full tested profile
-snapshots. Neither form publishes partial observations or drops physical zero.
+background query in each profile. Native live snapshots use the compact form
+with `sections_in_native_records:true`: they contain each complete observation
+once in `native_records`, together with its actual `sample_age_ms`, rather than
+transmitting another grouped copy of every field in `sections`. The monitor
+reconstructs the same groups, units, zero readings, identity and settings from
+those records. `power_summary`, `power_quality`, `operating_status` and
+`core_status_fresh` remain available directly in the live envelope. Neither
+compaction nor repeated cached publication refreshes the measurement age.
+
+Each ESP also publishes its own running firmware identity at retained QoS 1
+on `PREFIX/SITE/esp/ESP-MAC/firmware`, where `ESP-MAC` is the MQTT client ID,
+such as `ESP-AABBCCDDEEFF`. The JSON contains `device_id`, `project` and
+`version`, with the latter two read from the running ESP application descriptor.
+It publishes once per MQTT connection and refreshes after reconnect; a failed
+enqueue stays pending for retry. The retained value reaches new subscribers
+without repeating firmware identity in every live telemetry message. This
+ESP-specific namespace distinguishes gateway firmware from the firmware of
+the inverters it forwards.
 
 ## AOHAI Modbus RTU
 
 The existing backend retains register decoding, FC03/FC04 monitoring,
 FC06/FC10 writes, CRC checking, inverter-state checks, expected-value checks
 and catalog write guards. It is not passed through an ASCII protocol codec.
+
+Adjacent, enabled and due live-power requests can share one read of at most eight
+registers. Batches never cross an address gap or include safety, settings or
+on-demand registers. A rejected batch disables that combination for the transport
+session and returns to the original short reads. Core fault/status polling retains
+its previous interval. Battery, BMS and three-phase requests follow the configured
+equipment features. Retained holding-register snapshots publish only changed
+values and refresh after reconnect; manual results and verified write snapshots
+remain available immediately.
+
+AOHAI `OnOffSet` is a nonstored runtime command. Each newly admitted request
+sends one FC06 write even if H0 already contains the requested value. Actual
+input-register R0 must show the requested operating state before the result is
+`completed` with `operating_state_confirmed:true`. An accepted write whose
+state transition is not confirmed returns `transition_pending`. An H0 readback
+alone, including legacy `confirmed` replies, is not proof that the inverter
+switched. Nonstored runtime-command latches do not create retained setting
+snapshots. Generic setting readback differences use `readback_mismatch`.
+
+Named setting results and retained snapshots use identical engineering values
+without telemetry power conversion or display rounding. Year is a full calendar
+year; the mixed ASCII/numeric manufacturer field returns its packed numeric
+word. Python accepts older short-year replies and compares ASCII requests to
+the corresponding packed word. Both Python interfaces serialize settings
+writes, publish them without MQTT retransmission, and block further writes
+after an uncertain outcome while permitting reads.
+
+ESP-NOW and coordinator-link packet layouts are preserved. Update executing
+nodes and gateways together to expose the new AOHAI outcome names. The
+settings audit covers 201 admitted AOHAI descriptors and 336 native setter
+definitions; model-specific acceptance still needs inverter/BMS hardware checks.
 
 Semantic operations include buzzer, Bluetooth, inverter enable, overload
 restart, overload bypass, battery type, ECO mode, overtemperature restart,
@@ -357,8 +410,27 @@ also needs a valid calendar date, and PE/PD feature letters must be recognized
 and unrepeated. Numeric regex bounds establish documented syntax; they do
 not establish the right voltage/current for every battery or inverter model.
 
-Readback entries name an observation request. A dash means the upstream
-catalog provides no relevant readback mapping in this implementation.
+Readback entries name an observation request. A dash means this implementation
+has no applicable readback. Addressed PI30 settings use `QPGS0` through `QPGS9`
+for the requested parallel unit, including unit zero. Addressed PI18LVX/SV
+settings use `PRI0` through `PRI9`. PI18 has no such per-unit settings query.
+Reading a local inverter's settings cannot verify a write addressed to another
+parallel unit, and a nonexistent peer cannot verify a setting.
+
+An accepted ACK establishes command acceptance. Verification additionally
+requires all documented setting fields to match the requested values in a
+fresh readback. Numeric units/scales, option labels, compound values and flags
+are compared using the selected variant's response catalog. Missing, duplicate
+or malformed observations remain unverified. Reset/save actions, relative
+voltage calibration, clock changes, ambiguous charge/discharge control flags
+and REVO bulk settings have no complete equality comparison and remain
+acknowledged without claiming that every requested change was verified.
+
+The settings audit exercises all 326 PI setter definitions with exact request
+framing, ACK/NAK replies, checksum corruption and rejected injected suffixes.
+It also exercises 309 matching readback cases and their mismatched or missing
+observations. These are host fixtures; model-specific hardware support still
+depends on the inverter's actual protocol and settings.
 
 ### PI16 monitoring
 
@@ -368,19 +440,19 @@ Available native queries: `QEH(\d\d\d\d\d\d\d\d\d\d)$`, `QED(\d\d\d\d\d\d\d\d)$`
 
 ### PI17 monitoring
 
-Automatic poll: `GS`, `PS`, `MOD`, `WS`, `BATS`, `FLAG`, `PIRI`, `PI`, `ID`, `VFW`, `VFW2`, `MD`, `DM`, `INGS`, `EMINFO`, `BMS`, `GPMP`, `HECS`, `DI`, `ET`, `T`.
+Automatic poll: `GS`, `PS`, `MOD`, `WS`, `BATS`, `FLAG`, `PIRI`, `PI`, `ID`, `VFW`, `VFW2`, `MD`, `DM`, `INGS`, `EMINFO`, `BMS`, `GPMP`, `HECS`, `ET`, `T`.
 
 Available native queries: `GPMP`, `PI`, `ID`, `VFW`, `VFW2`, `MD`, `DI`, `DM`, `INGS`, `EMINFO`, `PIRI`, `GS`, `PS`, `MOD`, `WS`, `FLAG`, `T`, `ET`, `BATS`, `HECS`, `EY(\d\d\d\d)$`, `EM(\d\d\d\d\d\d)$`, `ED(\d\d\d\d\d\d\d\d)$`, `EH(\d\d\d\d\d\d\d\d\d\d)$`, `BMS`.
 
 ### PI17M058 monitoring
 
-Automatic poll: `GS`, `PS`, `MOD`, `WS`, `BATS`, `FLAG`, `PIRI`, `PI`, `ID`, `VFW`, `VFW2`, `MD`, `DM`, `INGS`, `EMINFO`, `BMS`, `GPMP`, `HECS`, `DI`, `ET`, `T`.
+Automatic poll: `GS`, `PS`, `MOD`, `WS`, `BATS`, `FLAG`, `PIRI`, `PI`, `ID`, `VFW`, `VFW2`, `MD`, `DM`, `INGS`, `EMINFO`, `BMS`, `GPMP`, `HECS`, `ET`, `T`.
 
 Available native queries: `GPMP`, `PI`, `ID`, `VFW`, `VFW2`, `MD`, `DI`, `DM`, `INGS`, `EMINFO`, `PIRI`, `GS`, `PS`, `MOD`, `WS`, `FLAG`, `T`, `ET`, `BATS`, `HECS`, `EY(\d\d\d\d)$`, `EM(\d\d\d\d\d\d)$`, `ED(\d\d\d\d\d\d\d\d)$`, `EH(\d\d\d\d\d\d\d\d\d\d)$`, `BMS`.
 
 ### PI17INFINI monitoring
 
-Automatic poll: `GS`, `PS`, `MOD`, `WS`, `BATS`, `FLAG`, `PIRI`, `PI`, `ID`, `VFW`, `VFW2`, `MD`, `DM`, `INGS`, `EMINFO`, `BMS`, `GPMP`, `HECS`, `DI`, `ET`, `T`.
+Automatic poll: `GS`, `PS`, `MOD`, `WS`, `BATS`, `FLAG`, `PIRI`, `PI`, `ID`, `VFW`, `VFW2`, `MD`, `DM`, `INGS`, `EMINFO`, `BMS`, `GPMP`, `HECS`, `ET`, `T`.
 
 Available native queries: `GPMP`, `PI`, `ID`, `VFW`, `VFW2`, `MD`, `DI`, `DM`, `INGS`, `EMINFO`, `PIRI`, `GS`, `PS`, `MOD`, `WS`, `FLAG`, `T`, `ET`, `BATS`, `HECS`, `EY(\d\d\d\d)$`, `EM(\d\d\d\d\d\d)$`, `ED(\d\d\d\d\d\d\d\d)$`, `EH(\d\d\d\d\d\d\d\d\d\d)$`, `BMS`.
 
@@ -392,31 +464,53 @@ Available native queries: `PI`, `ET`, `EY(\d\d\d\d)$`, `EM(\d\d\d\d\d\d)$`, `ED(
 
 ### PI18LVX monitoring
 
-Automatic poll: `GS`, `MOD`, `FWS`, `PIRI`, `FLAG`, `PI`, `ID`, `VFW`, `DI`, `MCHGCR`, `MUCHGCR`, `ACCT`, `ACLT`, `ET`, `T`.
+Automatic poll: `GS`, `MOD`, `FWS`, `PIRI`, `FLAG`, `PI`, `ID`, `VFW`, `MCHGCR`, `MUCHGCR`, `ACCT`, `ACLT`, `ET`, `T`.
 
 Available native queries: `PI`, `T`, `ET`, `EY(\d\d\d\d)$`, `EM(\d\d\d\d\d\d)$`, `ED(\d\d\d\d\d\d\d\d)$`, `ID`, `VFW`, `MCHGCR`, `MUCHGCR`, `PRI(\d)$`, `PGS(\d)$`, `FWS`, `DI`, `PIRI`, `GS`, `MOD`, `FLAG`, `ACCT`, `ACLT`.
 
 ### PI18SV monitoring
 
-Automatic poll: `GS`, `MOD`, `FWS`, `PIRI`, `FLAG`, `PI`, `ID`, `VFW`, `DI`, `MCHGCR`, `MUCHGCR`, `ACCT`, `ACLT`, `ET`, `T`.
+Automatic poll: `GS`, `MOD`, `FWS`, `PIRI`, `FLAG`, `PI`, `ID`, `VFW`, `MCHGCR`, `MUCHGCR`, `ACCT`, `ACLT`, `ET`, `T`.
 
 Available native queries: `PI`, `T`, `ET`, `EY(\d\d\d\d)$`, `EM(\d\d\d\d\d\d)$`, `ED(\d\d\d\d\d\d\d\d)$`, `ID`, `VFW`, `MCHGCR`, `MUCHGCR`, `PRI(\d)$`, `PGS(\d)$`, `FWS`, `DI`, `PIRI`, `GS`, `MOD`, `FLAG`, `ACCT`, `ACLT`.
 
 ### PI30 monitoring
 
-Automatic poll: `QPIGS`, `QMOD`, `QPIWS`, `QPIRI`, `QFLAG`, `QPI`, `QID`, `QVFW`, `QVFW2`, `QGMN`, `QMN`, `QBOOT`, `Q1`, `QBMS`, `QDI`, `QMCHGCR`, `QMUCHGCR`, `QOPM`.
+Automatic poll: `QPIGS`, optional `QPIGS2`, `QMOD`, `QPIWS`, `QPIRI`, `QFLAG`, `QPI`, `QID`, `QVFW`, `QVFW2`, `QGMN`, `QMN`, `QBOOT`, `Q1`, `QBMS`, `QMCHGCR`, `QMUCHGCR`, `QOPM`.
 
-Available native queries: `Q1`, `QBOOT`, `QDI`, `QFLAG`, `QID`, `QMCHGCR`, `QMOD`, `QMN`, `QGMN`, `QMUCHGCR`, `QOPM`, `QPGS(\d+)$`, `QPI`, `QPIGS`, `QPIRI`, `QPIWS`, `QVFW`, `QVFW2`, `QBMS`.
+Selecting at least two connected PV inputs enables the base PI30 `QPIGS2`
+probe. It accepts the documented three-field PV2 reply and twelve-field
+PV2/PV3 reply, including the reported whole-device PV charging power. Actual
+per-tracker current, voltage and power appear in normal MQTT PV measurements.
+The primary `QPIGS` layout is unchanged. An unsupported query stops for the
+connection session; transient errors back off, and reconnect allows a new probe.
+No tracker value is synthesized from the installer count.
+
+This matches the `mpp-solar` MAX mapping (`QPIGS2`: PV2 A, V, W) and MST mapping
+(`QPIGS2`: PV2 A, V, SCC voltage, W, further status/PV3 fields and device total).
+The SCC voltage in the twelve-field reply is not PV2 power. Selecting two PV
+inputs enables a query; the inverter must actually support and report it.
+
+The local inverter's configured `connected_pv_inputs` appears in its live and
+complete protocol payloads. A gateway does not attach its own local count to
+another member. With older or remote records, the monitor discovers additional
+trackers from their reported fields. Base PI30 totals use complete selected
+tracker powers, preserve valid zero and become unavailable or stale when a
+required reading is missing or expired. A reported device total takes priority
+without being added again. Existing PI30MAX/MST/M044/M045 and PI41 background
+queries retain their previous scheduling; PI41 `QPIGS2` is an AC phase query.
+
+Available native queries: `Q1`, `QBOOT`, `QDI`, `QFLAG`, `QID`, `QMCHGCR`, `QMOD`, `QMN`, `QGMN`, `QMUCHGCR`, `QOPM`, `QPGS(\d+)$`, `QPI`, `QPIGS`, `QPIGS2`, `QPIRI`, `QPIWS`, `QVFW`, `QVFW2`, `QBMS`.
 
 ### PI30MAX monitoring
 
-Automatic poll: `QPIGS`, `QPIGS2`, `QMOD`, `QPIWS`, `QPIRI`, `QFLAG`, `QPI`, `QSID`, `QVFW`, `QVFW3`, `VERFW`, `QGMN`, `QMN`, `QBOOT`, `Q1`, `QBMS`, `QDI`, `QMCHGCR`, `QMUCHGCR`, `QOPM`, `QOPPT`, `QCHPT`, `QBEQI`, `QLED`, `QET`, `QLT`, `QT`.
+Automatic poll: `QPIGS`, `QPIGS2`, `QMOD`, `QPIWS`, `QPIRI`, `QFLAG`, `QPI`, `QSID`, `QVFW`, `QVFW3`, `VERFW`, `QGMN`, `QMN`, `QBOOT`, `Q1`, `QBMS`, `QMCHGCR`, `QMUCHGCR`, `QOPM`, `QOPPT`, `QCHPT`, `QBEQI`, `QLED`, `QET`, `QLT`, `QT`.
 
 Available native queries: `Q1`, `QBOOT`, `QDI`, `QFLAG`, `QID`, `QMCHGCR`, `QMOD`, `QMN`, `QGMN`, `QMUCHGCR`, `QOPM`, `QPGS(\d+)$`, `QPI`, `QPIGS`, `QPIRI`, `QPIWS`, `QVFW`, `QBMS`, `QSID`, `QVFW3`, `VERFW`, `QPIGS2`, `QOPPT`, `QCHPT`, `QT`, `QBEQI`, `QET`, `QEY(\d\d\d\d)$`, `QEM(\d\d\d\d\d\d)$`, `QED(\d\d\d\d\d\d\d\d)$`, `QLT`, `QLY(\d\d\d\d)$`, `QLM(\d\d\d\d\d\d)$`, `QLD(\d\d\d\d\d\d\d\d)$`, `QLED`.
 
 ### PI30MST monitoring
 
-Automatic poll: `QPIGS`, `QPIGS2`, `QMOD`, `QPIWS`, `QPIRI`, `QFLAG`, `QPI`, `QSID`, `QVFW`, `QVFW3`, `VERFW`, `QGMN`, `QMN`, `QBOOT`, `Q1`, `QBMS`, `QDI`, `QMCHGCR`, `QMUCHGCR`, `QOPM`, `QOPPT`, `QCHPT`, `QBEQI`, `QLED`, `QET`, `QLT`, `QT`.
+Automatic poll: `QPIGS`, `QPIGS2`, `QMOD`, `QPIWS`, `QPIRI`, `QFLAG`, `QPI`, `QSID`, `QVFW`, `QVFW3`, `VERFW`, `QGMN`, `QMN`, `QBOOT`, `Q1`, `QBMS`, `QMCHGCR`, `QMUCHGCR`, `QOPM`, `QOPPT`, `QCHPT`, `QBEQI`, `QLED`, `QET`, `QLT`, `QT`.
 
 Available native queries: `Q1`, `QBOOT`, `QDI`, `QFLAG`, `QID`, `QMCHGCR`, `QMOD`, `QMN`, `QGMN`, `QMUCHGCR`, `QOPM`, `QPGS(\d+)$`, `QPI`, `QPIGS`, `QPIRI`, `QPIWS`, `QVFW`, `QBMS`, `QSID`, `QVFW3`, `VERFW`, `QPIGS2`, `QOPPT`, `QCHPT`, `QT`, `QBEQI`, `QET`, `QEY(\d\d\d\d)$`, `QEM(\d\d\d\d\d\d)$`, `QED(\d\d\d\d\d\d\d\d)$`, `QLT`, `QLY(\d\d\d\d)$`, `QLM(\d\d\d\d\d\d)$`, `QLD(\d\d\d\d\d\d\d\d)$`, `QLED`.
 
@@ -428,19 +522,19 @@ Available native queries: `PQSE`, `QALL`, `QMOD`, `QPI`, `QPIGS`, `QPIRI`, `QLIT
 
 ### PI30M044 monitoring
 
-Automatic poll: `QPIGS`, `QPIGS2`, `QMOD`, `QPIWS`, `QPIRI`, `QFLAG`, `QPI`, `QSID`, `QVFW`, `QVFW3`, `VERFW`, `QGMN`, `QMN`, `QBOOT`, `Q1`, `QBMS`, `QDI`, `QMCHGCR`, `QMUCHGCR`, `QOPM`, `QOPPT`, `QCHPT`, `QBEQI`, `QLED`, `QDOP`, `QET`, `QLT`, `QT`.
+Automatic poll: `QPIGS`, `QPIGS2`, `QMOD`, `QPIWS`, `QPIRI`, `QFLAG`, `QPI`, `QSID`, `QVFW`, `QVFW3`, `VERFW`, `QGMN`, `QMN`, `QBOOT`, `Q1`, `QBMS`, `QMCHGCR`, `QMUCHGCR`, `QOPM`, `QOPPT`, `QCHPT`, `QBEQI`, `QLED`, `QDOP`, `QET`, `QLT`, `QT`.
 
 Available native queries: `Q1`, `QBOOT`, `QDI`, `QFLAG`, `QID`, `QMCHGCR`, `QMOD`, `QMN`, `QGMN`, `QMUCHGCR`, `QOPM`, `QPGS(\d+)$`, `QPI`, `QPIGS`, `QPIRI`, `QPIWS`, `QVFW`, `QBMS`, `QSID`, `QVFW3`, `VERFW`, `QPIGS2`, `QOPPT`, `QCHPT`, `QT`, `QBEQI`, `QET`, `QEY(\d\d\d\d)$`, `QEM(\d\d\d\d\d\d)$`, `QED(\d\d\d\d\d\d\d\d)$`, `QLT`, `QLY(\d\d\d\d)$`, `QLM(\d\d\d\d\d\d)$`, `QLD(\d\d\d\d\d\d\d\d)$`, `QLED`, `QDOP`.
 
 ### PI30M045 monitoring
 
-Automatic poll: `QPIGS`, `QPIGS2`, `QMOD`, `QPIWS`, `QPIRI`, `QFLAG`, `QPI`, `QSID`, `QVFW`, `QVFW3`, `VERFW`, `QGMN`, `QMN`, `QBOOT`, `Q1`, `QBMS`, `QDI`, `QMCHGCR`, `QMUCHGCR`, `QOPM`, `QOPPT`, `QCHPT`, `QBEQI`, `QLED`, `QET`, `QLT`, `QT`.
+Automatic poll: `QPIGS`, `QPIGS2`, `QMOD`, `QPIWS`, `QPIRI`, `QFLAG`, `QPI`, `QSID`, `QVFW`, `QVFW3`, `VERFW`, `QGMN`, `QMN`, `QBOOT`, `Q1`, `QBMS`, `QMCHGCR`, `QMUCHGCR`, `QOPM`, `QOPPT`, `QCHPT`, `QBEQI`, `QLED`, `QET`, `QLT`, `QT`.
 
 Available native queries: `Q1`, `QBOOT`, `QDI`, `QFLAG`, `QID`, `QMCHGCR`, `QMOD`, `QMN`, `QGMN`, `QMUCHGCR`, `QOPM`, `QPGS(\d+)$`, `QPI`, `QPIGS`, `QPIRI`, `QPIWS`, `QVFW`, `QBMS`, `QSID`, `QVFW3`, `VERFW`, `QPIGS2`, `QOPPT`, `QCHPT`, `QT`, `QBEQI`, `QET`, `QEY(\d\d\d\d)$`, `QEM(\d\d\d\d\d\d)$`, `QED(\d\d\d\d\d\d\d\d)$`, `QLT`, `QLY(\d\d\d\d)$`, `QLM(\d\d\d\d\d\d)$`, `QLD(\d\d\d\d\d\d\d\d)$`, `QLED`.
 
 ### PI41 monitoring
 
-Automatic poll: `QPIGS`, `QPIGS2`, `QMOD`, `QPIWS`, `QPIRI`, `QFLAG`, `QPI`, `QID`, `QVFW`, `QVFW2`, `QGMN`, `QMN`, `QBOOT`, `Q1`, `QBMS`, `QDI`, `QMCHGCR`, `QMUCHGCR`, `QOPM`.
+Automatic poll: `QPIGS`, `QPIGS2`, `QMOD`, `QPIWS`, `QPIRI`, `QFLAG`, `QPI`, `QID`, `QVFW`, `QVFW2`, `QGMN`, `QMN`, `QBOOT`, `Q1`, `QBMS`, `QMCHGCR`, `QMUCHGCR`, `QOPM`.
 
 Available native queries: `Q1`, `QBOOT`, `QDI`, `QFLAG`, `QID`, `QMCHGCR`, `QMOD`, `QMN`, `QGMN`, `QMUCHGCR`, `QOPM`, `QPGS(\d)$`, `QPI`, `QPIGS`, `QPIRI`, `QPIWS`, `QVFW`, `QVFW2`, `QBMS`, `QP2GS(\d)$`, `QPIGS2`.
 
@@ -459,23 +553,23 @@ No settings commands are defined in the referenced upstream catalog.
 | `PC` | `PC([01])$` | `FLAG` |
 | `PD` | `PD([A-Z])$` | `FLAG` |
 | `PE` | `PE([A-Z])$` | `FLAG` |
-| `PF` | `PF([01])$` | - |
+| `PF` | `PF([01])$` | `FLAG` |
 | `DAT` | `DAT(\d\d\d\d\d\d\d\d\d\d\d\d)$` | `T` |
-| `LST` | `LST((0[123])\|([12]0))$` | - |
-| `EDA` | `EDA([01])$` | - |
-| `EDB` | `EDB([01])$` | - |
-| `EDC` | `EDC([01])$` | - |
-| `EDD` | `EDD([01])$` | - |
-| `EDE` | `EDE([01])$` | - |
-| `EDF` | `EDF([01])$` | - |
-| `EDG` | `EDG([01])$` | - |
+| `LST` | `LST(00\|01\|02\|10\|20)$` | `DI` |
+| `EDA` | `EDA([01])$` | `HECS` |
+| `EDB` | `EDB([01])$` | `HECS` |
+| `EDC` | `EDC([01])$` | `HECS` |
+| `EDD` | `EDD([01])$` | `HECS` |
+| `EDE` | `EDE([01])$` | `HECS` |
+| `EDF` | `EDF([01])$` | `HECS` |
+| `EDG` | `EDG([01])$` | `HECS` |
 | `BT` | `BT([01])$` | `BATS` |
 | `MCHGV` | `MCHGV(0[45]\d\d,0[45]\d\d)$` | `BATS` |
-| `ACCT` | `ACCT((2[0-3]\|[01]?[0-9])([0-5]?[0-9])-(2[0-3]\|[01]?[0-9])([0-5]?[0-9]))$` | - |
-| `ACCB` | `ACCB([01],0[456]\d\d)$` | `BATS` |
+| `ACCT` | `ACCT((2[0-3]\|[01][0-9])[0-5][0-9]-(2[0-3]\|[01][0-9])[0-5][0-9])$` | `DI` |
+| `ACCB` | `ACCB([01],(0[45][0-9][0-9]\|0600))$` | `BATS` |
 | `MCHGC` | `MCHGC([012]\d\d\d)$` | `BATS` |
 | `MUCHGC` | `MUCHGC([012]\d\d\d)$` | `BATS` |
-| `SEP` | `SEP(0[012])$` | `BATS` |
+| `SEP` | `SEP(0[012])$` | `HECS` |
 | `BDCM` | `BDCM(0[012]\d\d)$` | `BATS` |
 | `BATDV` | `BATDV(0[45]\d\d,0[45]\d\d,0[45]\d\d,0[45]\d\d)$` | `BATS` |
 | `BCA` | `BCA(0\d\d\d,0\d\d,0\d\d\d)$` | `BATS` |
@@ -489,23 +583,23 @@ No settings commands are defined in the referenced upstream catalog.
 | `PC` | `PC([01])$` | `FLAG` |
 | `PD` | `PD([A-Z])$` | `FLAG` |
 | `PE` | `PE([A-Z])$` | `FLAG` |
-| `PF` | `PF([01])$` | - |
+| `PF` | `PF([01])$` | `FLAG` |
 | `DAT` | `DAT(\d\d\d\d\d\d\d\d\d\d\d\d)$` | `T` |
-| `LST` | `LST((0[123])\|([12]0))$` | - |
-| `EDA` | `EDA([01])$` | - |
-| `EDB` | `EDB([01])$` | - |
-| `EDC` | `EDC([01])$` | - |
-| `EDD` | `EDD([01])$` | - |
-| `EDE` | `EDE([01])$` | - |
-| `EDF` | `EDF([01])$` | - |
-| `EDG` | `EDG([01])$` | - |
+| `LST` | `LST(00\|01\|02\|10\|20)$` | `DI` |
+| `EDA` | `EDA([01])$` | `HECS` |
+| `EDB` | `EDB([01])$` | `HECS` |
+| `EDC` | `EDC([01])$` | `HECS` |
+| `EDD` | `EDD([01])$` | `HECS` |
+| `EDE` | `EDE([01])$` | `HECS` |
+| `EDF` | `EDF([01])$` | `HECS` |
+| `EDG` | `EDG([01])$` | `HECS` |
 | `BT` | `BT([01])$` | `BATS` |
 | `MCHGV` | `MCHGV(0[45]\d\d,0[45]\d\d)$` | `BATS` |
-| `ACCT` | `ACCT((2[0-3]\|[01]?[0-9])([0-5]?[0-9]),(2[0-3]\|[01]?[0-9])([0-5]?[0-9]),(2[0-3]\|[01]?[0-9])([0-5]?[0-9]),(2[0-3]\|[01]?[0-9])([0-5]?[0-9]))$` | - |
-| `ACCB` | `ACCB([01],0[456]\d\d)$` | `BATS` |
+| `ACCT` | `ACCT((2[0-3]\|[01][0-9])[0-5][0-9],(2[0-3]\|[01][0-9])[0-5][0-9],(2[0-3]\|[01][0-9])[0-5][0-9],(2[0-3]\|[01][0-9])[0-5][0-9])$` | `DI` |
+| `ACCB` | `ACCB([01],(0[45][0-9][0-9]\|0600))$` | `BATS` |
 | `MCHGC` | `MCHGC([012]\d\d\d)$` | `BATS` |
 | `MUCHGC` | `MUCHGC([012]\d\d\d)$` | `BATS` |
-| `SEP` | `SEP(0[012])$` | `BATS` |
+| `SEP` | `SEP(0[012])$` | `HECS` |
 | `BDCM` | `BDCM(0[012]\d\d)$` | `BATS` |
 | `BATDV` | `BATDV(0[45]\d\d,0[45]\d\d,0[45]\d\d,0[45]\d\d)$` | `BATS` |
 | `BCA` | `BCA(0\d\d\d,0\d\d,0\d\d\d)$` | `BATS` |
@@ -520,11 +614,11 @@ No settings commands are defined in the referenced upstream catalog.
 | `PSP` | `PSP([01])$` | `PIRI` |
 | `PEI` | `PEI` | `PIRI` |
 | `PDI` | `PDI` | `PIRI` |
-| `PCP` | `PCP([0-9],[012])$` | `PIRI` |
-| `MCHGC` | `MCHGC([0-9],0[1-8]0)$` | `PIRI` |
-| `MUCHGC` | `MUCHGC([0-9]),(002\|0[1-8]0)$` | `PIRI` |
+| `PCP` | `PCP([0-9],[012])$` | - |
+| `MCHGC` | `MCHGC([0-9],0[1-8]0)$` | - |
+| `MUCHGC` | `MUCHGC([0-9]),(002\|0[1-8]0)$` | - |
 | `PBT` | `PBT([012])$` | `PIRI` |
-| `MCHGV` | `MCHGV(4[8-9][0-9]\|5[0-7][0-9]\|58[0-5]),(4[8-9][0-9]\|5[0-7][0-9]\|58[0-4])$` | `PIRI` |
+| `MCHGV` | `MCHGV((4[8-9][0-9]\|5[0-7][0-9]\|58[0-4]),(4[8-9][0-9]\|5[0-7][0-9]\|58[0-4]))$` | `PIRI` |
 | `PSDV` | `PSDV(4[0-7][0-9]\|480)$` | `PIRI` |
 | `BUCD` | `BUCD((4[4-9]0\|5[0-1]0),(000\|4[8-9]0\|5[0-8]0))$` | `PIRI` |
 
@@ -552,21 +646,21 @@ No settings commands are defined in the referenced upstream catalog.
 | `PEI` | `PEI` | `PIRI` |
 | `PDI` | `PDI` | `PIRI` |
 | `PF` | `PF` | `PIRI` |
-| `MCHGC` | `MCHGC(\d,\d\d\d)$` | `PIRI` |
-| `MUCHGC` | `MUCHGC(\d,\d\d\d)$` | `PIRI` |
+| `MCHGC` | `MCHGC(\d,\d\d\d)$` | `PRI0` |
+| `MUCHGC` | `MUCHGC(\d,\d\d\d)$` | `PRI0` |
 | `MCHGV` | `MCHGV(\d\d\d,\d\d\d)$` | `PIRI` |
 | `DAT` | `DAT(\d\d\d\d\d\d\d\d\d\d\d\d)$` | `T` |
-| `POP` | `POP(\d)$` | `PIRI` |
-| `BUCD` | `BUCD(\d\d\d,\d\d\d)$` | `PIRI` |
+| `POP` | `POP([01])$` | `PIRI` |
+| `BUCD` | `BUCD((4[4-9][0-9]\|50[0-9]\|510),(000\|4[8-9][0-9]\|5[0-7][0-9]\|580))$` | `PIRI` |
 
 ### PI30, PI41 settings
 
 | Command family | Accepted complete command pattern | Readback |
 | --- | --- | --- |
 | `F` | `F([56]0)$` | `QPIRI` |
-| `MCHGC` | `MCHGC(\d\d\d)$` | `QPIRI` |
-| `MNCHGC` | `MNCHGC(\d\d\d\d)$` | `QPIRI` |
-| `MUCHGC` | `MUCHGC(\d\d\d)$` | `QPIRI` |
+| `MCHGC` | `MCHGC(\d\d\d)$` | `QPGS0` |
+| `MNCHGC` | `MNCHGC(\d\d\d\d)$` | `QPGS0` |
+| `MUCHGC` | `MUCHGC(\d\d\d)$` | `QPGS0` |
 | `PBCV` | `PBCV(\d\d\.\d)$` | `QPIRI` |
 | `PBDV` | `PBDV(\d\d\.\d)$` | `QPIRI` |
 | `PBFT` | `PBFT(\d\d\.\d)$` | `QPIRI` |
@@ -579,15 +673,15 @@ No settings commands are defined in the referenced upstream catalog.
 | `PGR` | `PGR(0[01])$` | `QPIRI` |
 | `POP` | `POP(0[012])$` | `QPIRI` |
 | `POPLG` | `POPLG(0[012])$` | `QPIRI` |
-| `POPM` | `POPM(\d[01234])$` | `QPIRI` |
-| `PPCP` | `PPCP(\d0[0123])$` | `QPIRI` |
+| `POPM` | `POPM(\d[01234])$` | `QPGS0` |
+| `PPCP` | `PPCP(\d0[0123])$` | `QPGS0` |
 | `PPVOKC` | `PPVOKC([01])$` | `QPIRI` |
 | `PSDV` | `PSDV(\d\d\.\d)$` | `QPIRI` |
 | `PSPB` | `PSPB([01])$` | `QPIRI` |
 | `PBATCD` | `PBATCD([01][01][01])$` | `QBMS` |
 | `DAT` | `DAT(\d\d\d\d\d\d\d\d\d\d\d\d\d\d)$` | - |
-| `PBATMAXDISC` | `PBATMAXDISC([01]\d\d)$` | `QPIRI` |
-| `BTA` | `BTA([-+]0\d)$` | - |
+| `PBATMAXDISC` | `PBATMAXDISC(000\|0[3-9][0-9]\|1[0-4][0-9]\|150)$` | `QBMS` |
+| `BTA` | `BTA([-+]0\d)$` | `QPIGS` |
 | `PSAVE` | `PSAVE` | - |
 
 ### PI30MAX, PI30MST settings
@@ -595,9 +689,9 @@ No settings commands are defined in the referenced upstream catalog.
 | Command family | Accepted complete command pattern | Readback |
 | --- | --- | --- |
 | `F` | `F([56]0)$` | `QPIRI` |
-| `MCHGC` | `MCHGC(\d\d\d)$` | `QPIRI` |
-| `MNCHGC` | `MNCHGC(\d\d\d\d)$` | `QPIRI` |
-| `MUCHGC` | `MUCHGC(\d\d\d)$` | `QPIRI` |
+| `MCHGC` | `MCHGC(\d\d\d)$` | `QPGS0` |
+| `MNCHGC` | `MNCHGC(\d\d\d\d)$` | `QPGS0` |
+| `MUCHGC` | `MUCHGC(\d\d\d)$` | `QPGS0` |
 | `PBCV` | `PBCV(\d\d\.\d)$` | `QPIRI` |
 | `PBDV` | `PBDV(\d\d\.\d)$` | `QPIRI` |
 | `PBFT` | `PBFT(\d\d\.\d)$` | `QPIRI` |
@@ -610,38 +704,38 @@ No settings commands are defined in the referenced upstream catalog.
 | `PGR` | `PGR(0[01])$` | `QPIRI` |
 | `POP` | `POP(0[012])$` | `QPIRI` |
 | `POPLG` | `POPLG(0[012])$` | `QPIRI` |
-| `POPM` | `POPM(\d[01234])$` | `QPIRI` |
-| `PPCP` | `PPCP(\d0[0123])$` | `QPIRI` |
+| `POPM` | `POPM(\d[01234])$` | `QPGS0` |
+| `PPCP` | `PPCP(\d0[0123])$` | `QPGS0` |
 | `PPVOKC` | `PPVOKC([01])$` | `QPIRI` |
 | `PSDV` | `PSDV(\d\d\.\d)$` | `QPIRI` |
 | `PSPB` | `PSPB([01])$` | `QPIRI` |
 | `PBATCD` | `PBATCD([01][01][01])$` | `QBMS` |
 | `DAT` | `DAT(\d\d\d\d\d\d\d\d\d\d\d\d\d\d)$` | `QT` |
-| `PBATMAXDISC` | `PBATMAXDISC([01]\d\d)$` | `QPIRI` |
-| `BTA` | `BTA([-+]0\d)$` | - |
+| `PBATMAXDISC` | `PBATMAXDISC(000\|0[3-9][0-9]\|1[0-4][0-9]\|150)$` | `QBMS` |
+| `BTA` | `BTA([-+]0\d)$` | `QPIGS` |
 | `PSAVE` | `PSAVE` | - |
 | `PLEDE` | `PLEDE([01])$` | `QLED` |
 | `PLEDS` | `PLEDS([012])$` | `QLED` |
 | `PLEDM` | `PLEDM([0123])$` | `QLED` |
 | `PLEDB` | `PLEDB([123456789])$` | `QLED` |
 | `PLEDT` | `PLEDT([123])$` | `QLED` |
-| `PLEDC` | `PLEDC(\d\d\d\d\d\d\d\d\d\d)$` | `QLED` |
+| `PLEDC` | `PLEDC([1-3](0[0-9][0-9]\|1[0-9][0-9]\|2[0-4][0-9]\|25[0-5])(0[0-9][0-9]\|1[0-9][0-9]\|2[0-4][0-9]\|25[0-5])(0[0-9][0-9]\|1[0-9][0-9]\|2[0-4][0-9]\|25[0-5]))$` | `QLED` |
 
 ### PI30REVO settings
 
 | Command family | Accepted complete command pattern | Readback |
 | --- | --- | --- |
-| `PSET` | `PSET(\d+ \d+[.]\d+ \d+[.]\d+ \d+[.]\d+ \d+[.]\d+ \d+ \d+ \d+ \d+ \d+ \d+ \d+.*)$` | `PQSE` |
-| `_PSET` | `_PSET(\d+ \d+[.]\d+ \d+[.]\d+ \d+[.]\d+ \d+[.]\d+ \d+ \d+ \d+ \d+ \d+ \d+ \d+.*)$` | `PQSE` |
+| `PSET` | `PSET([01][0-4][01][0-2][01][0-3] [0-9]{1,3}[.][0-9] [0-9]{1,3}[.][0-9] [0-9]{1,3}[.][0-9] [0-9]{1,3}[.][0-9] [0-9]{3} [0-9]{3} [0-9]{4} [0-9]{2} [0-9]{2} [0-9]{2} [0-9]{2} [0-9]{2,5}( [0-9]{1,3}([.][0-9])?)?)$` | `PQSE` |
+| `_PSET` | `_PSET([01][0-4][01][0-2][01][0-3] [0-9]{1,3}[.][0-9] [0-9]{1,3}[.][0-9] [0-9]{1,3}[.][0-9] [0-9]{1,3}[.][0-9] [0-9]{3} [0-9]{3} [0-9]{4} [0-9]{2} [0-9]{2} [0-9]{2} [0-9]{2} [0-9]{2,5}( [0-9]{1,3}([.][0-9])?)?)$` | `PQSE` |
 
 ### PI30M044 settings
 
 | Command family | Accepted complete command pattern | Readback |
 | --- | --- | --- |
 | `F` | `F([56]0)$` | `QPIRI` |
-| `MCHGC` | `MCHGC(\d\d\d)$` | `QPIRI` |
-| `MNCHGC` | `MNCHGC(\d\d\d\d)$` | `QPIRI` |
-| `MUCHGC` | `MUCHGC(\d\d\d)$` | `QPIRI` |
+| `MCHGC` | `MCHGC(\d\d\d)$` | `QPGS0` |
+| `MNCHGC` | `MNCHGC(\d\d\d\d)$` | `QPGS0` |
+| `MUCHGC` | `MUCHGC(\d\d\d)$` | `QPGS0` |
 | `PBCV` | `PBCV(\d\d\.\d)$` | `QPIRI` |
 | `PBDV` | `PBDV(\d\d\.\d)$` | `QPIRI` |
 | `PBFT` | `PBFT(\d\d\.\d)$` | `QPIRI` |
@@ -654,31 +748,31 @@ No settings commands are defined in the referenced upstream catalog.
 | `PGR` | `PGR(0[01])$` | `QPIRI` |
 | `POP` | `POP(0[012])$` | `QPIRI` |
 | `POPLG` | `POPLG(0[012])$` | `QPIRI` |
-| `POPM` | `POPM(\d[01234])$` | `QPIRI` |
-| `PPCP` | `PPCP(\d0[0123])$` | `QPIRI` |
+| `POPM` | `POPM(\d[01234])$` | `QPGS0` |
+| `PPCP` | `PPCP(\d0[0123])$` | `QPGS0` |
 | `PPVOKC` | `PPVOKC([01])$` | `QPIRI` |
 | `PSDV` | `PSDV(\d\d\.\d)$` | `QPIRI` |
 | `PSPB` | `PSPB([01])$` | `QPIRI` |
 | `PBATCD` | `PBATCD([01][01][01])$` | `QBMS` |
 | `DAT` | `DAT(\d\d\d\d\d\d\d\d\d\d\d\d\d\d)$` | `QT` |
-| `PBATMAXDISC` | `PBATMAXDISC([01]\d\d)$` | `QPIRI` |
-| `BTA` | `BTA([-+]0\d)$` | - |
+| `PBATMAXDISC` | `PBATMAXDISC(000\|0[3-9][0-9]\|1[0-4][0-9]\|150)$` | `QBMS` |
+| `BTA` | `BTA([-+]0\d)$` | `QPIGS` |
 | `PSAVE` | `PSAVE` | - |
 | `PLEDE` | `PLEDE([01])$` | `QLED` |
 | `PLEDS` | `PLEDS([012])$` | `QLED` |
 | `PLEDM` | `PLEDM([0123])$` | `QLED` |
 | `PLEDB` | `PLEDB([123456789])$` | `QLED` |
 | `PLEDT` | `PLEDT([123])$` | `QLED` |
-| `PLEDC` | `PLEDC(\d\d\d\d\d\d\d\d\d\d)$` | `QLED` |
+| `PLEDC` | `PLEDC([1-3](0[0-9][0-9]\|1[0-9][0-9]\|2[0-4][0-9]\|25[0-5])(0[0-9][0-9]\|1[0-9][0-9]\|2[0-4][0-9]\|25[0-5])(0[0-9][0-9]\|1[0-9][0-9]\|2[0-4][0-9]\|25[0-5]))$` | `QLED` |
 
 ### PI30M045 settings
 
 | Command family | Accepted complete command pattern | Readback |
 | --- | --- | --- |
 | `F` | `F([56]0)$` | `QPIRI` |
-| `MCHGC` | `MCHGC(\d\d\d)$` | `QPIRI` |
-| `MNCHGC` | `MNCHGC(\d\d\d\d)$` | `QPIRI` |
-| `MUCHGC` | `MUCHGC(\d[01]\d[02])$` | `QPIRI` |
+| `MCHGC` | `MCHGC(\d\d\d)$` | `QPGS0` |
+| `MNCHGC` | `MNCHGC(\d\d\d\d)$` | `QPGS0` |
+| `MUCHGC` | `MUCHGC(\d[01]\d[02])$` | `QPGS0` |
 | `PBCV` | `PBCV(\d\d\.\d)$` | `QPIRI` |
 | `PBDV` | `PBDV(\d\d\.\d)$` | `QPIRI` |
 | `PBFT` | `PBFT(\d\d\.\d)$` | `QPIRI` |
@@ -691,19 +785,19 @@ No settings commands are defined in the referenced upstream catalog.
 | `PGR` | `PGR(0[01])$` | `QPIRI` |
 | `POP` | `POP(0[012])$` | `QPIRI` |
 | `POPLG` | `POPLG(0[012])$` | `QPIRI` |
-| `POPM` | `POPM(\d[01234])$` | `QPIRI` |
-| `PPCP` | `PPCP(\d0[0123])$` | `QPIRI` |
+| `POPM` | `POPM(\d[01234])$` | `QPGS0` |
+| `PPCP` | `PPCP(\d0[0123])$` | `QPGS0` |
 | `PPVOKC` | `PPVOKC([01])$` | `QPIRI` |
 | `PSDV` | `PSDV(\d\d\.\d)$` | `QPIRI` |
 | `PSPB` | `PSPB([01])$` | `QPIRI` |
 | `PBATCD` | `PBATCD([01][01][01])$` | `QBMS` |
 | `DAT` | `DAT(\d\d\d\d\d\d\d\d\d\d\d\d)$` | `QT` |
-| `PBATMAXDISC` | `PBATMAXDISC([01]\d\d)$` | `QPIRI` |
-| `BTA` | `BTA([-+]0\d)$` | - |
+| `PBATMAXDISC` | `PBATMAXDISC(000\|0[3-9][0-9]\|1[0-4][0-9]\|150)$` | `QBMS` |
+| `BTA` | `BTA([-+]0\d)$` | `QPIGS` |
 | `PSAVE` | `PSAVE` | - |
 | `PLEDE` | `PLEDE([01])$` | `QLED` |
 | `PLEDS` | `PLEDS([012])$` | `QLED` |
 | `PLEDM` | `PLEDM([0123])$` | `QLED` |
 | `PLEDB` | `PLEDB([123456789])$` | `QLED` |
 | `PLEDT` | `PLEDT([123])$` | `QLED` |
-| `PLEDC` | `PLEDC(\d\d\d\d\d\d\d\d\d\d)$` | `QLED` |
+| `PLEDC` | `PLEDC([1-3](0[0-9][0-9]\|1[0-9][0-9]\|2[0-4][0-9]\|25[0-5])(0[0-9][0-9]\|1[0-9][0-9]\|2[0-4][0-9]\|25[0-5])(0[0-9][0-9]\|1[0-9][0-9]\|2[0-4][0-9]\|25[0-5]))$` | `QLED` |

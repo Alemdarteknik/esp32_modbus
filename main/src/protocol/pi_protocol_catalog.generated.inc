@@ -807,7 +807,7 @@ static const RegexNode regex_15[] = {
 };
 static const CommandDefinition command_45 = {
     "PF", "PF", regex_15, 4, 3, nullptr, 0,
-    true, nullptr, nullptr, -1,
+    true, "FLAG", nullptr, -1,
     false, false, false, "",
 };
 // Pattern: DAT(\d\d\d\d\d\d\d\d\d\d\d\d)$
@@ -834,21 +834,30 @@ static const CommandDefinition command_46 = {
     true, "T", nullptr, -1,
     false, false, false, "",
 };
-// Pattern: LST((0[123])|([12]0))$
+// Pattern: LST(00|01|02|10|20)$
 static const RegexNode regex_17[] = {
     {nullptr, -1, -1},
-    {"123", 0, -1},
-    {"0", 1, -1},
     {"0", 0, -1},
-    {"12", 3, -1},
-    {nullptr, 2, 4},
-    {"T", 5, -1},
-    {"S", 6, -1},
-    {"L", 7, -1},
+    {"0", 1, -1},
+    {"1", 0, -1},
+    {"0", 3, -1},
+    {"2", 0, -1},
+    {"0", 5, -1},
+    {"0", 0, -1},
+    {"1", 7, -1},
+    {"0", 0, -1},
+    {"2", 9, -1},
+    {nullptr, 8, 10},
+    {nullptr, 6, 11},
+    {nullptr, 4, 12},
+    {nullptr, 2, 13},
+    {"T", 14, -1},
+    {"S", 15, -1},
+    {"L", 16, -1},
 };
 static const CommandDefinition command_47 = {
-    "LST", "LST", regex_17, 9, 8, nullptr, 0,
-    true, nullptr, nullptr, -1,
+    "LST", "LST", regex_17, 18, 17, nullptr, 0,
+    true, "DI", nullptr, -1,
     false, false, false, "",
 };
 // Pattern: EDA([01])$
@@ -861,7 +870,7 @@ static const RegexNode regex_18[] = {
 };
 static const CommandDefinition command_48 = {
     "EDA", "EDA", regex_18, 5, 4, nullptr, 0,
-    true, nullptr, nullptr, -1,
+    true, "HECS", nullptr, -1,
     false, false, false, "",
 };
 // Pattern: EDB([01])$
@@ -874,7 +883,7 @@ static const RegexNode regex_19[] = {
 };
 static const CommandDefinition command_49 = {
     "EDB", "EDB", regex_19, 5, 4, nullptr, 0,
-    true, nullptr, nullptr, -1,
+    true, "HECS", nullptr, -1,
     false, false, false, "",
 };
 // Pattern: EDC([01])$
@@ -887,7 +896,7 @@ static const RegexNode regex_20[] = {
 };
 static const CommandDefinition command_50 = {
     "EDC", "EDC", regex_20, 5, 4, nullptr, 0,
-    true, nullptr, nullptr, -1,
+    true, "HECS", nullptr, -1,
     false, false, false, "",
 };
 // Pattern: EDD([01])$
@@ -900,7 +909,7 @@ static const RegexNode regex_21[] = {
 };
 static const CommandDefinition command_51 = {
     "EDD", "EDD", regex_21, 5, 4, nullptr, 0,
-    true, nullptr, nullptr, -1,
+    true, "HECS", nullptr, -1,
     false, false, false, "",
 };
 // Pattern: EDE([01])$
@@ -913,7 +922,7 @@ static const RegexNode regex_22[] = {
 };
 static const CommandDefinition command_52 = {
     "EDE", "EDE", regex_22, 5, 4, nullptr, 0,
-    true, nullptr, nullptr, -1,
+    true, "HECS", nullptr, -1,
     false, false, false, "",
 };
 // Pattern: EDF([01])$
@@ -926,7 +935,7 @@ static const RegexNode regex_23[] = {
 };
 static const CommandDefinition command_53 = {
     "EDF", "EDF", regex_23, 5, 4, nullptr, 0,
-    true, nullptr, nullptr, -1,
+    true, "HECS", nullptr, -1,
     false, false, false, "",
 };
 // Pattern: EDG([01])$
@@ -939,7 +948,7 @@ static const RegexNode regex_24[] = {
 };
 static const CommandDefinition command_54 = {
     "EDG", "EDG", regex_24, 5, 4, nullptr, 0,
-    true, nullptr, nullptr, -1,
+    true, "HECS", nullptr, -1,
     false, false, false, "",
 };
 // Pattern: BT([01])$
@@ -977,54 +986,54 @@ static const CommandDefinition command_56 = {
     true, "BATS", nullptr, -1,
     false, false, false, "",
 };
-// Pattern: ACCT((2[0-3]|[01]?[0-9])([0-5]?[0-9])-(2[0-3]|[01]?[0-9])([0-5]?[0-9]))$
+// Pattern: ACCT((2[0-3]|[01][0-9])[0-5][0-9]-(2[0-3]|[01][0-9])[0-5][0-9])$
 static const RegexNode regex_27[] = {
     {nullptr, -1, -1},
     {"0123456789", 0, -1},
     {"012345", 1, -1},
-    {nullptr, 2, 1},
-    {"0123", 3, -1},
-    {"2", 4, -1},
-    {"0123456789", 3, -1},
-    {"01", 6, -1},
-    {nullptr, 7, 6},
-    {nullptr, 5, 8},
-    {"-", 9, -1},
+    {"0123", 2, -1},
+    {"2", 3, -1},
+    {"0123456789", 2, -1},
+    {"01", 5, -1},
+    {nullptr, 4, 6},
+    {"-", 7, -1},
+    {"0123456789", 8, -1},
+    {"012345", 9, -1},
+    {"0123", 10, -1},
+    {"2", 11, -1},
     {"0123456789", 10, -1},
-    {"012345", 11, -1},
-    {nullptr, 12, 11},
-    {"0123", 13, -1},
-    {"2", 14, -1},
-    {"0123456789", 13, -1},
-    {"01", 16, -1},
-    {nullptr, 17, 16},
-    {nullptr, 15, 18},
-    {"T", 19, -1},
-    {"C", 20, -1},
-    {"C", 21, -1},
-    {"A", 22, -1},
+    {"01", 13, -1},
+    {nullptr, 12, 14},
+    {"T", 15, -1},
+    {"C", 16, -1},
+    {"C", 17, -1},
+    {"A", 18, -1},
 };
 static const CommandDefinition command_57 = {
-    "ACCT", "ACCT", regex_27, 24, 23, nullptr, 0,
-    true, nullptr, nullptr, -1,
+    "ACCT", "ACCT", regex_27, 20, 19, nullptr, 0,
+    true, "DI", nullptr, -1,
     false, false, false, "",
 };
-// Pattern: ACCB([01],0[456]\d\d)$
+// Pattern: ACCB([01],(0[45][0-9][0-9]|0600))$
 static const RegexNode regex_28[] = {
     {nullptr, -1, -1},
     {"0123456789", 0, -1},
     {"0123456789", 1, -1},
-    {"456", 2, -1},
-    {"0", 3, -1},
-    {",", 4, -1},
-    {"01", 5, -1},
-    {"B", 6, -1},
-    {"C", 7, -1},
-    {"C", 8, -1},
-    {"A", 9, -1},
+    {"45", 2, -1},
+    {"0", 0, -1},
+    {"0", 4, -1},
+    {"6", 5, -1},
+    {nullptr, 3, 6},
+    {"0", 7, -1},
+    {",", 8, -1},
+    {"01", 9, -1},
+    {"B", 10, -1},
+    {"C", 11, -1},
+    {"C", 12, -1},
+    {"A", 13, -1},
 };
 static const CommandDefinition command_58 = {
-    "ACCB", "ACCB", regex_28, 11, 10, nullptr, 0,
+    "ACCB", "ACCB", regex_28, 15, 14, nullptr, 0,
     true, "BATS", nullptr, -1,
     false, false, false, "",
 };
@@ -1076,7 +1085,7 @@ static const RegexNode regex_31[] = {
 };
 static const CommandDefinition command_61 = {
     "SEP", "SEP", regex_31, 6, 5, nullptr, 0,
-    true, "BATS", nullptr, -1,
+    true, "HECS", nullptr, -1,
     false, false, false, "",
 };
 // Pattern: BDCM(0[012]\d\d)$
@@ -1194,56 +1203,48 @@ static const CommandDefinition *const pi17m058_commands[] = {
 static const char *const pi17m058_poll[] = {
     "GS", "PS", "MOD", "WS", "BATS", "FLAG", "PIRI", "PI", "ID",
 };
-// Pattern: ACCT((2[0-3]|[01]?[0-9])([0-5]?[0-9]),(2[0-3]|[01]?[0-9])([0-5]?[0-9]),(2[0-3]|[01]?[0-9])([0-5]?[0-9]),(2[0-3]|[01]?[0-9])([0-5]?[0-9]))$
+// Pattern: ACCT((2[0-3]|[01][0-9])[0-5][0-9],(2[0-3]|[01][0-9])[0-5][0-9],(2[0-3]|[01][0-9])[0-5][0-9],(2[0-3]|[01][0-9])[0-5][0-9])$
 static const RegexNode regex_35[] = {
     {nullptr, -1, -1},
     {"0123456789", 0, -1},
     {"012345", 1, -1},
-    {nullptr, 2, 1},
-    {"0123", 3, -1},
-    {"2", 4, -1},
-    {"0123456789", 3, -1},
-    {"01", 6, -1},
-    {nullptr, 7, 6},
-    {nullptr, 5, 8},
-    {",", 9, -1},
+    {"0123", 2, -1},
+    {"2", 3, -1},
+    {"0123456789", 2, -1},
+    {"01", 5, -1},
+    {nullptr, 4, 6},
+    {",", 7, -1},
+    {"0123456789", 8, -1},
+    {"012345", 9, -1},
+    {"0123", 10, -1},
+    {"2", 11, -1},
     {"0123456789", 10, -1},
-    {"012345", 11, -1},
-    {nullptr, 12, 11},
-    {"0123", 13, -1},
-    {"2", 14, -1},
-    {"0123456789", 13, -1},
-    {"01", 16, -1},
-    {nullptr, 17, 16},
-    {nullptr, 15, 18},
-    {",", 19, -1},
-    {"0123456789", 20, -1},
-    {"012345", 21, -1},
-    {nullptr, 22, 21},
-    {"0123", 23, -1},
-    {"2", 24, -1},
-    {"0123456789", 23, -1},
-    {"01", 26, -1},
-    {nullptr, 27, 26},
-    {nullptr, 25, 28},
-    {",", 29, -1},
-    {"0123456789", 30, -1},
-    {"012345", 31, -1},
-    {nullptr, 32, 31},
-    {"0123", 33, -1},
-    {"2", 34, -1},
-    {"0123456789", 33, -1},
-    {"01", 36, -1},
-    {nullptr, 37, 36},
-    {nullptr, 35, 38},
-    {"T", 39, -1},
-    {"C", 40, -1},
-    {"C", 41, -1},
-    {"A", 42, -1},
+    {"01", 13, -1},
+    {nullptr, 12, 14},
+    {",", 15, -1},
+    {"0123456789", 16, -1},
+    {"012345", 17, -1},
+    {"0123", 18, -1},
+    {"2", 19, -1},
+    {"0123456789", 18, -1},
+    {"01", 21, -1},
+    {nullptr, 20, 22},
+    {",", 23, -1},
+    {"0123456789", 24, -1},
+    {"012345", 25, -1},
+    {"0123", 26, -1},
+    {"2", 27, -1},
+    {"0123456789", 26, -1},
+    {"01", 29, -1},
+    {nullptr, 28, 30},
+    {"T", 31, -1},
+    {"C", 32, -1},
+    {"C", 33, -1},
+    {"A", 34, -1},
 };
 static const CommandDefinition command_66 = {
-    "ACCT", "ACCT", regex_35, 44, 43, nullptr, 0,
-    true, nullptr, nullptr, -1,
+    "ACCT", "ACCT", regex_35, 36, 35, nullptr, 0,
+    true, "DI", nullptr, -1,
     false, false, false, "",
 };
 static const CommandDefinition command_67 = {
@@ -1570,7 +1571,7 @@ static const RegexNode regex_38[] = {
 };
 static const CommandDefinition command_86 = {
     "PCP", "PCP", regex_38, 7, 6, nullptr, 0,
-    true, "PIRI", "^S009", -1,
+    true, nullptr, "^S009", -1,
     false, false, false, "",
 };
 // Pattern: MCHGC([0-9],0[1-8]0)$
@@ -1589,7 +1590,7 @@ static const RegexNode regex_39[] = {
 };
 static const CommandDefinition command_87 = {
     "MCHGC", "MCHGC", regex_39, 11, 10, nullptr, 0,
-    true, "PIRI", "^S013", -1,
+    true, nullptr, "^S013", -1,
     false, false, false, "",
 };
 // Pattern: MUCHGC([0-9]),(002|0[1-8]0)$
@@ -1612,7 +1613,7 @@ static const RegexNode regex_40[] = {
 };
 static const CommandDefinition command_88 = {
     "MUCHGC", "MUCHGC", regex_40, 15, 14, nullptr, 0,
-    true, "PIRI", "^S014", -1,
+    true, nullptr, "^S014", -1,
     false, false, false, "",
 };
 // Pattern: PBT([012])$
@@ -1628,7 +1629,7 @@ static const CommandDefinition command_89 = {
     true, "PIRI", "^S007", -1,
     false, false, false, "",
 };
-// Pattern: MCHGV(4[8-9][0-9]|5[0-7][0-9]|58[0-5]),(4[8-9][0-9]|5[0-7][0-9]|58[0-4])$
+// Pattern: MCHGV((4[8-9][0-9]|5[0-7][0-9]|58[0-4]),(4[8-9][0-9]|5[0-7][0-9]|58[0-4]))$
 static const RegexNode regex_42[] = {
     {nullptr, -1, -1},
     {"0123456789", 0, -1},
@@ -1649,7 +1650,7 @@ static const RegexNode regex_42[] = {
     {"0123456789", 12, -1},
     {"01234567", 16, -1},
     {"5", 17, -1},
-    {"012345", 12, -1},
+    {"01234", 12, -1},
     {"8", 19, -1},
     {"5", 20, -1},
     {nullptr, 18, 21},
@@ -2195,7 +2196,7 @@ static const RegexNode regex_47[] = {
 };
 static const CommandDefinition command_131 = {
     "MCHGC", "MCHGC", regex_47, 11, 10, nullptr, 0,
-    true, "PIRI", "^S013", 1,
+    true, "PRI0", "^S013", 1,
     false, false, false, "",
 };
 // Pattern: MUCHGC(\d,\d\d\d)$
@@ -2215,7 +2216,7 @@ static const RegexNode regex_48[] = {
 };
 static const CommandDefinition command_132 = {
     "MUCHGC", "MUCHGC", regex_48, 12, 11, nullptr, 0,
-    true, "PIRI", "^S014", 1,
+    true, "PRI0", "^S014", 1,
     false, false, false, "",
 };
 // Pattern: MCHGV(\d\d\d,\d\d\d)$
@@ -2244,47 +2245,54 @@ static const CommandDefinition command_134 = {
     true, "T", "^S018", -1,
     false, false, false, "",
 };
-// Pattern: POP(\d)$
+// Pattern: BUCD((4[4-9][0-9]|50[0-9]|510),(000|4[8-9][0-9]|5[0-7][0-9]|580))$
 static const RegexNode regex_50[] = {
     {nullptr, -1, -1},
+    {"0", 0, -1},
+    {"0", 1, -1},
+    {"0", 2, -1},
     {"0123456789", 0, -1},
-    {"P", 1, -1},
-    {"O", 2, -1},
-    {"P", 3, -1},
+    {"89", 4, -1},
+    {"4", 5, -1},
+    {"0123456789", 0, -1},
+    {"01234567", 7, -1},
+    {"5", 8, -1},
+    {"0", 0, -1},
+    {"8", 10, -1},
+    {"5", 11, -1},
+    {nullptr, 9, 12},
+    {nullptr, 6, 13},
+    {nullptr, 3, 14},
+    {",", 15, -1},
+    {"0123456789", 16, -1},
+    {"456789", 17, -1},
+    {"4", 18, -1},
+    {"0123456789", 16, -1},
+    {"0", 20, -1},
+    {"5", 21, -1},
+    {"0", 16, -1},
+    {"1", 23, -1},
+    {"5", 24, -1},
+    {nullptr, 22, 25},
+    {nullptr, 19, 26},
+    {"D", 27, -1},
+    {"C", 28, -1},
+    {"U", 29, -1},
+    {"B", 30, -1},
 };
 static const CommandDefinition command_135 = {
-    "POP", "POP", regex_50, 5, 4, nullptr, 0,
-    true, "PIRI", "^S007", -1,
-    false, false, false, "",
-};
-// Pattern: BUCD(\d\d\d,\d\d\d)$
-static const RegexNode regex_51[] = {
-    {nullptr, -1, -1},
-    {"0123456789", 0, -1},
-    {"0123456789", 1, -1},
-    {"0123456789", 2, -1},
-    {",", 3, -1},
-    {"0123456789", 4, -1},
-    {"0123456789", 5, -1},
-    {"0123456789", 6, -1},
-    {"D", 7, -1},
-    {"C", 8, -1},
-    {"U", 9, -1},
-    {"B", 10, -1},
-};
-static const CommandDefinition command_136 = {
-    "BUCD", "BUCD", regex_51, 12, 11, nullptr, 0,
+    "BUCD", "BUCD", regex_50, 32, 31, nullptr, 0,
     true, "PIRI", "^S014", -1,
     false, false, false, "",
 };
 static const CommandDefinition *const pi18lvx_commands[] = {
-    &command_93, &command_94, &command_95, &command_96, &command_97, &command_98, &command_99, &command_100, &command_101, &command_102, &command_103, &command_104, &command_105, &command_106, &command_107, &command_108, &command_109, &command_110, &command_111, &command_112, &command_113, &command_114, &command_115, &command_116, &command_117, &command_118, &command_119, &command_120, &command_121, &command_122, &command_123, &command_124, &command_125, &command_126, &command_127, &command_128, &command_129, &command_84, &command_85, &command_130, &command_131, &command_132, &command_133, &command_134, &command_135, &command_136,
+    &command_93, &command_94, &command_95, &command_96, &command_97, &command_98, &command_99, &command_100, &command_101, &command_102, &command_103, &command_104, &command_105, &command_106, &command_107, &command_108, &command_109, &command_110, &command_111, &command_112, &command_113, &command_114, &command_115, &command_116, &command_117, &command_118, &command_119, &command_120, &command_121, &command_122, &command_123, &command_124, &command_125, &command_126, &command_127, &command_128, &command_129, &command_84, &command_85, &command_130, &command_131, &command_132, &command_133, &command_134, &command_82, &command_135,
 };
 static const char *const pi18lvx_poll[] = {
     "GS", "MOD", "FWS", "PIRI", "FLAG", "PI", "ID",
 };
 static const CommandDefinition *const pi18sv_commands[] = {
-    &command_93, &command_94, &command_95, &command_96, &command_97, &command_98, &command_99, &command_100, &command_101, &command_102, &command_103, &command_104, &command_105, &command_106, &command_107, &command_108, &command_109, &command_110, &command_111, &command_112, &command_113, &command_114, &command_115, &command_116, &command_117, &command_118, &command_119, &command_120, &command_121, &command_122, &command_123, &command_124, &command_125, &command_126, &command_127, &command_128, &command_129, &command_84, &command_85, &command_130, &command_131, &command_132, &command_133, &command_134, &command_135, &command_136,
+    &command_93, &command_94, &command_95, &command_96, &command_97, &command_98, &command_99, &command_100, &command_101, &command_102, &command_103, &command_104, &command_105, &command_106, &command_107, &command_108, &command_109, &command_110, &command_111, &command_112, &command_113, &command_114, &command_115, &command_116, &command_117, &command_118, &command_119, &command_120, &command_121, &command_122, &command_123, &command_124, &command_125, &command_126, &command_127, &command_128, &command_129, &command_84, &command_85, &command_130, &command_131, &command_132, &command_133, &command_134, &command_82, &command_135,
 };
 static const char *const pi18sv_poll[] = {
     "GS", "MOD", "FWS", "PIRI", "FLAG", "PI", "ID",
@@ -2322,7 +2330,7 @@ static const FieldDefinition fields_59[] = {
     {15, -1, FieldKind::number, "Sync frequency", "", 1, nullptr, 0},
     {16, -1, FieldKind::keyed, "Inverter charge status", "", 1, lookup_46, 4},
 };
-static const CommandDefinition command_137 = {
+static const CommandDefinition command_136 = {
     "Q1", "Q1", nullptr, 0, 0, fields_59, 17,
     false, nullptr, nullptr, -1,
     false, false, false, "",
@@ -2334,7 +2342,7 @@ static const Lookup lookup_47[] = {
 static const FieldDefinition fields_60[] = {
     {0, -1, FieldKind::option, "DSP Has Bootstrap", "", 1, lookup_47, 2},
 };
-static const CommandDefinition command_138 = {
+static const CommandDefinition command_137 = {
     "QBOOT", "QBOOT", nullptr, 0, 0, fields_60, 1,
     false, nullptr, nullptr, -1,
     false, false, false, "",
@@ -2399,7 +2407,7 @@ static const FieldDefinition fields_61[] = {
     {23, -1, FieldKind::option, "PV OK condition", "", 1, lookup_52, 2},
     {24, -1, FieldKind::option, "PV Power Balance", "", 1, lookup_53, 2},
 };
-static const CommandDefinition command_139 = {
+static const CommandDefinition command_138 = {
     "QDI", "QDI", nullptr, 0, 0, fields_61, 25,
     false, nullptr, nullptr, -1,
     false, false, false, "",
@@ -2415,7 +2423,7 @@ static const FieldDefinition fields_62[] = {
     {0, 121, FieldKind::enabled, "Primary Source Interrupt Alarm", "bool", 1, nullptr, 0},
     {0, 122, FieldKind::enabled, "Record Fault Code", "bool", 1, nullptr, 0},
 };
-static const CommandDefinition command_140 = {
+static const CommandDefinition command_139 = {
     "QFLAG", "QFLAG", nullptr, 0, 0, fields_62, 9,
     false, nullptr, nullptr, -1,
     false, false, false, "",
@@ -2423,7 +2431,7 @@ static const CommandDefinition command_140 = {
 static const FieldDefinition fields_63[] = {
     {0, -1, FieldKind::text, "Max Charging Current", "A", 1, nullptr, 0},
 };
-static const CommandDefinition command_141 = {
+static const CommandDefinition command_140 = {
     "QMCHGCR", "QMCHGCR", nullptr, 0, 0, fields_63, 1,
     false, nullptr, nullptr, -1,
     false, false, false, "",
@@ -2440,7 +2448,7 @@ static const Lookup lookup_54[] = {
 static const FieldDefinition fields_64[] = {
     {0, -1, FieldKind::keyed, "Device Mode", "", 1, lookup_54, 7},
 };
-static const CommandDefinition command_142 = {
+static const CommandDefinition command_141 = {
     "QMOD", "QMOD", nullptr, 0, 0, fields_64, 1,
     false, nullptr, nullptr, -1,
     false, false, false, "",
@@ -2448,7 +2456,7 @@ static const CommandDefinition command_142 = {
 static const FieldDefinition fields_65[] = {
     {0, -1, FieldKind::text, "Model Name", "", 1, nullptr, 0},
 };
-static const CommandDefinition command_143 = {
+static const CommandDefinition command_142 = {
     "QMN", "QMN", nullptr, 0, 0, fields_65, 1,
     false, nullptr, nullptr, -1,
     false, false, false, "",
@@ -2456,7 +2464,7 @@ static const CommandDefinition command_143 = {
 static const FieldDefinition fields_66[] = {
     {0, -1, FieldKind::text, "Max Utility Charging Current", "A", 1, nullptr, 0},
 };
-static const CommandDefinition command_144 = {
+static const CommandDefinition command_143 = {
     "QMUCHGCR", "QMUCHGCR", nullptr, 0, 0, fields_66, 1,
     false, nullptr, nullptr, -1,
     false, false, false, "",
@@ -2464,13 +2472,13 @@ static const CommandDefinition command_144 = {
 static const FieldDefinition fields_67[] = {
     {0, -1, FieldKind::option, "Output mode", "", 1, lookup_51, 8},
 };
-static const CommandDefinition command_145 = {
+static const CommandDefinition command_144 = {
     "QOPM", "QOPM", nullptr, 0, 0, fields_67, 1,
     false, nullptr, nullptr, -1,
     false, false, false, "",
 };
 // Pattern: QPGS(\d+)$
-static const RegexNode regex_52[] = {
+static const RegexNode regex_51[] = {
     {nullptr, -1, -1},
     {nullptr, 2, 0},
     {"0123456789", 1, -1},
@@ -2577,15 +2585,15 @@ static const FieldDefinition fields_68[] = {
     {27, -1, FieldKind::number, "Unknown float", "", 1, nullptr, 0},
     {28, -1, FieldKind::text, "Unknown flags?", "", 1, nullptr, 0},
 };
-static const CommandDefinition command_146 = {
-    "QPGS", "QPGS", regex_52, 8, 7, fields_68, 36,
+static const CommandDefinition command_145 = {
+    "QPGS", "QPGS", regex_51, 8, 7, fields_68, 36,
     false, nullptr, nullptr, -1,
     false, false, false, "",
 };
 static const FieldDefinition fields_69[] = {
     {0, -1, FieldKind::text, "Protocol ID", "", 1, nullptr, 0},
 };
-static const CommandDefinition command_147 = {
+static const CommandDefinition command_146 = {
     "QPI", "QPI", nullptr, 0, 0, fields_69, 1,
     false, nullptr, nullptr, -1,
     false, false, false, "",
@@ -2622,7 +2630,7 @@ static const FieldDefinition fields_70[] = {
     {20, 1, FieldKind::digit, "Is Switched On", "bool", 1, nullptr, 0},
     {20, 2, FieldKind::digit, "Is Reserved", "bool", 1, nullptr, 0},
 };
-static const CommandDefinition command_148 = {
+static const CommandDefinition command_147 = {
     "QPIGS", "QPIGS", nullptr, 0, 0, fields_70, 30,
     false, nullptr, nullptr, -1,
     false, false, false, "",
@@ -2683,7 +2691,7 @@ static const FieldDefinition fields_71[] = {
     {25, -1, FieldKind::integer, "Max charging time for CV stage", "min", 1, nullptr, 0},
     {26, -1, FieldKind::option, "Operation Logic", "", 1, lookup_62, 3},
 };
-static const CommandDefinition command_149 = {
+static const CommandDefinition command_148 = {
     "QPIRI", "QPIRI", nullptr, 0, 0, fields_71, 27,
     false, nullptr, nullptr, -1,
     false, false, false, "",
@@ -2717,7 +2725,7 @@ static const FieldDefinition fields_72[] = {
     {0, 28, FieldKind::digit, "MPPT overload warning", "bool", 1, nullptr, 0},
     {0, 29, FieldKind::digit, "Battery too low to charge warning", "bool", 1, nullptr, 0},
 };
-static const CommandDefinition command_150 = {
+static const CommandDefinition command_149 = {
     "QPIWS", "QPIWS", nullptr, 0, 0, fields_72, 27,
     false, nullptr, nullptr, -1,
     false, false, false, "",
@@ -2725,7 +2733,7 @@ static const CommandDefinition command_150 = {
 static const FieldDefinition fields_73[] = {
     {0, -1, FieldKind::text, "Main CPU firmware version", "", 1, nullptr, 0},
 };
-static const CommandDefinition command_151 = {
+static const CommandDefinition command_150 = {
     "QVFW", "QVFW", nullptr, 0, 0, fields_73, 1,
     false, nullptr, nullptr, -1,
     false, false, false, "",
@@ -2733,7 +2741,7 @@ static const CommandDefinition command_151 = {
 static const FieldDefinition fields_74[] = {
     {0, -1, FieldKind::text, "Secondary CPU firmware version", "", 1, nullptr, 0},
 };
-static const CommandDefinition command_152 = {
+static const CommandDefinition command_151 = {
     "QVFW2", "QVFW2", nullptr, 0, 0, fields_74, 1,
     false, nullptr, nullptr, -1,
     false, false, false, "",
@@ -2762,25 +2770,25 @@ static const FieldDefinition fields_75[] = {
     {8, -1, FieldKind::number, "Battery max charging current", "A", 1, nullptr, 0},
     {9, -1, FieldKind::number, "Battery max discharge current", "A", 1, nullptr, 0},
 };
-static const CommandDefinition command_153 = {
+static const CommandDefinition command_152 = {
     "QBMS", "QBMS", nullptr, 0, 0, fields_75, 10,
     false, nullptr, nullptr, -1,
     false, false, true, "",
 };
 // Pattern: F([56]0)$
-static const RegexNode regex_53[] = {
+static const RegexNode regex_52[] = {
     {nullptr, -1, -1},
     {"0", 0, -1},
     {"56", 1, -1},
     {"F", 2, -1},
 };
-static const CommandDefinition command_154 = {
-    "F", "F", regex_53, 4, 3, nullptr, 0,
+static const CommandDefinition command_153 = {
+    "F", "F", regex_52, 4, 3, nullptr, 0,
     true, "QPIRI", nullptr, -1,
     false, false, false, "",
 };
 // Pattern: MCHGC(\d\d\d)$
-static const RegexNode regex_54[] = {
+static const RegexNode regex_53[] = {
     {nullptr, -1, -1},
     {"0123456789", 0, -1},
     {"0123456789", 1, -1},
@@ -2791,13 +2799,13 @@ static const RegexNode regex_54[] = {
     {"C", 6, -1},
     {"M", 7, -1},
 };
-static const CommandDefinition command_155 = {
-    "MCHGC", "MCHGC", regex_54, 9, 8, nullptr, 0,
-    true, "QPIRI", nullptr, -1,
+static const CommandDefinition command_154 = {
+    "MCHGC", "MCHGC", regex_53, 9, 8, nullptr, 0,
+    true, "QPGS0", nullptr, -1,
     false, false, false, "",
 };
 // Pattern: MNCHGC(\d\d\d\d)$
-static const RegexNode regex_55[] = {
+static const RegexNode regex_54[] = {
     {nullptr, -1, -1},
     {"0123456789", 0, -1},
     {"0123456789", 1, -1},
@@ -2810,13 +2818,13 @@ static const RegexNode regex_55[] = {
     {"N", 8, -1},
     {"M", 9, -1},
 };
-static const CommandDefinition command_156 = {
-    "MNCHGC", "MNCHGC", regex_55, 11, 10, nullptr, 0,
-    true, "QPIRI", nullptr, -1,
+static const CommandDefinition command_155 = {
+    "MNCHGC", "MNCHGC", regex_54, 11, 10, nullptr, 0,
+    true, "QPGS0", nullptr, -1,
     false, false, false, "",
 };
 // Pattern: MUCHGC(\d\d\d)$
-static const RegexNode regex_56[] = {
+static const RegexNode regex_55[] = {
     {nullptr, -1, -1},
     {"0123456789", 0, -1},
     {"0123456789", 1, -1},
@@ -2828,13 +2836,13 @@ static const RegexNode regex_56[] = {
     {"U", 7, -1},
     {"M", 8, -1},
 };
-static const CommandDefinition command_157 = {
-    "MUCHGC", "MUCHGC", regex_56, 10, 9, nullptr, 0,
-    true, "QPIRI", nullptr, -1,
+static const CommandDefinition command_156 = {
+    "MUCHGC", "MUCHGC", regex_55, 10, 9, nullptr, 0,
+    true, "QPGS0", nullptr, -1,
     false, false, false, "",
 };
 // Pattern: PBCV(\d\d\.\d)$
-static const RegexNode regex_57[] = {
+static const RegexNode regex_56[] = {
     {nullptr, -1, -1},
     {"0123456789", 0, -1},
     {".", 1, -1},
@@ -2845,13 +2853,13 @@ static const RegexNode regex_57[] = {
     {"B", 6, -1},
     {"P", 7, -1},
 };
-static const CommandDefinition command_158 = {
-    "PBCV", "PBCV", regex_57, 9, 8, nullptr, 0,
+static const CommandDefinition command_157 = {
+    "PBCV", "PBCV", regex_56, 9, 8, nullptr, 0,
     true, "QPIRI", nullptr, -1,
     false, false, false, "",
 };
 // Pattern: PBDV(\d\d\.\d)$
-static const RegexNode regex_58[] = {
+static const RegexNode regex_57[] = {
     {nullptr, -1, -1},
     {"0123456789", 0, -1},
     {".", 1, -1},
@@ -2862,13 +2870,13 @@ static const RegexNode regex_58[] = {
     {"B", 6, -1},
     {"P", 7, -1},
 };
-static const CommandDefinition command_159 = {
-    "PBDV", "PBDV", regex_58, 9, 8, nullptr, 0,
+static const CommandDefinition command_158 = {
+    "PBDV", "PBDV", regex_57, 9, 8, nullptr, 0,
     true, "QPIRI", nullptr, -1,
     false, false, false, "",
 };
 // Pattern: PBFT(\d\d\.\d)$
-static const RegexNode regex_59[] = {
+static const RegexNode regex_58[] = {
     {nullptr, -1, -1},
     {"0123456789", 0, -1},
     {".", 1, -1},
@@ -2879,13 +2887,13 @@ static const RegexNode regex_59[] = {
     {"B", 6, -1},
     {"P", 7, -1},
 };
-static const CommandDefinition command_160 = {
-    "PBFT", "PBFT", regex_59, 9, 8, nullptr, 0,
+static const CommandDefinition command_159 = {
+    "PBFT", "PBFT", regex_58, 9, 8, nullptr, 0,
     true, "QPIRI", nullptr, -1,
     false, false, false, "",
 };
 // Pattern: PBT(0[012])$
-static const RegexNode regex_60[] = {
+static const RegexNode regex_59[] = {
     {nullptr, -1, -1},
     {"012", 0, -1},
     {"0", 1, -1},
@@ -2893,13 +2901,13 @@ static const RegexNode regex_60[] = {
     {"B", 3, -1},
     {"P", 4, -1},
 };
-static const CommandDefinition command_161 = {
-    "PBT", "PBT", regex_60, 6, 5, nullptr, 0,
+static const CommandDefinition command_160 = {
+    "PBT", "PBT", regex_59, 6, 5, nullptr, 0,
     true, "QPIRI", nullptr, -1,
     false, false, false, "",
 };
 // Pattern: PCP(0[0123])$
-static const RegexNode regex_61[] = {
+static const RegexNode regex_60[] = {
     {nullptr, -1, -1},
     {"0123", 0, -1},
     {"0", 1, -1},
@@ -2907,13 +2915,13 @@ static const RegexNode regex_61[] = {
     {"C", 3, -1},
     {"P", 4, -1},
 };
-static const CommandDefinition command_162 = {
-    "PCP", "PCP", regex_61, 6, 5, nullptr, 0,
+static const CommandDefinition command_161 = {
+    "PCP", "PCP", regex_60, 6, 5, nullptr, 0,
     true, "QPIRI", nullptr, -1,
     false, false, false, "",
 };
 // Pattern: PCVV(\d\d\.\d)$
-static const RegexNode regex_62[] = {
+static const RegexNode regex_61[] = {
     {nullptr, -1, -1},
     {"0123456789", 0, -1},
     {".", 1, -1},
@@ -2924,13 +2932,13 @@ static const RegexNode regex_62[] = {
     {"C", 6, -1},
     {"P", 7, -1},
 };
-static const CommandDefinition command_163 = {
-    "PCVV", "PCVV", regex_62, 9, 8, nullptr, 0,
+static const CommandDefinition command_162 = {
+    "PCVV", "PCVV", regex_61, 9, 8, nullptr, 0,
     true, "QPIRI", nullptr, -1,
     false, false, false, "",
 };
 // Pattern: PE(.+)$
-static const RegexNode regex_63[] = {
+static const RegexNode regex_62[] = {
     {nullptr, -1, -1},
     {nullptr, 2, 0},
     {"", 1, -1},
@@ -2938,13 +2946,13 @@ static const RegexNode regex_63[] = {
     {"E", 3, -1},
     {"P", 4, -1},
 };
-static const CommandDefinition command_164 = {
-    "PE", "PE", regex_63, 6, 5, nullptr, 0,
+static const CommandDefinition command_163 = {
+    "PE", "PE", regex_62, 6, 5, nullptr, 0,
     true, "QFLAG", nullptr, -1,
     false, false, false, "abjkuvxyz",
 };
 // Pattern: PD(.+)$
-static const RegexNode regex_64[] = {
+static const RegexNode regex_63[] = {
     {nullptr, -1, -1},
     {nullptr, 2, 0},
     {"", 1, -1},
@@ -2952,18 +2960,18 @@ static const RegexNode regex_64[] = {
     {"D", 3, -1},
     {"P", 4, -1},
 };
-static const CommandDefinition command_165 = {
-    "PD", "PD", regex_64, 6, 5, nullptr, 0,
+static const CommandDefinition command_164 = {
+    "PD", "PD", regex_63, 6, 5, nullptr, 0,
     true, "QFLAG", nullptr, -1,
     false, false, false, "abjkuvxyz",
 };
-static const CommandDefinition command_166 = {
+static const CommandDefinition command_165 = {
     "PF", "PF", nullptr, 0, 0, nullptr, 0,
     true, "QPIRI", nullptr, -1,
     false, false, false, "",
 };
 // Pattern: PGR(0[01])$
-static const RegexNode regex_65[] = {
+static const RegexNode regex_64[] = {
     {nullptr, -1, -1},
     {"01", 0, -1},
     {"0", 1, -1},
@@ -2971,13 +2979,13 @@ static const RegexNode regex_65[] = {
     {"G", 3, -1},
     {"P", 4, -1},
 };
-static const CommandDefinition command_167 = {
-    "PGR", "PGR", regex_65, 6, 5, nullptr, 0,
+static const CommandDefinition command_166 = {
+    "PGR", "PGR", regex_64, 6, 5, nullptr, 0,
     true, "QPIRI", nullptr, -1,
     false, false, false, "",
 };
 // Pattern: POP(0[012])$
-static const RegexNode regex_66[] = {
+static const RegexNode regex_65[] = {
     {nullptr, -1, -1},
     {"012", 0, -1},
     {"0", 1, -1},
@@ -2985,13 +2993,13 @@ static const RegexNode regex_66[] = {
     {"O", 3, -1},
     {"P", 4, -1},
 };
-static const CommandDefinition command_168 = {
-    "POP", "POP", regex_66, 6, 5, nullptr, 0,
+static const CommandDefinition command_167 = {
+    "POP", "POP", regex_65, 6, 5, nullptr, 0,
     true, "QPIRI", nullptr, -1,
     false, false, false, "",
 };
 // Pattern: POPLG(0[012])$
-static const RegexNode regex_67[] = {
+static const RegexNode regex_66[] = {
     {nullptr, -1, -1},
     {"012", 0, -1},
     {"0", 1, -1},
@@ -3001,13 +3009,13 @@ static const RegexNode regex_67[] = {
     {"O", 5, -1},
     {"P", 6, -1},
 };
-static const CommandDefinition command_169 = {
-    "POPLG", "POPLG", regex_67, 8, 7, nullptr, 0,
+static const CommandDefinition command_168 = {
+    "POPLG", "POPLG", regex_66, 8, 7, nullptr, 0,
     true, "QPIRI", nullptr, -1,
     false, false, false, "",
 };
 // Pattern: POPM(\d[01234])$
-static const RegexNode regex_68[] = {
+static const RegexNode regex_67[] = {
     {nullptr, -1, -1},
     {"01234", 0, -1},
     {"0123456789", 1, -1},
@@ -3016,13 +3024,13 @@ static const RegexNode regex_68[] = {
     {"O", 4, -1},
     {"P", 5, -1},
 };
-static const CommandDefinition command_170 = {
-    "POPM", "POPM", regex_68, 7, 6, nullptr, 0,
-    true, "QPIRI", nullptr, -1,
+static const CommandDefinition command_169 = {
+    "POPM", "POPM", regex_67, 7, 6, nullptr, 0,
+    true, "QPGS0", nullptr, -1,
     false, false, false, "",
 };
 // Pattern: PPCP(\d0[0123])$
-static const RegexNode regex_69[] = {
+static const RegexNode regex_68[] = {
     {nullptr, -1, -1},
     {"0123", 0, -1},
     {"0", 1, -1},
@@ -3032,13 +3040,13 @@ static const RegexNode regex_69[] = {
     {"P", 5, -1},
     {"P", 6, -1},
 };
-static const CommandDefinition command_171 = {
-    "PPCP", "PPCP", regex_69, 8, 7, nullptr, 0,
-    true, "QPIRI", nullptr, -1,
+static const CommandDefinition command_170 = {
+    "PPCP", "PPCP", regex_68, 8, 7, nullptr, 0,
+    true, "QPGS0", nullptr, -1,
     false, false, false, "",
 };
 // Pattern: PPVOKC([01])$
-static const RegexNode regex_70[] = {
+static const RegexNode regex_69[] = {
     {nullptr, -1, -1},
     {"01", 0, -1},
     {"C", 1, -1},
@@ -3048,13 +3056,13 @@ static const RegexNode regex_70[] = {
     {"P", 5, -1},
     {"P", 6, -1},
 };
-static const CommandDefinition command_172 = {
-    "PPVOKC", "PPVOKC", regex_70, 8, 7, nullptr, 0,
+static const CommandDefinition command_171 = {
+    "PPVOKC", "PPVOKC", regex_69, 8, 7, nullptr, 0,
     true, "QPIRI", nullptr, -1,
     false, false, false, "",
 };
 // Pattern: PSDV(\d\d\.\d)$
-static const RegexNode regex_71[] = {
+static const RegexNode regex_70[] = {
     {nullptr, -1, -1},
     {"0123456789", 0, -1},
     {".", 1, -1},
@@ -3065,13 +3073,13 @@ static const RegexNode regex_71[] = {
     {"S", 6, -1},
     {"P", 7, -1},
 };
-static const CommandDefinition command_173 = {
-    "PSDV", "PSDV", regex_71, 9, 8, nullptr, 0,
+static const CommandDefinition command_172 = {
+    "PSDV", "PSDV", regex_70, 9, 8, nullptr, 0,
     true, "QPIRI", nullptr, -1,
     false, false, false, "",
 };
 // Pattern: PSPB([01])$
-static const RegexNode regex_72[] = {
+static const RegexNode regex_71[] = {
     {nullptr, -1, -1},
     {"01", 0, -1},
     {"B", 1, -1},
@@ -3079,13 +3087,13 @@ static const RegexNode regex_72[] = {
     {"S", 3, -1},
     {"P", 4, -1},
 };
-static const CommandDefinition command_174 = {
-    "PSPB", "PSPB", regex_72, 6, 5, nullptr, 0,
+static const CommandDefinition command_173 = {
+    "PSPB", "PSPB", regex_71, 6, 5, nullptr, 0,
     true, "QPIRI", nullptr, -1,
     false, false, false, "",
 };
 // Pattern: PBATCD([01][01][01])$
-static const RegexNode regex_73[] = {
+static const RegexNode regex_72[] = {
     {nullptr, -1, -1},
     {"01", 0, -1},
     {"01", 1, -1},
@@ -3097,13 +3105,13 @@ static const RegexNode regex_73[] = {
     {"B", 7, -1},
     {"P", 8, -1},
 };
-static const CommandDefinition command_175 = {
-    "PBATCD", "PBATCD", regex_73, 10, 9, nullptr, 0,
+static const CommandDefinition command_174 = {
+    "PBATCD", "PBATCD", regex_72, 10, 9, nullptr, 0,
     true, "QBMS", nullptr, -1,
     false, false, false, "",
 };
 // Pattern: DAT(\d\d\d\d\d\d\d\d\d\d\d\d\d\d)$
-static const RegexNode regex_74[] = {
+static const RegexNode regex_73[] = {
     {nullptr, -1, -1},
     {"0123456789", 0, -1},
     {"0123456789", 1, -1},
@@ -3123,36 +3131,48 @@ static const RegexNode regex_74[] = {
     {"A", 15, -1},
     {"D", 16, -1},
 };
-static const CommandDefinition command_176 = {
-    "DAT", "DAT", regex_74, 18, 17, nullptr, 0,
+static const CommandDefinition command_175 = {
+    "DAT", "DAT", regex_73, 18, 17, nullptr, 0,
     true, nullptr, nullptr, -1,
     false, false, false, "",
 };
-// Pattern: PBATMAXDISC([01]\d\d)$
-static const RegexNode regex_75[] = {
+// Pattern: PBATMAXDISC(000|0[3-9][0-9]|1[0-4][0-9]|150)$
+static const RegexNode regex_74[] = {
     {nullptr, -1, -1},
+    {"0", 0, -1},
+    {"0", 1, -1},
+    {"0", 2, -1},
     {"0123456789", 0, -1},
-    {"0123456789", 1, -1},
-    {"01", 2, -1},
-    {"C", 3, -1},
-    {"S", 4, -1},
-    {"I", 5, -1},
-    {"D", 6, -1},
-    {"X", 7, -1},
-    {"A", 8, -1},
-    {"M", 9, -1},
-    {"T", 10, -1},
-    {"A", 11, -1},
-    {"B", 12, -1},
-    {"P", 13, -1},
+    {"3456789", 4, -1},
+    {"0", 5, -1},
+    {"0123456789", 0, -1},
+    {"01234", 7, -1},
+    {"1", 8, -1},
+    {"0", 0, -1},
+    {"5", 10, -1},
+    {"1", 11, -1},
+    {nullptr, 9, 12},
+    {nullptr, 6, 13},
+    {nullptr, 3, 14},
+    {"C", 15, -1},
+    {"S", 16, -1},
+    {"I", 17, -1},
+    {"D", 18, -1},
+    {"X", 19, -1},
+    {"A", 20, -1},
+    {"M", 21, -1},
+    {"T", 22, -1},
+    {"A", 23, -1},
+    {"B", 24, -1},
+    {"P", 25, -1},
 };
-static const CommandDefinition command_177 = {
-    "PBATMAXDISC", "PBATMAXDISC", regex_75, 15, 14, nullptr, 0,
-    true, "QPIRI", nullptr, -1,
+static const CommandDefinition command_176 = {
+    "PBATMAXDISC", "PBATMAXDISC", regex_74, 27, 26, nullptr, 0,
+    true, "QBMS", nullptr, -1,
     false, false, false, "",
 };
 // Pattern: BTA([-+]0\d)$
-static const RegexNode regex_76[] = {
+static const RegexNode regex_75[] = {
     {nullptr, -1, -1},
     {"0123456789", 0, -1},
     {"0", 1, -1},
@@ -3161,21 +3181,40 @@ static const RegexNode regex_76[] = {
     {"T", 4, -1},
     {"B", 5, -1},
 };
-static const CommandDefinition command_178 = {
-    "BTA", "BTA", regex_76, 7, 6, nullptr, 0,
-    true, nullptr, nullptr, -1,
+static const CommandDefinition command_177 = {
+    "BTA", "BTA", regex_75, 7, 6, nullptr, 0,
+    true, "QPIGS", nullptr, -1,
     false, false, false, "",
 };
-static const CommandDefinition command_179 = {
+static const CommandDefinition command_178 = {
     "PSAVE", "PSAVE", nullptr, 0, 0, nullptr, 0,
     true, nullptr, nullptr, -1,
     false, false, false, "",
 };
+static const FieldDefinition fields_76[] = {
+    {0, -1, FieldKind::number, "PV2 Input Current", "A", 1, nullptr, 0},
+    {1, -1, FieldKind::number, "PV2 Input Voltage", "V", 1, nullptr, 0},
+    {2, -1, FieldKind::number, "Battery voltage from SCC 2", "V", 1, nullptr, 0},
+    {3, -1, FieldKind::integer, "PV2 Charging Power", "W", 1, nullptr, 0},
+    {4, -1, FieldKind::text, "Device status", "", 1, nullptr, 0},
+    {5, -1, FieldKind::number, "AC charging current", "A", 1, nullptr, 0},
+    {6, -1, FieldKind::integer, "AC charging power", "W", 1, nullptr, 0},
+    {7, -1, FieldKind::number, "PV3 Input Current", "A", 1, nullptr, 0},
+    {8, -1, FieldKind::number, "PV3 Input Voltage", "V", 1, nullptr, 0},
+    {9, -1, FieldKind::number, "Battery voltage from SCC 3", "V", 1, nullptr, 0},
+    {10, -1, FieldKind::integer, "PV3 Charging Power", "W", 1, nullptr, 0},
+    {11, -1, FieldKind::integer, "PV total charging power", "W", 1, nullptr, 0},
+};
+static const CommandDefinition command_179 = {
+    "QPIGS2", "QPIGS2", nullptr, 0, 0, fields_76, 12,
+    false, nullptr, nullptr, -1,
+    false, false, false, "",
+};
 static const CommandDefinition *const pi30_commands[] = {
-    &command_137, &command_138, &command_139, &command_140, &command_4, &command_141, &command_142, &command_143, &command_5, &command_144, &command_145, &command_146, &command_147, &command_148, &command_149, &command_150, &command_151, &command_152, &command_153, &command_154, &command_155, &command_156, &command_157, &command_158, &command_159, &command_160, &command_161, &command_162, &command_163, &command_164, &command_165, &command_166, &command_167, &command_168, &command_169, &command_170, &command_171, &command_172, &command_173, &command_174, &command_175, &command_176, &command_177, &command_178, &command_179,
+    &command_136, &command_137, &command_138, &command_139, &command_4, &command_140, &command_141, &command_142, &command_5, &command_143, &command_144, &command_145, &command_146, &command_147, &command_148, &command_149, &command_150, &command_151, &command_152, &command_153, &command_154, &command_155, &command_156, &command_157, &command_158, &command_159, &command_160, &command_161, &command_162, &command_163, &command_164, &command_165, &command_166, &command_167, &command_168, &command_169, &command_170, &command_171, &command_172, &command_173, &command_174, &command_175, &command_176, &command_177, &command_178, &command_179,
 };
 static const char *const pi30_poll[] = {
-    "QPIGS", "QMOD", "QPIWS", "QPIRI", "QFLAG", "QPI", "QID",
+    "QPIGS", "QPIGS2", "QMOD", "QPIWS", "QPIRI", "QFLAG", "QPI", "QID",
 };
 static const Lookup lookup_66[] = {
     {"0", "AGM"},
@@ -3199,7 +3238,7 @@ static const Lookup lookup_67[] = {
     {"7", "Phase 2 of 2 phase output (180\u00b0)"},
     {"8", "Unknown Output Mode"},
 };
-static const FieldDefinition fields_76[] = {
+static const FieldDefinition fields_77[] = {
     {0, -1, FieldKind::number, "AC Output Voltage", "V", 1, nullptr, 0},
     {1, -1, FieldKind::number, "AC Output Frequency", "Hz", 1, nullptr, 0},
     {2, -1, FieldKind::integer, "Max AC Charging Current", "A", 1, nullptr, 0},
@@ -3229,11 +3268,11 @@ static const FieldDefinition fields_76[] = {
     {26, -1, FieldKind::integer, "Max Discharging current", "A", 1, nullptr, 0},
 };
 static const CommandDefinition command_180 = {
-    "QDI", "QDI", nullptr, 0, 0, fields_76, 27,
+    "QDI", "QDI", nullptr, 0, 0, fields_77, 27,
     false, nullptr, nullptr, -1,
     false, false, false, "",
 };
-static const FieldDefinition fields_77[] = {
+static const FieldDefinition fields_78[] = {
     {0, 97, FieldKind::enabled, "Buzzer", "bool", 1, nullptr, 0},
     {0, 98, FieldKind::enabled, "Overload Bypass", "bool", 1, nullptr, 0},
     {0, 100, FieldKind::enabled, "Solar Feed to Grid", "bool", 1, nullptr, 0},
@@ -3245,7 +3284,7 @@ static const FieldDefinition fields_77[] = {
     {0, 122, FieldKind::enabled, "Record Fault Code", "bool", 1, nullptr, 0},
 };
 static const CommandDefinition command_181 = {
-    "QFLAG", "QFLAG", nullptr, 0, 0, fields_77, 9,
+    "QFLAG", "QFLAG", nullptr, 0, 0, fields_78, 9,
     false, nullptr, nullptr, -1,
     false, false, false, "",
 };
@@ -3258,11 +3297,11 @@ static const Lookup lookup_68[] = {
     {"H", "Power Saving"},
     {"D", "Shutdown"},
 };
-static const FieldDefinition fields_78[] = {
+static const FieldDefinition fields_79[] = {
     {0, -1, FieldKind::keyed, "Device Mode", "", 1, lookup_68, 7},
 };
 static const CommandDefinition command_182 = {
-    "QMOD", "QMOD", nullptr, 0, 0, fields_78, 1,
+    "QMOD", "QMOD", nullptr, 0, 0, fields_79, 1,
     false, nullptr, nullptr, -1,
     false, false, false, "",
 };
@@ -3310,7 +3349,7 @@ static const Lookup lookup_70[] = {
     {"85", "AC output current unbalanced"},
     {"86", "AC output mode setting different"},
 };
-static const FieldDefinition fields_79[] = {
+static const FieldDefinition fields_80[] = {
     {0, -1, FieldKind::option, "Parallel instance number", "", 1, lookup_55, 2},
     {1, -1, FieldKind::text, "Serial number", "", 1, nullptr, 0},
     {2, -1, FieldKind::keyed, "Work mode", "", 1, lookup_69, 8},
@@ -3349,7 +3388,7 @@ static const FieldDefinition fields_79[] = {
     {28, -1, FieldKind::integer, "PV2 Input Current", "A", 1, nullptr, 0},
 };
 static const CommandDefinition command_183 = {
-    "QPGS", "QPGS", regex_52, 8, 7, fields_79, 36,
+    "QPGS", "QPGS", regex_51, 8, 7, fields_80, 36,
     false, nullptr, nullptr, -1,
     false, false, false, "",
 };
@@ -3358,7 +3397,7 @@ static const Lookup lookup_71[] = {
     {"01", "Germany"},
     {"02", "South America"},
 };
-static const FieldDefinition fields_80[] = {
+static const FieldDefinition fields_81[] = {
     {0, -1, FieldKind::number, "AC Input Voltage", "V", 1, nullptr, 0},
     {1, -1, FieldKind::number, "AC Input Frequency", "Hz", 1, nullptr, 0},
     {2, -1, FieldKind::number, "AC Output Voltage", "V", 1, nullptr, 0},
@@ -3394,7 +3433,7 @@ static const FieldDefinition fields_80[] = {
     {23, -1, FieldKind::integer, "Solar Feed to Grid Power", "W", 1, nullptr, 0},
 };
 static const CommandDefinition command_184 = {
-    "QPIGS", "QPIGS", nullptr, 0, 0, fields_80, 33,
+    "QPIGS", "QPIGS", nullptr, 0, 0, fields_81, 33,
     false, nullptr, nullptr, -1,
     false, false, false, "",
 };
@@ -3425,7 +3464,7 @@ static const Lookup lookup_74[] = {
     {"7", "Phase 2 of 2 phase output (180\u00b0)"},
     {"8", "unknown output"},
 };
-static const FieldDefinition fields_81[] = {
+static const FieldDefinition fields_82[] = {
     {0, -1, FieldKind::number, "AC Input Voltage", "V", 1, nullptr, 0},
     {1, -1, FieldKind::number, "AC Input Current", "A", 1, nullptr, 0},
     {2, -1, FieldKind::number, "AC Output Voltage", "V", 1, nullptr, 0},
@@ -3456,11 +3495,11 @@ static const FieldDefinition fields_81[] = {
     {27, -1, FieldKind::integer, "Max discharging current", "A", 1, nullptr, 0},
 };
 static const CommandDefinition command_185 = {
-    "QPIRI", "QPIRI", nullptr, 0, 0, fields_81, 28,
+    "QPIRI", "QPIRI", nullptr, 0, 0, fields_82, 28,
     false, nullptr, nullptr, -1,
     false, false, false, "",
 };
-static const FieldDefinition fields_82[] = {
+static const FieldDefinition fields_83[] = {
     {0, 0, FieldKind::digit, "PV loss warning", "bool", 1, nullptr, 0},
     {0, 1, FieldKind::digit, "Inverter fault", "bool", 1, nullptr, 0},
     {0, 2, FieldKind::digit, "Bus over fault", "bool", 1, nullptr, 0},
@@ -3496,64 +3535,64 @@ static const FieldDefinition fields_82[] = {
     {0, 35, FieldKind::digit, "Battery equalisation warning", "bool", 1, nullptr, 0},
 };
 static const CommandDefinition command_186 = {
-    "QPIWS", "QPIWS", nullptr, 0, 0, fields_82, 33,
+    "QPIWS", "QPIWS", nullptr, 0, 0, fields_83, 33,
     false, nullptr, nullptr, -1,
     false, false, false, "",
 };
 static const CommandDefinition command_187 = {
-    "PE", "PE", regex_63, 6, 5, nullptr, 0,
+    "PE", "PE", regex_62, 6, 5, nullptr, 0,
     true, "QFLAG", nullptr, -1,
     false, false, false, "abdkuvxyz",
 };
 static const CommandDefinition command_188 = {
-    "PD", "PD", regex_64, 6, 5, nullptr, 0,
+    "PD", "PD", regex_63, 6, 5, nullptr, 0,
     true, "QFLAG", nullptr, -1,
     false, false, false, "abdkuvxyz",
 };
 static const CommandDefinition command_189 = {
-    "DAT", "DAT", regex_74, 18, 17, nullptr, 0,
+    "DAT", "DAT", regex_73, 18, 17, nullptr, 0,
     true, "QT", nullptr, -1,
     false, false, false, "",
 };
-static const FieldDefinition fields_83[] = {
-    {0, -1, FieldKind::serial_length, "Serial Number", "", 1, nullptr, 0},
-};
-static const CommandDefinition command_190 = {
-    "QSID", "QSID", nullptr, 0, 0, fields_83, 1,
-    false, nullptr, nullptr, -1,
-    false, false, false, "",
-};
 static const FieldDefinition fields_84[] = {
-    {0, -1, FieldKind::text, "Remote CPU firmware version", "", 1, nullptr, 0},
-};
-static const CommandDefinition command_191 = {
-    "QVFW3", "QVFW3", nullptr, 0, 0, fields_84, 1,
-    false, nullptr, nullptr, -1,
-    false, false, false, "",
-};
-static const FieldDefinition fields_85[] = {
-    {0, -1, FieldKind::text, "Bluetooth version", "", 1, nullptr, 0},
-};
-static const CommandDefinition command_192 = {
-    "VERFW", "VERFW", nullptr, 0, 0, fields_85, 1,
-    false, nullptr, nullptr, -1,
-    false, false, false, "",
-};
-static const FieldDefinition fields_86[] = {
     {0, -1, FieldKind::number, "PV2 Input Current", "A", 1, nullptr, 0},
     {1, -1, FieldKind::number, "PV2 Input Voltage", "V", 1, nullptr, 0},
     {2, -1, FieldKind::integer, "PV2 Charging Power", "W", 1, nullptr, 0},
 };
-static const CommandDefinition command_193 = {
-    "QPIGS2", "QPIGS2", nullptr, 0, 0, fields_86, 3,
+static const CommandDefinition command_190 = {
+    "QPIGS2", "QPIGS2", nullptr, 0, 0, fields_84, 3,
+    false, nullptr, nullptr, -1,
+    false, false, false, "",
+};
+static const FieldDefinition fields_85[] = {
+    {0, -1, FieldKind::serial_length, "Serial Number", "", 1, nullptr, 0},
+};
+static const CommandDefinition command_191 = {
+    "QSID", "QSID", nullptr, 0, 0, fields_85, 1,
+    false, nullptr, nullptr, -1,
+    false, false, false, "",
+};
+static const FieldDefinition fields_86[] = {
+    {0, -1, FieldKind::text, "Remote CPU firmware version", "", 1, nullptr, 0},
+};
+static const CommandDefinition command_192 = {
+    "QVFW3", "QVFW3", nullptr, 0, 0, fields_86, 1,
     false, nullptr, nullptr, -1,
     false, false, false, "",
 };
 static const FieldDefinition fields_87[] = {
+    {0, -1, FieldKind::text, "Bluetooth version", "", 1, nullptr, 0},
+};
+static const CommandDefinition command_193 = {
+    "VERFW", "VERFW", nullptr, 0, 0, fields_87, 1,
+    false, nullptr, nullptr, -1,
+    false, false, false, "",
+};
+static const FieldDefinition fields_88[] = {
     {0, -1, FieldKind::text, "Device Output Source Priority Time Order", "", 1, nullptr, 0},
 };
 static const CommandDefinition command_194 = {
-    "QOPPT", "QOPPT", nullptr, 0, 0, fields_87, 1,
+    "QOPPT", "QOPPT", nullptr, 0, 0, fields_88, 1,
     false, nullptr, nullptr, -1,
     false, false, false, "",
 };
@@ -3563,7 +3602,7 @@ static const Lookup lookup_75[] = {
     {"2", "Solar + Utility"},
     {"3", "Only Solar"},
 };
-static const FieldDefinition fields_88[] = {
+static const FieldDefinition fields_89[] = {
     {0, -1, FieldKind::option, "Charger Source Priority 00 hours", "", 1, lookup_75, 4},
     {1, -1, FieldKind::option, "Charger Source Priority 01 hours", "", 1, lookup_75, 4},
     {2, -1, FieldKind::option, "Charger Source Priority 02 hours", "", 1, lookup_75, 4},
@@ -3594,15 +3633,15 @@ static const FieldDefinition fields_88[] = {
     {27, -1, FieldKind::option, "Selection of Charger Source Priority Order 3", "", 1, lookup_75, 4},
 };
 static const CommandDefinition command_195 = {
-    "QCHPT", "QCHPT", nullptr, 0, 0, fields_88, 28,
+    "QCHPT", "QCHPT", nullptr, 0, 0, fields_89, 28,
     false, nullptr, nullptr, -1,
     false, false, false, "",
 };
-static const FieldDefinition fields_89[] = {
+static const FieldDefinition fields_90[] = {
     {0, -1, FieldKind::text, "Device Time", "", 1, nullptr, 0},
 };
 static const CommandDefinition command_196 = {
-    "QT", "QT", nullptr, 0, 0, fields_89, 1,
+    "QT", "QT", nullptr, 0, 0, fields_90, 1,
     false, nullptr, nullptr, -1,
     false, false, false, "",
 };
@@ -3610,7 +3649,7 @@ static const Lookup lookup_76[] = {
     {"0", "Inactive"},
     {"1", "Active"},
 };
-static const FieldDefinition fields_90[] = {
+static const FieldDefinition fields_91[] = {
     {0, -1, FieldKind::option, "Equalization Enabled", "", 1, lookup_13, 2},
     {1, -1, FieldKind::integer, "Equalization Time", "min", 1, nullptr, 0},
     {2, -1, FieldKind::integer, "Equalization Period", "day", 1, nullptr, 0},
@@ -3623,7 +3662,7 @@ static const FieldDefinition fields_90[] = {
     {9, -1, FieldKind::integer, "Equalization Elasped Time", "hour", 1, nullptr, 0},
 };
 static const CommandDefinition command_197 = {
-    "QBEQI", "QBEQI", nullptr, 0, 0, fields_90, 10,
+    "QBEQI", "QBEQI", nullptr, 0, 0, fields_91, 10,
     false, nullptr, nullptr, -1,
     false, false, false, "",
 };
@@ -3632,12 +3671,12 @@ static const CommandDefinition command_198 = {
     false, nullptr, nullptr, -1,
     false, false, false, "",
 };
-static const FieldDefinition fields_91[] = {
+static const FieldDefinition fields_92[] = {
     {0, -1, FieldKind::integer, "PV Generated Energy for Year", "Wh", 1, nullptr, 0},
     {1, -1, FieldKind::command_value, "Year", "", 1, nullptr, 0},
 };
 static const CommandDefinition command_199 = {
-    "QEY", "QEY", regex_3, 8, 7, fields_91, 2,
+    "QEY", "QEY", regex_3, 8, 7, fields_92, 2,
     false, nullptr, nullptr, -1,
     false, false, false, "",
 };
@@ -3651,16 +3690,16 @@ static const CommandDefinition command_201 = {
     false, nullptr, nullptr, -1,
     false, false, false, "",
 };
-static const FieldDefinition fields_92[] = {
+static const FieldDefinition fields_93[] = {
     {0, -1, FieldKind::integer, "Total Output Load Energy", "Wh", 1, nullptr, 0},
 };
 static const CommandDefinition command_202 = {
-    "QLT", "QLT", nullptr, 0, 0, fields_92, 1,
+    "QLT", "QLT", nullptr, 0, 0, fields_93, 1,
     false, nullptr, nullptr, -1,
     false, false, false, "",
 };
 // Pattern: QLY(\d\d\d\d)$
-static const RegexNode regex_77[] = {
+static const RegexNode regex_76[] = {
     {nullptr, -1, -1},
     {"0123456789", 0, -1},
     {"0123456789", 1, -1},
@@ -3670,17 +3709,17 @@ static const RegexNode regex_77[] = {
     {"L", 5, -1},
     {"Q", 6, -1},
 };
-static const FieldDefinition fields_93[] = {
+static const FieldDefinition fields_94[] = {
     {0, -1, FieldKind::integer, "Output Load Energy for Year", "Wh", 1, nullptr, 0},
     {1, -1, FieldKind::command_value, "Year", "", 1, nullptr, 0},
 };
 static const CommandDefinition command_203 = {
-    "QLY", "QLY", regex_77, 8, 7, fields_93, 2,
+    "QLY", "QLY", regex_76, 8, 7, fields_94, 2,
     false, nullptr, nullptr, -1,
     false, false, false, "",
 };
 // Pattern: QLM(\d\d\d\d\d\d)$
-static const RegexNode regex_78[] = {
+static const RegexNode regex_77[] = {
     {nullptr, -1, -1},
     {"0123456789", 0, -1},
     {"0123456789", 1, -1},
@@ -3692,18 +3731,18 @@ static const RegexNode regex_78[] = {
     {"L", 7, -1},
     {"Q", 8, -1},
 };
-static const FieldDefinition fields_94[] = {
+static const FieldDefinition fields_95[] = {
     {0, -1, FieldKind::integer, "Output Load Energy for Month", "Wh", 1, nullptr, 0},
     {1, -1, FieldKind::year, "Year", "", 1, nullptr, 0},
     {2, -1, FieldKind::month, "Month", "", 1, nullptr, 0},
 };
 static const CommandDefinition command_204 = {
-    "QLM", "QLM", regex_78, 10, 9, fields_94, 3,
+    "QLM", "QLM", regex_77, 10, 9, fields_95, 3,
     false, nullptr, nullptr, -1,
     false, false, false, "",
 };
 // Pattern: QLD(\d\d\d\d\d\d\d\d)$
-static const RegexNode regex_79[] = {
+static const RegexNode regex_78[] = {
     {nullptr, -1, -1},
     {"0123456789", 0, -1},
     {"0123456789", 1, -1},
@@ -3717,14 +3756,14 @@ static const RegexNode regex_79[] = {
     {"L", 9, -1},
     {"Q", 10, -1},
 };
-static const FieldDefinition fields_95[] = {
+static const FieldDefinition fields_96[] = {
     {0, -1, FieldKind::integer, "Output Load Energy for Day", "Wh", 1, nullptr, 0},
     {1, -1, FieldKind::year, "Year", "", 1, nullptr, 0},
     {2, -1, FieldKind::month, "Month", "", 1, nullptr, 0},
     {3, -1, FieldKind::day, "Day", "", 1, nullptr, 0},
 };
 static const CommandDefinition command_205 = {
-    "QLD", "QLD", regex_79, 12, 11, fields_95, 4,
+    "QLD", "QLD", regex_78, 12, 11, fields_96, 4,
     false, nullptr, nullptr, -1,
     false, false, false, "",
 };
@@ -3739,7 +3778,7 @@ static const Lookup lookup_78[] = {
     {"2", "Solid"},
     {"3", "Right Scrolling"},
 };
-static const FieldDefinition fields_96[] = {
+static const FieldDefinition fields_97[] = {
     {0, -1, FieldKind::option, "LED Enabled", "", 1, lookup_13, 2},
     {1, -1, FieldKind::option, "LED Speed", "", 1, lookup_77, 3},
     {2, -1, FieldKind::option, "LED Effect", "", 1, lookup_78, 4},
@@ -3748,12 +3787,12 @@ static const FieldDefinition fields_96[] = {
     {5, -1, FieldKind::text, "RGB", "", 1, nullptr, 0},
 };
 static const CommandDefinition command_206 = {
-    "QLED", "QLED", nullptr, 0, 0, fields_96, 6,
+    "QLED", "QLED", nullptr, 0, 0, fields_97, 6,
     false, nullptr, nullptr, -1,
     false, false, false, "",
 };
 // Pattern: PLEDE([01])$
-static const RegexNode regex_80[] = {
+static const RegexNode regex_79[] = {
     {nullptr, -1, -1},
     {"01", 0, -1},
     {"E", 1, -1},
@@ -3763,12 +3802,12 @@ static const RegexNode regex_80[] = {
     {"P", 5, -1},
 };
 static const CommandDefinition command_207 = {
-    "PLEDE", "PLEDE", regex_80, 7, 6, nullptr, 0,
+    "PLEDE", "PLEDE", regex_79, 7, 6, nullptr, 0,
     true, "QLED", nullptr, -1,
     false, false, false, "",
 };
 // Pattern: PLEDS([012])$
-static const RegexNode regex_81[] = {
+static const RegexNode regex_80[] = {
     {nullptr, -1, -1},
     {"012", 0, -1},
     {"S", 1, -1},
@@ -3778,12 +3817,12 @@ static const RegexNode regex_81[] = {
     {"P", 5, -1},
 };
 static const CommandDefinition command_208 = {
-    "PLEDS", "PLEDS", regex_81, 7, 6, nullptr, 0,
+    "PLEDS", "PLEDS", regex_80, 7, 6, nullptr, 0,
     true, "QLED", nullptr, -1,
     false, false, false, "",
 };
 // Pattern: PLEDM([0123])$
-static const RegexNode regex_82[] = {
+static const RegexNode regex_81[] = {
     {nullptr, -1, -1},
     {"0123", 0, -1},
     {"M", 1, -1},
@@ -3793,12 +3832,12 @@ static const RegexNode regex_82[] = {
     {"P", 5, -1},
 };
 static const CommandDefinition command_209 = {
-    "PLEDM", "PLEDM", regex_82, 7, 6, nullptr, 0,
+    "PLEDM", "PLEDM", regex_81, 7, 6, nullptr, 0,
     true, "QLED", nullptr, -1,
     false, false, false, "",
 };
 // Pattern: PLEDB([123456789])$
-static const RegexNode regex_83[] = {
+static const RegexNode regex_82[] = {
     {nullptr, -1, -1},
     {"123456789", 0, -1},
     {"B", 1, -1},
@@ -3808,12 +3847,12 @@ static const RegexNode regex_83[] = {
     {"P", 5, -1},
 };
 static const CommandDefinition command_210 = {
-    "PLEDB", "PLEDB", regex_83, 7, 6, nullptr, 0,
+    "PLEDB", "PLEDB", regex_82, 7, 6, nullptr, 0,
     true, "QLED", nullptr, -1,
     false, false, false, "",
 };
 // Pattern: PLEDT([123])$
-static const RegexNode regex_84[] = {
+static const RegexNode regex_83[] = {
     {nullptr, -1, -1},
     {"123", 0, -1},
     {"T", 1, -1},
@@ -3823,219 +3862,270 @@ static const RegexNode regex_84[] = {
     {"P", 5, -1},
 };
 static const CommandDefinition command_211 = {
-    "PLEDT", "PLEDT", regex_84, 7, 6, nullptr, 0,
+    "PLEDT", "PLEDT", regex_83, 7, 6, nullptr, 0,
     true, "QLED", nullptr, -1,
     false, false, false, "",
 };
-// Pattern: PLEDC(\d\d\d\d\d\d\d\d\d\d)$
-static const RegexNode regex_85[] = {
+// Pattern: PLEDC([1-3](0[0-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])(0[0-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])(0[0-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5]))$
+static const RegexNode regex_84[] = {
     {nullptr, -1, -1},
     {"0123456789", 0, -1},
     {"0123456789", 1, -1},
-    {"0123456789", 2, -1},
-    {"0123456789", 3, -1},
+    {"0", 2, -1},
+    {"0123456789", 0, -1},
     {"0123456789", 4, -1},
-    {"0123456789", 5, -1},
-    {"0123456789", 6, -1},
-    {"0123456789", 7, -1},
-    {"0123456789", 8, -1},
-    {"0123456789", 9, -1},
-    {"C", 10, -1},
-    {"D", 11, -1},
-    {"E", 12, -1},
-    {"L", 13, -1},
-    {"P", 14, -1},
+    {"1", 5, -1},
+    {"0123456789", 0, -1},
+    {"01234", 7, -1},
+    {"2", 8, -1},
+    {"012345", 0, -1},
+    {"5", 10, -1},
+    {"2", 11, -1},
+    {nullptr, 9, 12},
+    {nullptr, 6, 13},
+    {nullptr, 3, 14},
+    {"0123456789", 15, -1},
+    {"0123456789", 16, -1},
+    {"0", 17, -1},
+    {"0123456789", 15, -1},
+    {"0123456789", 19, -1},
+    {"1", 20, -1},
+    {"0123456789", 15, -1},
+    {"01234", 22, -1},
+    {"2", 23, -1},
+    {"012345", 15, -1},
+    {"5", 25, -1},
+    {"2", 26, -1},
+    {nullptr, 24, 27},
+    {nullptr, 21, 28},
+    {nullptr, 18, 29},
+    {"0123456789", 30, -1},
+    {"0123456789", 31, -1},
+    {"0", 32, -1},
+    {"0123456789", 30, -1},
+    {"0123456789", 34, -1},
+    {"1", 35, -1},
+    {"0123456789", 30, -1},
+    {"01234", 37, -1},
+    {"2", 38, -1},
+    {"012345", 30, -1},
+    {"5", 40, -1},
+    {"2", 41, -1},
+    {nullptr, 39, 42},
+    {nullptr, 36, 43},
+    {nullptr, 33, 44},
+    {"123", 45, -1},
+    {"C", 46, -1},
+    {"D", 47, -1},
+    {"E", 48, -1},
+    {"L", 49, -1},
+    {"P", 50, -1},
 };
 static const CommandDefinition command_212 = {
-    "PLEDC", "PLEDC", regex_85, 16, 15, nullptr, 0,
+    "PLEDC", "PLEDC", regex_84, 52, 51, nullptr, 0,
     true, "QLED", nullptr, -1,
     false, false, false, "",
 };
 static const CommandDefinition *const pi30max_commands[] = {
-    &command_137, &command_138, &command_180, &command_181, &command_4, &command_141, &command_182, &command_143, &command_5, &command_144, &command_145, &command_183, &command_147, &command_184, &command_185, &command_186, &command_151, &command_153, &command_154, &command_155, &command_156, &command_157, &command_158, &command_159, &command_160, &command_161, &command_162, &command_163, &command_187, &command_188, &command_166, &command_167, &command_168, &command_169, &command_170, &command_171, &command_172, &command_173, &command_174, &command_175, &command_189, &command_177, &command_178, &command_179, &command_190, &command_191, &command_192, &command_193, &command_194, &command_195, &command_196, &command_197, &command_198, &command_199, &command_200, &command_201, &command_202, &command_203, &command_204, &command_205, &command_206, &command_207, &command_208, &command_209, &command_210, &command_211, &command_212,
+    &command_136, &command_137, &command_180, &command_181, &command_4, &command_140, &command_182, &command_142, &command_5, &command_143, &command_144, &command_183, &command_146, &command_184, &command_185, &command_186, &command_150, &command_152, &command_153, &command_154, &command_155, &command_156, &command_157, &command_158, &command_159, &command_160, &command_161, &command_162, &command_187, &command_188, &command_165, &command_166, &command_167, &command_168, &command_169, &command_170, &command_171, &command_172, &command_173, &command_174, &command_189, &command_176, &command_177, &command_178, &command_190, &command_191, &command_192, &command_193, &command_194, &command_195, &command_196, &command_197, &command_198, &command_199, &command_200, &command_201, &command_202, &command_203, &command_204, &command_205, &command_206, &command_207, &command_208, &command_209, &command_210, &command_211, &command_212,
 };
 static const char *const pi30max_poll[] = {
     "QPIGS", "QPIGS2", "QMOD", "QPIWS", "QPIRI", "QFLAG", "QPI", "QSID",
 };
-static const FieldDefinition fields_97[] = {
-    {0, -1, FieldKind::number, "PV2 Input Current", "A", 1, nullptr, 0},
-    {1, -1, FieldKind::number, "PV2 Input Voltage", "V", 1, nullptr, 0},
-    {2, -1, FieldKind::number, "Battery voltage from SCC 2", "V", 1, nullptr, 0},
-    {3, -1, FieldKind::integer, "PV2 Charging Power", "W", 1, nullptr, 0},
-    {4, -1, FieldKind::text, "Device status", "", 1, nullptr, 0},
-    {5, -1, FieldKind::number, "AC charging current", "A", 1, nullptr, 0},
-    {6, -1, FieldKind::integer, "AC charging power", "W", 1, nullptr, 0},
-    {7, -1, FieldKind::number, "PV3 Input Current", "A", 1, nullptr, 0},
-    {8, -1, FieldKind::number, "PV3 Input Voltage", "V", 1, nullptr, 0},
-    {9, -1, FieldKind::number, "Battery voltage from SCC 3", "V", 1, nullptr, 0},
-    {10, -1, FieldKind::integer, "PV3 Charging Power", "W", 1, nullptr, 0},
-    {11, -1, FieldKind::integer, "PV total charging power", "W", 1, nullptr, 0},
-};
-static const CommandDefinition command_213 = {
-    "QPIGS2", "QPIGS2", nullptr, 0, 0, fields_97, 12,
-    false, nullptr, nullptr, -1,
-    false, false, false, "",
-};
 static const CommandDefinition *const pi30mst_commands[] = {
-    &command_137, &command_138, &command_180, &command_181, &command_4, &command_141, &command_182, &command_143, &command_5, &command_144, &command_145, &command_183, &command_147, &command_184, &command_185, &command_186, &command_151, &command_153, &command_154, &command_155, &command_156, &command_157, &command_158, &command_159, &command_160, &command_161, &command_162, &command_163, &command_187, &command_188, &command_166, &command_167, &command_168, &command_169, &command_170, &command_171, &command_172, &command_173, &command_174, &command_175, &command_189, &command_177, &command_178, &command_179, &command_190, &command_191, &command_192, &command_213, &command_194, &command_195, &command_196, &command_197, &command_198, &command_199, &command_200, &command_201, &command_202, &command_203, &command_204, &command_205, &command_206, &command_207, &command_208, &command_209, &command_210, &command_211, &command_212,
+    &command_136, &command_137, &command_180, &command_181, &command_4, &command_140, &command_182, &command_142, &command_5, &command_143, &command_144, &command_183, &command_146, &command_184, &command_185, &command_186, &command_150, &command_152, &command_153, &command_154, &command_155, &command_156, &command_157, &command_158, &command_159, &command_160, &command_161, &command_162, &command_187, &command_188, &command_165, &command_166, &command_167, &command_168, &command_169, &command_170, &command_171, &command_172, &command_173, &command_174, &command_189, &command_176, &command_177, &command_178, &command_179, &command_191, &command_192, &command_193, &command_194, &command_195, &command_196, &command_197, &command_198, &command_199, &command_200, &command_201, &command_202, &command_203, &command_204, &command_205, &command_206, &command_207, &command_208, &command_209, &command_210, &command_211, &command_212,
 };
 static const char *const pi30mst_poll[] = {
     "QPIGS", "QPIGS2", "QMOD", "QPIWS", "QPIRI", "QFLAG", "QPI", "QSID",
 };
-// Pattern: PSET(\d+ \d+[.]\d+ \d+[.]\d+ \d+[.]\d+ \d+[.]\d+ \d+ \d+ \d+ \d+ \d+ \d+ \d+.*)$
-static const RegexNode regex_86[] = {
+// Pattern: PSET([01][0-4][01][0-2][01][0-3] [0-9]{1,3}[.][0-9] [0-9]{1,3}[.][0-9] [0-9]{1,3}[.][0-9] [0-9]{1,3}[.][0-9] [0-9]{3} [0-9]{3} [0-9]{4} [0-9]{2} [0-9]{2} [0-9]{2} [0-9]{2} [0-9]{2,5}( [0-9]{1,3}([.][0-9])?)?)$
+static const RegexNode regex_85[] = {
     {nullptr, -1, -1},
+    {"0123456789", 0, -1},
+    {".", 1, -1},
     {nullptr, 2, 0},
-    {"", 1, -1},
-    {nullptr, 4, 1},
     {"0123456789", 3, -1},
-    {"0123456789", 3, -1},
-    {" ", 5, -1},
-    {nullptr, 8, 6},
+    {nullptr, 4, 3},
+    {"0123456789", 5, -1},
+    {nullptr, 6, 5},
     {"0123456789", 7, -1},
-    {"0123456789", 7, -1},
-    {" ", 9, -1},
-    {nullptr, 12, 10},
-    {"0123456789", 11, -1},
-    {"0123456789", 11, -1},
-    {" ", 13, -1},
-    {nullptr, 16, 14},
-    {"0123456789", 15, -1},
-    {"0123456789", 15, -1},
-    {" ", 17, -1},
-    {nullptr, 20, 18},
+    {" ", 8, -1},
+    {nullptr, 9, 0},
+    {"0123456789", 10, -1},
+    {nullptr, 11, 10},
+    {"0123456789", 12, -1},
+    {nullptr, 13, 12},
+    {"0123456789", 14, -1},
+    {nullptr, 15, 14},
+    {"0123456789", 16, -1},
+    {"0123456789", 17, -1},
+    {" ", 18, -1},
     {"0123456789", 19, -1},
-    {"0123456789", 19, -1},
+    {"0123456789", 20, -1},
     {" ", 21, -1},
-    {nullptr, 24, 22},
+    {"0123456789", 22, -1},
     {"0123456789", 23, -1},
-    {"0123456789", 23, -1},
-    {" ", 25, -1},
-    {nullptr, 28, 26},
-    {"0123456789", 27, -1},
-    {"0123456789", 27, -1},
-    {" ", 29, -1},
-    {nullptr, 32, 30},
+    {" ", 24, -1},
+    {"0123456789", 25, -1},
+    {"0123456789", 26, -1},
+    {" ", 27, -1},
+    {"0123456789", 28, -1},
+    {"0123456789", 29, -1},
+    {" ", 30, -1},
     {"0123456789", 31, -1},
-    {"0123456789", 31, -1},
-    {".", 33, -1},
-    {nullptr, 36, 34},
-    {"0123456789", 35, -1},
-    {"0123456789", 35, -1},
-    {" ", 37, -1},
-    {nullptr, 40, 38},
-    {"0123456789", 39, -1},
-    {"0123456789", 39, -1},
-    {".", 41, -1},
-    {nullptr, 44, 42},
-    {"0123456789", 43, -1},
-    {"0123456789", 43, -1},
-    {" ", 45, -1},
-    {nullptr, 48, 46},
-    {"0123456789", 47, -1},
-    {"0123456789", 47, -1},
-    {".", 49, -1},
-    {nullptr, 52, 50},
-    {"0123456789", 51, -1},
-    {"0123456789", 51, -1},
-    {" ", 53, -1},
-    {nullptr, 56, 54},
-    {"0123456789", 55, -1},
-    {"0123456789", 55, -1},
-    {".", 57, -1},
-    {nullptr, 60, 58},
-    {"0123456789", 59, -1},
-    {"0123456789", 59, -1},
-    {" ", 61, -1},
-    {nullptr, 64, 62},
-    {"0123456789", 63, -1},
-    {"0123456789", 63, -1},
-    {"T", 65, -1},
-    {"E", 66, -1},
-    {"S", 67, -1},
-    {"P", 68, -1},
+    {"0123456789", 32, -1},
+    {"0123456789", 33, -1},
+    {"0123456789", 34, -1},
+    {" ", 35, -1},
+    {"0123456789", 36, -1},
+    {"0123456789", 37, -1},
+    {"0123456789", 38, -1},
+    {" ", 39, -1},
+    {"0123456789", 40, -1},
+    {"0123456789", 41, -1},
+    {"0123456789", 42, -1},
+    {" ", 43, -1},
+    {"0123456789", 44, -1},
+    {".", 45, -1},
+    {"0123456789", 46, -1},
+    {nullptr, 47, 46},
+    {"0123456789", 48, -1},
+    {nullptr, 49, 48},
+    {"0123456789", 50, -1},
+    {" ", 51, -1},
+    {"0123456789", 52, -1},
+    {".", 53, -1},
+    {"0123456789", 54, -1},
+    {nullptr, 55, 54},
+    {"0123456789", 56, -1},
+    {nullptr, 57, 56},
+    {"0123456789", 58, -1},
+    {" ", 59, -1},
+    {"0123456789", 60, -1},
+    {".", 61, -1},
+    {"0123456789", 62, -1},
+    {nullptr, 63, 62},
+    {"0123456789", 64, -1},
+    {nullptr, 65, 64},
+    {"0123456789", 66, -1},
+    {" ", 67, -1},
+    {"0123456789", 68, -1},
+    {".", 69, -1},
+    {"0123456789", 70, -1},
+    {nullptr, 71, 70},
+    {"0123456789", 72, -1},
+    {nullptr, 73, 72},
+    {"0123456789", 74, -1},
+    {" ", 75, -1},
+    {"0123", 76, -1},
+    {"01", 77, -1},
+    {"012", 78, -1},
+    {"01", 79, -1},
+    {"01234", 80, -1},
+    {"01", 81, -1},
+    {"T", 82, -1},
+    {"E", 83, -1},
+    {"S", 84, -1},
+    {"P", 85, -1},
 };
-static const CommandDefinition command_214 = {
-    "PSET", "PSET", regex_86, 70, 69, nullptr, 0,
+static const CommandDefinition command_213 = {
+    "PSET", "PSET", regex_85, 87, 86, nullptr, 0,
     true, "PQSE", nullptr, -1,
     false, false, true, "",
 };
-// Pattern: _PSET(\d+ \d+[.]\d+ \d+[.]\d+ \d+[.]\d+ \d+[.]\d+ \d+ \d+ \d+ \d+ \d+ \d+ \d+.*)$
-static const RegexNode regex_87[] = {
+// Pattern: _PSET([01][0-4][01][0-2][01][0-3] [0-9]{1,3}[.][0-9] [0-9]{1,3}[.][0-9] [0-9]{1,3}[.][0-9] [0-9]{1,3}[.][0-9] [0-9]{3} [0-9]{3} [0-9]{4} [0-9]{2} [0-9]{2} [0-9]{2} [0-9]{2} [0-9]{2,5}( [0-9]{1,3}([.][0-9])?)?)$
+static const RegexNode regex_86[] = {
     {nullptr, -1, -1},
+    {"0123456789", 0, -1},
+    {".", 1, -1},
     {nullptr, 2, 0},
-    {"", 1, -1},
-    {nullptr, 4, 1},
     {"0123456789", 3, -1},
-    {"0123456789", 3, -1},
-    {" ", 5, -1},
-    {nullptr, 8, 6},
+    {nullptr, 4, 3},
+    {"0123456789", 5, -1},
+    {nullptr, 6, 5},
     {"0123456789", 7, -1},
-    {"0123456789", 7, -1},
-    {" ", 9, -1},
-    {nullptr, 12, 10},
-    {"0123456789", 11, -1},
-    {"0123456789", 11, -1},
-    {" ", 13, -1},
-    {nullptr, 16, 14},
-    {"0123456789", 15, -1},
-    {"0123456789", 15, -1},
-    {" ", 17, -1},
-    {nullptr, 20, 18},
+    {" ", 8, -1},
+    {nullptr, 9, 0},
+    {"0123456789", 10, -1},
+    {nullptr, 11, 10},
+    {"0123456789", 12, -1},
+    {nullptr, 13, 12},
+    {"0123456789", 14, -1},
+    {nullptr, 15, 14},
+    {"0123456789", 16, -1},
+    {"0123456789", 17, -1},
+    {" ", 18, -1},
     {"0123456789", 19, -1},
-    {"0123456789", 19, -1},
+    {"0123456789", 20, -1},
     {" ", 21, -1},
-    {nullptr, 24, 22},
+    {"0123456789", 22, -1},
     {"0123456789", 23, -1},
-    {"0123456789", 23, -1},
-    {" ", 25, -1},
-    {nullptr, 28, 26},
-    {"0123456789", 27, -1},
-    {"0123456789", 27, -1},
-    {" ", 29, -1},
-    {nullptr, 32, 30},
+    {" ", 24, -1},
+    {"0123456789", 25, -1},
+    {"0123456789", 26, -1},
+    {" ", 27, -1},
+    {"0123456789", 28, -1},
+    {"0123456789", 29, -1},
+    {" ", 30, -1},
     {"0123456789", 31, -1},
-    {"0123456789", 31, -1},
-    {".", 33, -1},
-    {nullptr, 36, 34},
-    {"0123456789", 35, -1},
-    {"0123456789", 35, -1},
-    {" ", 37, -1},
-    {nullptr, 40, 38},
-    {"0123456789", 39, -1},
-    {"0123456789", 39, -1},
-    {".", 41, -1},
-    {nullptr, 44, 42},
-    {"0123456789", 43, -1},
-    {"0123456789", 43, -1},
-    {" ", 45, -1},
-    {nullptr, 48, 46},
-    {"0123456789", 47, -1},
-    {"0123456789", 47, -1},
-    {".", 49, -1},
-    {nullptr, 52, 50},
-    {"0123456789", 51, -1},
-    {"0123456789", 51, -1},
-    {" ", 53, -1},
-    {nullptr, 56, 54},
-    {"0123456789", 55, -1},
-    {"0123456789", 55, -1},
-    {".", 57, -1},
-    {nullptr, 60, 58},
-    {"0123456789", 59, -1},
-    {"0123456789", 59, -1},
-    {" ", 61, -1},
-    {nullptr, 64, 62},
-    {"0123456789", 63, -1},
-    {"0123456789", 63, -1},
-    {"T", 65, -1},
-    {"E", 66, -1},
-    {"S", 67, -1},
-    {"P", 68, -1},
-    {"_", 69, -1},
+    {"0123456789", 32, -1},
+    {"0123456789", 33, -1},
+    {"0123456789", 34, -1},
+    {" ", 35, -1},
+    {"0123456789", 36, -1},
+    {"0123456789", 37, -1},
+    {"0123456789", 38, -1},
+    {" ", 39, -1},
+    {"0123456789", 40, -1},
+    {"0123456789", 41, -1},
+    {"0123456789", 42, -1},
+    {" ", 43, -1},
+    {"0123456789", 44, -1},
+    {".", 45, -1},
+    {"0123456789", 46, -1},
+    {nullptr, 47, 46},
+    {"0123456789", 48, -1},
+    {nullptr, 49, 48},
+    {"0123456789", 50, -1},
+    {" ", 51, -1},
+    {"0123456789", 52, -1},
+    {".", 53, -1},
+    {"0123456789", 54, -1},
+    {nullptr, 55, 54},
+    {"0123456789", 56, -1},
+    {nullptr, 57, 56},
+    {"0123456789", 58, -1},
+    {" ", 59, -1},
+    {"0123456789", 60, -1},
+    {".", 61, -1},
+    {"0123456789", 62, -1},
+    {nullptr, 63, 62},
+    {"0123456789", 64, -1},
+    {nullptr, 65, 64},
+    {"0123456789", 66, -1},
+    {" ", 67, -1},
+    {"0123456789", 68, -1},
+    {".", 69, -1},
+    {"0123456789", 70, -1},
+    {nullptr, 71, 70},
+    {"0123456789", 72, -1},
+    {nullptr, 73, 72},
+    {"0123456789", 74, -1},
+    {" ", 75, -1},
+    {"0123", 76, -1},
+    {"01", 77, -1},
+    {"012", 78, -1},
+    {"01", 79, -1},
+    {"01234", 80, -1},
+    {"01", 81, -1},
+    {"T", 82, -1},
+    {"E", 83, -1},
+    {"S", 84, -1},
+    {"P", 85, -1},
+    {"_", 86, -1},
 };
-static const CommandDefinition command_215 = {
-    "PSET", "_PSET", regex_87, 71, 70, nullptr, 0,
+static const CommandDefinition command_214 = {
+    "PSET", "_PSET", regex_86, 88, 87, nullptr, 0,
     true, "PQSE", nullptr, -1,
     false, false, true, "",
 };
@@ -4102,7 +4192,7 @@ static const FieldDefinition fields_98[] = {
     {12, 4, FieldKind::text, "Three Phase ID", "", 1, nullptr, 0},
     {13, -1, FieldKind::number, "Battery Full Recovery Point", "V", 1, nullptr, 0},
 };
-static const CommandDefinition command_216 = {
+static const CommandDefinition command_215 = {
     "PQSE", "PQSE", nullptr, 0, 0, fields_98, 23,
     false, nullptr, nullptr, -1,
     false, false, true, "",
@@ -4178,7 +4268,7 @@ static const FieldDefinition fields_99[] = {
     {16, -1, FieldKind::keyed, "Warning Code", "", 1, lookup_88, 16},
     {17, -1, FieldKind::keyed, "Fault Code", "", 1, lookup_89, 23},
 };
-static const CommandDefinition command_217 = {
+static const CommandDefinition command_216 = {
     "QALL", "QALL", nullptr, 0, 0, fields_99, 18,
     false, nullptr, nullptr, -1,
     false, false, true, "",
@@ -4186,7 +4276,7 @@ static const CommandDefinition command_217 = {
 static const FieldDefinition fields_100[] = {
     {0, -1, FieldKind::keyed, "Device Mode", "", 1, lookup_87, 6},
 };
-static const CommandDefinition command_218 = {
+static const CommandDefinition command_217 = {
     "QMOD", "QMOD", nullptr, 0, 0, fields_100, 1,
     false, nullptr, nullptr, -1,
     false, false, false, "",
@@ -4223,7 +4313,7 @@ static const FieldDefinition fields_101[] = {
     {20, 1, FieldKind::digit, "Is Switched On", "bool", 1, nullptr, 0},
     {20, 2, FieldKind::digit, "Is Reserved", "bool", 1, nullptr, 0},
 };
-static const CommandDefinition command_219 = {
+static const CommandDefinition command_218 = {
     "QPIGS", "QPIGS", nullptr, 0, 0, fields_101, 30,
     false, nullptr, nullptr, -1,
     false, false, false, "",
@@ -4255,7 +4345,7 @@ static const FieldDefinition fields_102[] = {
     {23, -1, FieldKind::option, "PV OK Condition", "", 1, lookup_52, 2},
     {24, -1, FieldKind::option, "PV Power Balance", "", 1, lookup_53, 2},
 };
-static const CommandDefinition command_220 = {
+static const CommandDefinition command_219 = {
     "QPIRI", "QPIRI", nullptr, 0, 0, fields_102, 25,
     false, nullptr, nullptr, -1,
     false, false, false, "",
@@ -4283,13 +4373,13 @@ static const FieldDefinition fields_103[] = {
     {10, -1, FieldKind::keyed, "Fault Code from BMS", "", 1, lookup_90, 7},
     {11, -1, FieldKind::keyed, "Warning Code fom BMS", "", 1, lookup_90, 7},
 };
-static const CommandDefinition command_221 = {
+static const CommandDefinition command_220 = {
     "QLITH0", "QLITH0", nullptr, 0, 0, fields_103, 12,
     false, nullptr, nullptr, -1,
     false, false, false, "",
 };
 static const CommandDefinition *const pi30revo_commands[] = {
-    &command_214, &command_215, &command_216, &command_217, &command_218, &command_147, &command_219, &command_220, &command_221,
+    &command_213, &command_214, &command_215, &command_216, &command_217, &command_146, &command_218, &command_219, &command_220,
 };
 static const char *const pi30revo_poll[] = {
     "QPIGS", "QALL", "QMOD", "QPIRI", "PQSE", "QPI",
@@ -4321,7 +4411,7 @@ static const FieldDefinition fields_104[] = {
     {15, -1, FieldKind::number, "Sync frequency", "", 1, nullptr, 0},
     {16, -1, FieldKind::keyed, "Inverter charge status", "", 1, lookup_46, 4},
 };
-static const CommandDefinition command_222 = {
+static const CommandDefinition command_221 = {
     "Q1", "Q1", nullptr, 0, 0, fields_104, 17,
     false, nullptr, nullptr, -1,
     false, false, false, "",
@@ -4341,7 +4431,7 @@ static const FieldDefinition fields_105[] = {
     {11, -1, FieldKind::integer, "Max Charging Current 12", "A", 1, nullptr, 0},
     {12, -1, FieldKind::integer, "Max Charging Current 13", "A", 1, nullptr, 0},
 };
-static const CommandDefinition command_223 = {
+static const CommandDefinition command_222 = {
     "QMCHGCR", "QMCHGCR", nullptr, 0, 0, fields_105, 13,
     false, nullptr, nullptr, -1,
     false, false, false, "",
@@ -4359,7 +4449,7 @@ static const Lookup lookup_93[] = {
 static const FieldDefinition fields_106[] = {
     {0, -1, FieldKind::keyed, "Device Mode", "", 1, lookup_93, 8},
 };
-static const CommandDefinition command_224 = {
+static const CommandDefinition command_223 = {
     "QMOD", "QMOD", nullptr, 0, 0, fields_106, 1,
     false, nullptr, nullptr, -1,
     false, false, false, "",
@@ -4379,7 +4469,7 @@ static const FieldDefinition fields_107[] = {
     {11, -1, FieldKind::integer, "Max Utility Charging Current 12", "A", 1, nullptr, 0},
     {12, -1, FieldKind::integer, "Max Utility Charging Current 13", "A", 1, nullptr, 0},
 };
-static const CommandDefinition command_225 = {
+static const CommandDefinition command_224 = {
     "QMUCHGCR", "QMUCHGCR", nullptr, 0, 0, fields_107, 13,
     false, nullptr, nullptr, -1,
     false, false, false, "",
@@ -4420,7 +4510,7 @@ static const FieldDefinition fields_108[] = {
     {26, -1, FieldKind::option, "Operation Logic", "", 1, lookup_62, 3},
     {27, -1, FieldKind::integer, "Max discharging current", "A", 1, nullptr, 0},
 };
-static const CommandDefinition command_226 = {
+static const CommandDefinition command_225 = {
     "QPIRI", "QPIRI", nullptr, 0, 0, fields_108, 28,
     false, nullptr, nullptr, -1,
     false, false, false, "",
@@ -4460,7 +4550,7 @@ static const FieldDefinition fields_109[] = {
     {0, 33, FieldKind::digit, "Battery weak code2", "bool", 1, nullptr, 0},
     {0, 35, FieldKind::digit, "Battery equalisation warning", "bool", 1, nullptr, 0},
 };
-static const CommandDefinition command_227 = {
+static const CommandDefinition command_226 = {
     "QPIWS", "QPIWS", nullptr, 0, 0, fields_109, 33,
     false, nullptr, nullptr, -1,
     false, false, false, "",
@@ -4477,13 +4567,13 @@ static const FieldDefinition fields_110[] = {
     {8, -1, FieldKind::number, "Battery max charging current", "A", 1, nullptr, 0},
     {9, -1, FieldKind::number, "Battery max discharge current", "A", 1, nullptr, 0},
 };
-static const CommandDefinition command_228 = {
+static const CommandDefinition command_227 = {
     "QBMS", "QBMS", nullptr, 0, 0, fields_110, 10,
     false, nullptr, nullptr, -1,
     false, false, true, "",
 };
 // Pattern: PBT(0[0-9])$
-static const RegexNode regex_88[] = {
+static const RegexNode regex_87[] = {
     {nullptr, -1, -1},
     {"0123456789", 0, -1},
     {"0", 1, -1},
@@ -4491,8 +4581,8 @@ static const RegexNode regex_88[] = {
     {"B", 3, -1},
     {"P", 4, -1},
 };
-static const CommandDefinition command_229 = {
-    "PBT", "PBT", regex_88, 6, 5, nullptr, 0,
+static const CommandDefinition command_228 = {
+    "PBT", "PBT", regex_87, 6, 5, nullptr, 0,
     true, "QPIRI", nullptr, -1,
     false, false, false, "",
 };
@@ -4531,7 +4621,7 @@ static const FieldDefinition fields_111[] = {
     {26, -1, FieldKind::option, "Selection of Output Source Priority Order 2", "", 1, lookup_95, 3},
     {27, -1, FieldKind::option, "Selection of Output Source Priority Order 3", "", 1, lookup_95, 3},
 };
-static const CommandDefinition command_230 = {
+static const CommandDefinition command_229 = {
     "QOPPT", "QOPPT", nullptr, 0, 0, fields_111, 28,
     false, nullptr, nullptr, -1,
     false, false, false, "",
@@ -4539,7 +4629,7 @@ static const CommandDefinition command_230 = {
 static const FieldDefinition fields_112[] = {
     {0, -1, FieldKind::date_time, "Device Time", "", 1, nullptr, 0},
 };
-static const CommandDefinition command_231 = {
+static const CommandDefinition command_230 = {
     "QT", "QT", nullptr, 0, 0, fields_112, 1,
     false, nullptr, nullptr, -1,
     false, false, false, "",
@@ -4549,13 +4639,13 @@ static const FieldDefinition fields_113[] = {
     {9, -1, FieldKind::integer, "Battery re-discharge capacity", "%", 1, nullptr, 0},
     {10, -1, FieldKind::integer, "Battery under capacity", "%", 1, nullptr, 0},
 };
-static const CommandDefinition command_232 = {
+static const CommandDefinition command_231 = {
     "QDOP", "QDOP", nullptr, 0, 0, fields_113, 3,
     false, nullptr, nullptr, -1,
     false, false, false, "",
 };
 static const CommandDefinition *const pi30m044_commands[] = {
-    &command_222, &command_138, &command_180, &command_140, &command_4, &command_223, &command_224, &command_143, &command_5, &command_225, &command_145, &command_183, &command_147, &command_184, &command_226, &command_227, &command_151, &command_228, &command_154, &command_155, &command_156, &command_157, &command_158, &command_159, &command_160, &command_229, &command_162, &command_163, &command_164, &command_165, &command_166, &command_167, &command_168, &command_169, &command_170, &command_171, &command_172, &command_173, &command_174, &command_175, &command_189, &command_177, &command_178, &command_179, &command_190, &command_191, &command_192, &command_193, &command_230, &command_195, &command_231, &command_197, &command_198, &command_199, &command_200, &command_201, &command_202, &command_203, &command_204, &command_205, &command_206, &command_207, &command_208, &command_209, &command_210, &command_211, &command_212, &command_232,
+    &command_221, &command_137, &command_180, &command_139, &command_4, &command_222, &command_223, &command_142, &command_5, &command_224, &command_144, &command_183, &command_146, &command_184, &command_225, &command_226, &command_150, &command_227, &command_153, &command_154, &command_155, &command_156, &command_157, &command_158, &command_159, &command_228, &command_161, &command_162, &command_163, &command_164, &command_165, &command_166, &command_167, &command_168, &command_169, &command_170, &command_171, &command_172, &command_173, &command_174, &command_189, &command_176, &command_177, &command_178, &command_190, &command_191, &command_192, &command_193, &command_229, &command_195, &command_230, &command_197, &command_198, &command_199, &command_200, &command_201, &command_202, &command_203, &command_204, &command_205, &command_206, &command_207, &command_208, &command_209, &command_210, &command_211, &command_212, &command_231,
 };
 static const char *const pi30m044_poll[] = {
     "QPIGS", "QPIGS2", "QMOD", "QPIWS", "QPIRI", "QFLAG", "QPI", "QSID",
@@ -4594,7 +4684,7 @@ static const FieldDefinition fields_114[] = {
     {25, -1, FieldKind::integer, "Max Charging Time at CV", "min", 1, nullptr, 0},
     {26, -1, FieldKind::integer, "Max Discharging current", "A", 1, nullptr, 0},
 };
-static const CommandDefinition command_233 = {
+static const CommandDefinition command_232 = {
     "QDI", "QDI", nullptr, 0, 0, fields_114, 27,
     false, nullptr, nullptr, -1,
     false, false, false, "",
@@ -4651,13 +4741,13 @@ static const FieldDefinition fields_115[] = {
     {27, -1, FieldKind::number, "PV2 Input Voltage", "V", 1, nullptr, 0},
     {28, -1, FieldKind::integer, "PV2 Input Current", "A", 1, nullptr, 0},
 };
-static const CommandDefinition command_234 = {
-    "QPGS", "QPGS", regex_52, 8, 7, fields_115, 36,
+static const CommandDefinition command_233 = {
+    "QPGS", "QPGS", regex_51, 8, 7, fields_115, 36,
     false, nullptr, nullptr, -1,
     false, false, false, "",
 };
 // Pattern: MUCHGC(\d[01]\d[02])$
-static const RegexNode regex_89[] = {
+static const RegexNode regex_88[] = {
     {nullptr, -1, -1},
     {"02", 0, -1},
     {"0123456789", 1, -1},
@@ -4670,24 +4760,24 @@ static const RegexNode regex_89[] = {
     {"U", 8, -1},
     {"M", 9, -1},
 };
-static const CommandDefinition command_235 = {
-    "MUCHGC", "MUCHGC", regex_89, 11, 10, nullptr, 0,
-    true, "QPIRI", nullptr, -1,
+static const CommandDefinition command_234 = {
+    "MUCHGC", "MUCHGC", regex_88, 11, 10, nullptr, 0,
+    true, "QPGS0", nullptr, -1,
     false, false, false, "",
 };
-static const CommandDefinition command_236 = {
+static const CommandDefinition command_235 = {
     "DAT", "DAT", regex_16, 16, 15, nullptr, 0,
     true, "QT", nullptr, -1,
     false, false, false, "",
 };
 static const CommandDefinition *const pi30m045_commands[] = {
-    &command_137, &command_138, &command_233, &command_181, &command_4, &command_141, &command_182, &command_143, &command_5, &command_144, &command_145, &command_234, &command_147, &command_184, &command_185, &command_186, &command_151, &command_153, &command_154, &command_155, &command_156, &command_235, &command_158, &command_159, &command_160, &command_161, &command_162, &command_163, &command_187, &command_188, &command_166, &command_167, &command_168, &command_169, &command_170, &command_171, &command_172, &command_173, &command_174, &command_175, &command_236, &command_177, &command_178, &command_179, &command_190, &command_191, &command_192, &command_193, &command_194, &command_195, &command_196, &command_197, &command_198, &command_199, &command_200, &command_201, &command_202, &command_203, &command_204, &command_205, &command_206, &command_207, &command_208, &command_209, &command_210, &command_211, &command_212,
+    &command_136, &command_137, &command_232, &command_181, &command_4, &command_140, &command_182, &command_142, &command_5, &command_143, &command_144, &command_233, &command_146, &command_184, &command_185, &command_186, &command_150, &command_152, &command_153, &command_154, &command_155, &command_234, &command_157, &command_158, &command_159, &command_160, &command_161, &command_162, &command_187, &command_188, &command_165, &command_166, &command_167, &command_168, &command_169, &command_170, &command_171, &command_172, &command_173, &command_174, &command_235, &command_176, &command_177, &command_178, &command_190, &command_191, &command_192, &command_193, &command_194, &command_195, &command_196, &command_197, &command_198, &command_199, &command_200, &command_201, &command_202, &command_203, &command_204, &command_205, &command_206, &command_207, &command_208, &command_209, &command_210, &command_211, &command_212,
 };
 static const char *const pi30m045_poll[] = {
     "QPIGS", "QPIGS2", "QMOD", "QPIWS", "QPIRI", "QFLAG", "QPI", "QSID",
 };
 // Pattern: QPGS(\d)$
-static const RegexNode regex_90[] = {
+static const RegexNode regex_89[] = {
     {nullptr, -1, -1},
     {"0123456789", 0, -1},
     {"S", 1, -1},
@@ -4740,8 +4830,8 @@ static const FieldDefinition fields_116[] = {
     {25, -1, FieldKind::integer, "PV1 charging current", "A", 1, nullptr, 0},
     {26, -1, FieldKind::integer, "Battery discharge current", "A", 1, nullptr, 0},
 };
-static const CommandDefinition command_237 = {
-    "QPGS", "QPGS", regex_90, 6, 5, fields_116, 34,
+static const CommandDefinition command_236 = {
+    "QPGS", "QPGS", regex_89, 6, 5, fields_116, 34,
     false, nullptr, nullptr, -1,
     false, false, false, "",
 };
@@ -4777,7 +4867,7 @@ static const FieldDefinition fields_117[] = {
     {20, 1, FieldKind::digit, "is_switched_on", "bool", 1, nullptr, 0},
     {20, 2, FieldKind::digit, "is_reserved", "bool", 1, nullptr, 0},
 };
-static const CommandDefinition command_238 = {
+static const CommandDefinition command_237 = {
     "QPIGS", "QPIGS", nullptr, 0, 0, fields_117, 30,
     false, nullptr, nullptr, -1,
     false, false, false, "",
@@ -4810,13 +4900,37 @@ static const FieldDefinition fields_118[] = {
     {24, -1, FieldKind::option, "PV Power Balance", "", 1, lookup_53, 2},
     {25, -1, FieldKind::integer, "Max Charging Time at CV Stage", "min", 1, nullptr, 0},
 };
-static const CommandDefinition command_239 = {
+static const CommandDefinition command_238 = {
     "QPIRI", "QPIRI", nullptr, 0, 0, fields_118, 26,
     false, nullptr, nullptr, -1,
     false, false, false, "",
 };
+static const FieldDefinition fields_119[] = {
+    {0, -1, FieldKind::number, "L2 AC Input Voltage", "V", 1, nullptr, 0},
+    {1, -1, FieldKind::number, "L2 AC Input Frequency", "Hz", 1, nullptr, 0},
+    {2, -1, FieldKind::number, "L2 AC Output Voltage", "V", 1, nullptr, 0},
+    {3, -1, FieldKind::number, "L2 AC Output Frequency", "Hz", 1, nullptr, 0},
+    {4, -1, FieldKind::integer, "L2 AC Output Apparent Power", "VA", 1, nullptr, 0},
+    {5, -1, FieldKind::integer, "L2 AC Output Active Power", "W", 1, nullptr, 0},
+    {6, -1, FieldKind::integer, "L2 AC Output Load", "%", 1, nullptr, 0},
+    {7, -1, FieldKind::integer, "PV2 Battery Charging Current", "A", 1, nullptr, 0},
+    {8, -1, FieldKind::number, "PV2 Input Voltage", "V", 1, nullptr, 0},
+    {9, -1, FieldKind::number, "L2 Battery Voltage", "V", 1, nullptr, 0},
+    {10, 0, FieldKind::digit, "is_l2_scc_ok", "bool", 1, nullptr, 0},
+    {10, 1, FieldKind::digit, "is_l2_ac_charging_on", "bool", 1, nullptr, 0},
+    {10, 2, FieldKind::digit, "is_l2_scc_charging_on", "bool", 1, nullptr, 0},
+    {10, 3, FieldKind::digit, "reserved", "bool", 1, nullptr, 0},
+    {10, 4, FieldKind::digit, "is_l2_line_not_ok", "bool", 1, nullptr, 0},
+    {10, 5, FieldKind::digit, "is_load_on", "bool", 1, nullptr, 0},
+    {10, 6, FieldKind::digit, "reserved 2", "bool", 1, nullptr, 0},
+};
+static const CommandDefinition command_239 = {
+    "QPIGS2", "QPIGS2", nullptr, 0, 0, fields_119, 17,
+    false, nullptr, nullptr, -1,
+    false, false, false, "",
+};
 // Pattern: QP2GS(\d)$
-static const RegexNode regex_91[] = {
+static const RegexNode regex_90[] = {
     {nullptr, -1, -1},
     {"0123456789", 0, -1},
     {"S", 1, -1},
@@ -4825,7 +4939,7 @@ static const RegexNode regex_91[] = {
     {"P", 4, -1},
     {"Q", 5, -1},
 };
-static const FieldDefinition fields_119[] = {
+static const FieldDefinition fields_120[] = {
     {0, -1, FieldKind::integer, "Parallel instance number??", "", 1, nullptr, 0},
     {1, -1, FieldKind::integer, "Serial number", "", 1, nullptr, 0},
     {2, -1, FieldKind::keyed, "Work mode", "", 1, lookup_56, 6},
@@ -4852,36 +4966,12 @@ static const FieldDefinition fields_119[] = {
     {16, 7, FieldKind::digit, "is_configuration_changed", "bool", 1, nullptr, 0},
 };
 static const CommandDefinition command_240 = {
-    "QP2GS", "QP2GS", regex_91, 7, 6, fields_119, 24,
-    false, nullptr, nullptr, -1,
-    false, false, false, "",
-};
-static const FieldDefinition fields_120[] = {
-    {0, -1, FieldKind::number, "L2 AC Input Voltage", "V", 1, nullptr, 0},
-    {1, -1, FieldKind::number, "L2 AC Input Frequency", "Hz", 1, nullptr, 0},
-    {2, -1, FieldKind::number, "L2 AC Output Voltage", "V", 1, nullptr, 0},
-    {3, -1, FieldKind::number, "L2 AC Output Frequency", "Hz", 1, nullptr, 0},
-    {4, -1, FieldKind::integer, "L2 AC Output Apparent Power", "VA", 1, nullptr, 0},
-    {5, -1, FieldKind::integer, "L2 AC Output Active Power", "W", 1, nullptr, 0},
-    {6, -1, FieldKind::integer, "L2 AC Output Load", "%", 1, nullptr, 0},
-    {7, -1, FieldKind::integer, "PV2 Battery Charging Current", "A", 1, nullptr, 0},
-    {8, -1, FieldKind::number, "PV2 Input Voltage", "V", 1, nullptr, 0},
-    {9, -1, FieldKind::number, "L2 Battery Voltage", "V", 1, nullptr, 0},
-    {10, 0, FieldKind::digit, "is_l2_scc_ok", "bool", 1, nullptr, 0},
-    {10, 1, FieldKind::digit, "is_l2_ac_charging_on", "bool", 1, nullptr, 0},
-    {10, 2, FieldKind::digit, "is_l2_scc_charging_on", "bool", 1, nullptr, 0},
-    {10, 3, FieldKind::digit, "reserved", "bool", 1, nullptr, 0},
-    {10, 4, FieldKind::digit, "is_l2_line_not_ok", "bool", 1, nullptr, 0},
-    {10, 5, FieldKind::digit, "is_load_on", "bool", 1, nullptr, 0},
-    {10, 6, FieldKind::digit, "reserved 2", "bool", 1, nullptr, 0},
-};
-static const CommandDefinition command_241 = {
-    "QPIGS2", "QPIGS2", nullptr, 0, 0, fields_120, 17,
+    "QP2GS", "QP2GS", regex_90, 7, 6, fields_120, 24,
     false, nullptr, nullptr, -1,
     false, false, false, "",
 };
 static const CommandDefinition *const pi41_commands[] = {
-    &command_137, &command_138, &command_139, &command_140, &command_4, &command_141, &command_142, &command_143, &command_5, &command_144, &command_145, &command_237, &command_147, &command_238, &command_239, &command_150, &command_151, &command_152, &command_153, &command_154, &command_155, &command_156, &command_157, &command_158, &command_159, &command_160, &command_161, &command_162, &command_163, &command_164, &command_165, &command_166, &command_167, &command_168, &command_169, &command_170, &command_171, &command_172, &command_173, &command_174, &command_175, &command_176, &command_177, &command_178, &command_179, &command_240, &command_241,
+    &command_136, &command_137, &command_138, &command_139, &command_4, &command_140, &command_141, &command_142, &command_5, &command_143, &command_144, &command_236, &command_146, &command_237, &command_238, &command_149, &command_150, &command_151, &command_152, &command_153, &command_154, &command_155, &command_156, &command_157, &command_158, &command_159, &command_160, &command_161, &command_162, &command_163, &command_164, &command_165, &command_166, &command_167, &command_168, &command_169, &command_170, &command_171, &command_172, &command_173, &command_174, &command_175, &command_176, &command_177, &command_178, &command_239, &command_240,
 };
 static const char *const pi41_poll[] = {
     "QPIGS", "QPIGS2", "QMOD", "QPIWS", "QPIRI", "QFLAG", "QPI", "QID",
@@ -4894,7 +4984,7 @@ static const ProfileDefinition profiles[] = {
     {EnergyProtocol::pi18, WireFamily::pi18, false, pi18_commands, 24, pi18_poll, 6},
     {EnergyProtocol::pi18lvx, WireFamily::pi18, true, pi18lvx_commands, 46, pi18lvx_poll, 7},
     {EnergyProtocol::pi18sv, WireFamily::pi18, false, pi18sv_commands, 46, pi18sv_poll, 7},
-    {EnergyProtocol::pi30, WireFamily::pi30, false, pi30_commands, 45, pi30_poll, 7},
+    {EnergyProtocol::pi30, WireFamily::pi30, false, pi30_commands, 46, pi30_poll, 8},
     {EnergyProtocol::pi30max, WireFamily::pi30, false, pi30max_commands, 67, pi30max_poll, 8},
     {EnergyProtocol::pi30mst, WireFamily::pi30, false, pi30mst_commands, 67, pi30mst_poll, 8},
     {EnergyProtocol::pi30revo, WireFamily::revo, false, pi30revo_commands, 9, pi30revo_poll, 6},

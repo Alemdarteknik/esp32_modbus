@@ -1,6 +1,7 @@
 #include "inverter_gateway/app/ota_update.hpp"
 #include "inverter_gateway/app/memory_budget.hpp"
 #include "inverter_gateway/app/project_config.hpp"
+#include "inverter_gateway/app/ota_retry_policy.hpp"
 #include <array>
 #include <cstring>
 #include "esp_app_desc.h"
@@ -39,7 +40,8 @@ constexpr MemoryBudget streaming_memory_budget{
     ota_stream_minimum_free_heap, ota_stream_minimum_largest_block};
 MemorySnapshot read_internal_memory()
 {
-    // TLS uses internal RAM in this build; PSRAM cannot satisfy these guards.
+    // Keep operating headroom in internal RAM even when large TLS buffers use
+    // the PSRAM-aware default allocator. PSRAM cannot satisfy these guards.
     constexpr unsigned caps = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
     return {static_cast<std::uint32_t>(heap_caps_get_free_size(caps)),
             static_cast<std::uint32_t>(heap_caps_get_largest_free_block(caps))};
@@ -96,6 +98,17 @@ void record_failure(const char *stage, esp_err_t error, int http_status,
 }
 std::int64_t now_ms() { return esp_timer_get_time() / 1000; }
 void delay(std::uint32_t ms) { vTaskDelay(pdMS_TO_TICKS(ms)); }
+void scheduled_delay(std::uint32_t ms)
+{
+    const auto deadline = now_ms() + ms;
+    portENTER_CRITICAL(&status_lock);
+    status.next_check_ms = deadline;
+    portEXIT_CRITICAL(&status_lock);
+    delay(ms);
+    portENTER_CRITICAL(&status_lock);
+    status.next_check_ms = 0;
+    portEXIT_CRITICAL(&status_lock);
+}
 
 bool version(const char *text, std::array<unsigned, 3> &parts)
 {
@@ -115,12 +128,27 @@ bool version(const char *text, std::array<unsigned, 3> &parts)
     return field == 2 && digits != 0;
 }
 
-enum class CheckOutcome { local_deferred, attempted };
+enum class CheckOutcome { local_deferred, transient_failure, attempted };
+
+bool retryable_failure(const char *stage, esp_err_t result, int http_status,
+                       bool header_transport_failure)
+{
+    if (result == ESP_ERR_NO_MEM || result == ESP_ERR_TIMEOUT) return true;
+    if (std::strcmp(stage, "https_open") == 0 ||
+        std::strcmp(stage, "image_prefix") == 0 ||
+        std::strcmp(stage, "body_read") == 0 ||
+        std::strcmp(stage, "body_completion") == 0 ||
+        std::strcmp(stage, "write_admission") == 0 ||
+        std::strcmp(stage, "restart_admission") == 0) return true;
+    return std::strcmp(stage, "response_headers") == 0 &&
+        (header_transport_failure || http_status == 0 || http_status == 408 ||
+         http_status == 425 || http_status == 429 || http_status >= 500);
+}
 
 CheckOutcome check_release()
 {
-    // Only local, network-free deferrals use a short retry. Once we contact
-    // the server, keep the fleet-wide interval even if that request fails.
+    // Local blockers never contact the server. Transient failures use bounded
+    // backoff; an otherwise healthy device need not wait six hours to recover.
     if (callbacks.download_blocker(callbacks.context) != nullptr) {
         set_status("deferred"); return CheckOutcome::local_deferred;
     }
@@ -134,16 +162,23 @@ CheckOutcome check_release()
     const auto store_result = nvs_open("ota_state", NVS_READWRITE, &store);
     if (store_result != ESP_OK) {
         record_failure("nvs_open", store_result, 0, read_internal_memory(), connection_memory_budget);
-        return CheckOutcome::attempted;
+        return store_result == ESP_ERR_NO_MEM
+            ? CheckOutcome::transient_failure : CheckOutcome::attempted;
     }
     esp_http_client_config_t http{};
     http.url = ota_download_url;
     http.crt_bundle_attach = esp_crt_bundle_attach;
     http.timeout_ms = 5000;
-    http.buffer_size = 4096;
+    http.buffer_size = 1024;
+    http.buffer_size_tx = 512;
     http.disable_auto_redirect = true;
     auto client = esp_http_client_init(&http);
-    auto *buffer = static_cast<char *>(heap_caps_malloc(4096, MALLOC_CAP_8BIT));
+    // Flash writes accept the source buffer through ESP-IDF's partition API.
+    // Prefer PSRAM for this scratch area, retaining support without PSRAM.
+    constexpr std::size_t download_buffer_size = 4096;
+    auto *buffer = static_cast<char *>(heap_caps_malloc(
+        download_buffer_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    if (!buffer) buffer = static_cast<char *>(heap_caps_malloc(download_buffer_size, MALLOC_CAP_8BIT));
     esp_ota_handle_t handle = 0;
     bool writing = false;
     bool parked = false;
@@ -153,6 +188,7 @@ CheckOutcome check_release()
     int http_status = 0;
     const MemoryBudget *active_memory_budget = &connection_memory_budget;
     bool memory_guard_failed = false;
+    bool header_transport_failure = false;
     const auto streaming_memory_ready = [&] {
         active_memory_budget = &streaming_memory_budget;
         memory_guard_failed = !memory_ready(*active_memory_budget, memory);
@@ -174,6 +210,7 @@ CheckOutcome check_release()
         memory_work.release();
         failure_stage = "response_headers";
         const auto size = esp_http_client_fetch_headers(client);
+        header_transport_failure = size < 0;
         http_status = esp_http_client_get_status_code(client);
         const auto *partition = esp_ota_get_next_update_partition(nullptr);
         constexpr std::size_t descriptor_offset = sizeof(esp_image_header_t) + sizeof(esp_image_segment_header_t);
@@ -252,7 +289,7 @@ CheckOutcome check_release()
             // Parser completion can precede draining cached decoded bytes.
             // Read through EOF, even at exact slot capacity; never read len=0.
             failure_stage = "body_read";
-            const int count = esp_http_client_read(client, buffer, 4096);
+            const int count = esp_http_client_read(client, buffer, download_buffer_size);
             if (count < 0) { result = ESP_FAIL; break; }
             if (count == 0) {
                 failure_stage = "body_completion";
@@ -311,7 +348,8 @@ CheckOutcome check_release()
         esp_restart();
     }
     if (parked) callbacks.resume(callbacks.context);
-    return CheckOutcome::attempted;
+    return result != ESP_OK && retryable_failure(failure_stage, result, http_status, header_transport_failure)
+        ? CheckOutcome::transient_failure : CheckOutcome::attempted;
 }
 
 void worker(void *)
@@ -331,15 +369,19 @@ void worker(void *)
     }
     if (!ota_enabled) { set_status("disabled"); vTaskDelete(nullptr); return; }
     set_status("not_checked");
-    delay(60000 + esp_random() % ota_jitter_ms);
+    scheduled_delay(ota_initial_check_min_ms + esp_random() % ota_initial_check_jitter_ms);
+    unsigned failures = 0;
     while (true) {
         const auto outcome = check_release();
+        auto retry_kind = OtaRetryKind::normal_check;
         if (outcome == CheckOutcome::local_deferred) {
-            constexpr std::uint32_t local_retry_ms = 5 * 60 * 1000;
-            delay(local_retry_ms + esp_random() % local_retry_ms);
-        } else {
-            delay(ota_check_interval_ms + esp_random() % ota_jitter_ms);
-        }
+            retry_kind = OtaRetryKind::local_deferred;
+        } else if (outcome == CheckOutcome::transient_failure) {
+            retry_kind = OtaRetryKind::transient_failure;
+            if (failures < 32) ++failures;
+        } else failures = 0;
+        scheduled_delay(ota_retry_delay_ms(retry_kind, failures, esp_random(),
+                                          ota_check_interval_ms, ota_jitter_ms));
     }
 }
 }

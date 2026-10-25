@@ -8,6 +8,10 @@ std::size_t pi_poll_command_count(EnergyProtocol id);
 const char *pi_poll_command(EnergyProtocol id, std::size_t index);
 bool pi_command_info(EnergyProtocol id, const char *command,
                      EnergyCommandInfo &info);
+// Returns true only when every required, documented observation is present.
+// A successful query by itself cannot verify that a setting was applied.
+bool pi_setting_readback(EnergyProtocol id, const char *set_command,
+    const char *read_command, const EnergyResponse &response, bool &matches);
 CodecStatus pi_build_request(EnergyProtocol id, const char *command,
     std::uint8_t address, std::uint8_t *out, std::size_t capacity, std::size_t &size);
 FrameState pi_frame_state(EnergyProtocol id, const char *command,

@@ -32,6 +32,7 @@ public:
 private:
     static constexpr std::size_t alert_point_count = 512;
     static constexpr std::size_t input_point_count = 499;
+    static constexpr std::size_t holding_point_count = 281;
     static constexpr std::size_t maximum_members = app::max_saved_peers + 1;
 
     struct LiveCache {
@@ -59,6 +60,17 @@ private:
         std::int64_t last_core_status_ms = 0;
     };
 
+    struct SnapshotCache {
+        // Compare complete published values, including both words of a 32-bit
+        // setting. Zero width means this value has not reached the MQTT outbox.
+        std::array<std::uint32_t, holding_point_count> values{};
+        std::array<std::uint8_t, holding_point_count> widths{};
+        std::array<std::uint16_t, 8> serial{};
+        std::int64_t timestamp_ms = 0;
+        std::uint32_t reconnect_generation = 0;
+        bool serial_published = false;
+    };
+
     static void event_callback(void *argument, esp_event_base_t base,
                                std::int32_t event_id, void *event_data);
     void handle_event(esp_mqtt_event_handle_t event);
@@ -79,6 +91,7 @@ private:
     void publish_alert_changes(const TelemetryMessage &message);
     void publish_setting_snapshot(const RoutedCommandResult &message);
     bool remember_command_id(std::uint64_t command_id);
+    void publish_firmware_identity();
     void publish_health();
 
     const app::SystemConfig &config_;
@@ -101,7 +114,14 @@ private:
     std::atomic<std::uint32_t> last_telemetry_ms_{0};
     std::atomic<std::uint32_t> last_live_enqueued_ms_{0};
     std::atomic<std::uint32_t> reconnect_count_{0};
+    // Session counter is updated by the MQTT event task. Only the publisher
+    // owns the acknowledgement and retry timing for the retained ESP identity.
+    std::atomic<std::uint32_t> firmware_session_{0};
+    std::uint32_t firmware_published_session_ = 0;
+    std::uint32_t firmware_attempted_session_ = 0;
+    std::uint32_t firmware_last_attempt_ms_ = 0;
     std::array<LiveCache, maximum_members> live_cache_{};
+    std::array<std::unique_ptr<SnapshotCache>, maximum_members> snapshot_cache_{};
     // Allocate only for observed native members. The large bounded cache uses
     // the configured PSRAM-capable allocator, never the publisher task stack.
     std::array<std::unique_ptr<ProtocolTelemetryCache>, maximum_members> native_cache_{};

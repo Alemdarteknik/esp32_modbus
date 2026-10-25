@@ -1,4 +1,24 @@
-# OTA updates: version 1.0.8
+# OTA updates: version 1.0.9
+
+Version 1.0.9 fixes checks that could remain postponed indefinitely when total
+internal free memory was sufficient but the largest block was below 32 KiB.
+Connection admission retains 64,000 free internal bytes and now requires a
+24,576-byte block. The TLS allocator uses ESP-IDF's default allocation policy,
+so large record buffers can use PSRAM while retaining an internal-memory fallback.
+HTTP buffers are smaller and the download scratch buffer prefers PSRAM. Certificate,
+image, partition, write-admission and rollback checks remain enabled.
+
+The first automatic check is scheduled 30–120 seconds after updater startup.
+Local blockers retry in 5–10 minutes without a request. Transient failures start
+with a 5–10 minute retry and back off to 30–60 minutes; successful checks and
+permanent image/HTTP rejections retain the 6–7 hour interval. The local page shows
+the next scheduled check through `firmware_next_check_in_ms` (null during a check
+or when no check is scheduled). Opening the page does not trigger an update.
+
+A device already running the old memory-blocked updater cannot install this fix
+merely because a newer file is uploaded. Install 1.0.9 by USB once if the old
+guard never clears, preserving NVS. These source changes and host tests do not
+confirm an update on the user's hardware.
 
 Version 1.0.8 separates the internal-memory budget needed to open TLS from the
 reserve needed after TLS is established and throughout the download. Earlier
@@ -16,10 +36,11 @@ image verification are required before activation. This is a narrow download
 compatibility fix, not the proposed larger OTA worker/retry rewrite.
 
 Version 1.0.6 added [communication hardening](Firmware_Reliability_1.0.6.md)
-without changing OTA download behavior. Scheduling remains unchanged in 1.0.8:
+without changing OTA download behavior. Historical scheduling through 1.0.8 was:
 startup checks 1-61 minutes, local deferral retries 5-10 minutes, and network
-attempts including failures 6-7 hours apart. `tools/ota_retry_policy.hpp` is an
-offline proposal only, not firmware. Actual-worker mocked host tests cover
+attempts including failures 6-7 hours apart. Version 1.0.9 uses the shared
+production policy in `main/include/inverter_gateway/app/ota_retry_policy.hpp`.
+Actual-worker mocked host tests cover
 streaming framing, memory admission and failure diagnostics; they do not
 establish hardware safety.
 See the current results and limits in [host test scope](../tools/OTA_Host_Tests.md).
@@ -53,9 +74,9 @@ getters if using a pre-1.0.5 updater and allow its scheduled check to run. If it
 still cannot proceed, USB-flash the baseline. Preserve NVS; do not erase the chip
 or burn eFuses.
 
-For the currently memory-blocked device, install the 1.0.8 baseline physically
-before validating OTA. An installed updater that repeatedly stops at
-`post_tls_memory` cannot receive this memory-budget fix merely by changing the
+For a device stuck on the old memory guard, install the 1.0.9 baseline physically
+before validating OTA. An installed updater that repeatedly stops before TLS or at
+`post_tls_memory` cannot receive its memory-budget fix merely by changing the
 served binary or its Content-Length. HTTP 200 confirms a server response, not a
 completed download or a verified image. No physical installation is performed by
 this source change.
@@ -66,12 +87,11 @@ executing; the 30-second quiet interval starts at completion/rejection by the bu
 owner, not the earlier enqueue time. Existing Modbus polling and live payloads
 are unchanged. The firmware version is embedded from root `PROJECT_VER`.
 
-The proposed larger retry/worker rewrite remains unintegrated. Version 1.0.7
-changed streaming framing and added diagnostics; 1.0.8 splits the connection and
-streaming memory budgets and adds failure-time memory. The existing staggered
-schedule, write admission and rollback flow remain.
-There is no new exponential retry, Retry-After support, exact next-check countdown,
-download-progress reporting or caching of a verified image while awaiting restart.
+Version 1.0.7 changed streaming framing and added diagnostics; 1.0.8 split the
+connection and streaming memory budgets and added failure-time memory. Version
+1.0.9 adds bounded transient backoff and a next-check countdown. Write admission
+and rollback remain. There is no Retry-After support, download-progress reporting
+or caching of a verified image while awaiting restart.
 
 ## First USB installation
 
@@ -96,7 +116,7 @@ local sdkconfig has been updated, but this file is ignored by Git.
 
 This N16R8 profile enables 8 MB Octal PSRAM at 40 MHz, including its boot memory
 test. JSON allocations prefer PSRAM, with normal-heap fallback; the reserved live
-output buffer also prefers PSRAM. TLS and task stacks remain internal. Missing
+output buffer also prefers PSRAM. Large TLS allocations can use PSRAM; task stacks remain internal. Missing
 PSRAM is allowed to boot using internal RAM, but that fallback may still defer
 OTA. A failing memory test is not ignored. Confirm detection on spare hardware
 before deployment. No flash voltage, eFuse or PSRAM execution-in-place change is made.
@@ -175,10 +195,11 @@ or establish uptime or capacity.
 Use atomic file replacement on the server, never rewrite the served file in place.
 The firmware uses one GET, without cross-request Range resumption.
 
-Initial checks occur after 1 minute plus 0-60 minutes of random delay. Subsequent
-network attempts, including failed attempts, occur after 6 hours plus 0-60 minutes.
-Local preflight deferrals (busy/unhealthy runtime or insufficient memory) retry
-after 5-10 minutes without contacting the server during the deferred check.
+Initial checks occur after 30 seconds plus 0–90 seconds of random delay. Completed
+checks and permanent rejections repeat after 6 hours plus 0–60 minutes. Transient
+network/memory failures retry after 5–10, 10–20, 20–40, then 30–60 minutes, with
+backoff reset after a completed check. Local preflight deferrals retry after
+5–10 minutes without contacting the server during the deferred check.
 There is no tight retry loop. This spreads traffic but is not a server-enforced rollout.
 Same/older versions and incompatible project/chip headers are rejected before
 erasing the inactive slot. Rebuilding a file under the same version is not an update.
@@ -189,10 +210,12 @@ Internal-memory budgets in `project_config.hpp` are expressed in bytes:
 
 | Phase | Minimum free memory | Minimum largest block | Configuration |
 | --- | ---: | ---: | --- |
-| Before opening TLS | 64,000 | 32,768 | `ota_minimum_free_heap`, `ota_minimum_largest_block` |
+| Before opening TLS | 64,000 | 24,576 | `ota_minimum_free_heap`, `ota_minimum_largest_block` |
 | After TLS opens and during transfer | 32,768 | 8,192 | `ota_stream_minimum_free_heap`, `ota_stream_minimum_largest_block` |
 
-The connection budget is unchanged. The streaming budget accounts for an already
+The connection block budget allows room for the configured 16 KiB TLS input
+record buffer and overhead without requiring an unused 32 KiB block. The free
+internal-memory budget is unchanged. The streaming budget accounts for an already
 allocated TLS session and remains enforced after opening TLS and during transfer.
 Either free memory or fragmentation can still reject an attempt. These defaults
 are operational guards, not a reservation against concurrent allocation or
@@ -217,8 +240,8 @@ proof of adequate real-device headroom.
   builds, the remaining heap may be below the OTA threshold and updates will
   show as deferred. Do not lower thresholds blindly; verify/configure the
   board's PSRAM and measure simultaneous MQTT/OTA memory usage. Version 1.0.5
-  enables the N16R8 PSRAM profile. Version 1.0.8 keeps the connection thresholds
-  and uses the separate streaming thresholds listed above during transfer.
+  enables the N16R8 PSRAM profile. Version 1.0.9 uses the default PSRAM-aware TLS
+  allocator and the separate streaming thresholds listed above during transfer.
 - An absent inverter does not block OTA on a provisioned standalone ESP. The
   bus task must still be alive and the existing network/memory checks must pass.
   Commands are accepted only after a successful local poll in the current USB

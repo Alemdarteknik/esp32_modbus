@@ -13,7 +13,7 @@ public:
     static constexpr std::size_t maximum_commands = 32;
 
     void reset(EnergyProtocol protocol, std::uint64_t session,
-               std::uint64_t now_ms = 0)
+               std::uint64_t now_ms = 0, std::uint8_t connected_pv_inputs = 2)
     {
         protocol_ = protocol;
         session_ = session;
@@ -24,6 +24,7 @@ public:
         for (std::size_t i = 0; i < energy_background_poll_count(protocol); ++i) {
             EnergyPollInfo poll{};
             if (!energy_background_poll_command(protocol, i, poll)) continue;
+            if (poll.minimum_pv_inputs > connected_pv_inputs) continue;
             if (count_ == maximum_commands) break;
             entries_[count_].poll = poll;
             entries_[count_].read_context_ready =
@@ -125,7 +126,8 @@ public:
     {
         for (std::size_t i = 0; i < count_; ++i) {
             auto &entry = entries_[i];
-            if (entry.poll.poll_class == EnergyPollClass::configuration && !entry.disabled)
+            if (entry.poll.poll_class == EnergyPollClass::configuration &&
+                entry.poll.interval_ms != 0 && !entry.disabled)
                 entry.due_ms = now_ms;
         }
     }
@@ -157,7 +159,8 @@ private:
         if (success) {
             entry.failures = 0;
             entry.disabled = false;
-            entry.completed = entry.poll.poll_class == EnergyPollClass::identity;
+            entry.completed = entry.poll.poll_class == EnergyPollClass::identity ||
+                              entry.poll.interval_ms == 0;
             entry.due_ms = now_ms + entry.poll.interval_ms;
             return;
         }

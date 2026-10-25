@@ -1,5 +1,6 @@
 """Withdrawn Tk tests; every MQTT session and network worker is mocked."""
 import time
+import json
 import tkinter as tk
 import unittest
 from unittest.mock import Mock, patch
@@ -35,7 +36,8 @@ class NativeTkTests(unittest.TestCase):
         for record in snapshot['native_records']:
             record.setdefault('member_id', snapshot['member_id'])
         snapshot['native_live'] = normalize_native_live(snapshot['native_records'], snapshot['protocol'],
-                                                         snapshot['member_id'], time.monotonic())
+            snapshot['member_id'], time.monotonic(),
+            connected_pv_inputs=snapshot.get('native_connected_pv_inputs'))
         self.monitor.native_snapshot = snapshot
         self.monitor.native_session = Mock()
         self.monitor.native_session.snapshot.return_value = snapshot
@@ -156,6 +158,7 @@ class NativeTkTests(unittest.TestCase):
             native_result={"command_id": "101", "command": "POP02", "outcome": "acknowledged"},
             native_incomplete=1, native_drops=2)
         monitor = self.monitor
+        monitor.notebook.select(monitor.native_frames[2])
         monitor.refresh_native()
         rows = [monitor.native_tree.item(row, "values") for row in monitor.native_tree.get_children()]
         self.assertEqual(rows[0][:5], ("battery_voltage", "52.4", "V", "QPIGS", "PI30"))
@@ -173,6 +176,7 @@ class NativeTkTests(unittest.TestCase):
             fields={"battery_voltage": {"value": 52.123456, "unit": "V"}}),
             dict(protocol="PI30", command="QID", sequence=2, timestamp_ms=2, received_at=now,
             fields={"serial_number": {"value": "123456", "unit": ""}})])
+        self.monitor.notebook.select(self.monitor.native_frames[2])
         self.monitor.refresh_native()
         rows = [self.monitor.native_tree.item(row, "values") for row in self.monitor.native_tree.get_children()]
         self.assertEqual(rows[0][1], "52.123456")
@@ -199,6 +203,7 @@ class NativeTkTests(unittest.TestCase):
         session.client = Mock()
         session.client.publish.return_value.rc = 0
         monitor.native_session = session
+        monitor.notebook.select(monitor.native_frames[2])
         chunk = dict(member_id=2, protocol="PI30", command="QPIGS", sequence=10,
                      timestamp_ms=5000, chunk_count=2, chunk_index=0, final_chunk=False,
                      fields={"battery_voltage": {"value": 52.4, "unit": "V"},
@@ -315,6 +320,30 @@ class NativeTkTests(unittest.TestCase):
         self.assertTrue(row[3].startswith('Stale'))
         monitor.native_session.send_native.assert_not_called()
 
+    def test_pi30_second_tracker_is_visible_and_a_missing_tracker_is_not_a_total(self):
+        from test_native_pv2 import trackers
+        self.select_native()
+        records = trackers()
+        now = time.monotonic()
+        for record in records:
+            record['received_at'] = now
+        self.ready(native_records=records[:1], native_connected_pv_inputs=2)
+        self.monitor.refresh_native()
+        self.assertEqual(self.monitor.native_metric_labels['pv'].cget('text'), 'Unavailable')
+        self.ready(native_records=records, native_connected_pv_inputs=2)
+        self.monitor.refresh_native()
+        self.assertEqual(self.monitor.native_metric_labels['pv'].cget('text'), '1.905 kW')
+        tree = self.monitor.native_group_trees['pv']
+        values = [tree.item(child, 'values') for child in tree.get_children()]
+        self.assertTrue(any(row[:3] == ('Pv2 input voltage', '327.3', 'V') for row in values))
+        self.assertTrue(any(row[:3] == ('Pv2 input current', '3.1', 'A') for row in values))
+        self.assertTrue(any(row[:3] == ('Pv2 charging power', '1049', 'W') for row in values))
+        records[1]['received_at'] = now - 60
+        self.ready(native_records=records, native_connected_pv_inputs=2)
+        self.monitor.refresh_native()
+        self.assertEqual(self.monitor.native_metric_labels['pv'].cget('text'), 'Stale')
+        self.monitor.native_session.send_native.assert_not_called()
+
     def test_power_cards_show_active_apparent_and_signed_battery(self):
         self.select_native()
         record = dict(protocol='PI30', command='QPIGS', sequence=1,
@@ -402,6 +431,79 @@ class NativeTkTests(unittest.TestCase):
         self.assertEqual(int(battery.master.grid_info()['columnspan']), 2)
         self.assertFalse(monitor.native_group_trees['grid'].master.grid_info())
         monitor.native_session.send_native.assert_not_called()
+
+    def test_native_live_updates_preserve_rows_selection_and_stale_transitions(self):
+        self.select_native()
+        now = time.monotonic()
+        records = [dict(protocol='PI30', command='QPIGS', sequence=1,
+                        timestamp_ms=1, received_at=now,
+                        fields={'pv_power': {'value': 830, 'unit': 'W'}})]
+        snapshot = self.ready(native_records=records, health={'telemetry_seen': True})
+        monitor = self.monitor
+        monitor.refresh_native()
+        tree = monitor.native_group_trees['pv']
+        rows = tree.get_children()
+        tree.selection_set(rows[0])
+        with patch.object(tree, 'insert', wraps=tree.insert) as insert, \
+                patch.object(tree, 'delete', wraps=tree.delete) as delete, \
+                patch.object(tree, 'item', wraps=tree.item) as item, \
+                patch.object(monitor, 'clear_tree', wraps=monitor.clear_tree) as clear:
+            for _ in range(10):
+                monitor.refresh_native()
+            insert.assert_not_called()
+            delete.assert_not_called()
+            item.assert_not_called()
+            clear.assert_not_called()
+            snapshot['native_live'] = normalize_native_live(records, 'PI30', 0, now + 60)
+            monitor.refresh_native()
+            self.assertEqual(tree.get_children(), rows)
+            self.assertEqual(tree.selection(), (rows[0],))
+            self.assertEqual(monitor.native_metric_labels['pv'].cget('text'), 'Stale')
+            self.assertTrue(tree.item(rows[0], 'values')[3].startswith('Stale'))
+            insert.assert_not_called()
+            delete.assert_not_called()
+        monitor.native_session.snapshot.assert_called_with(include_records=False)
+        monitor.native_session.send_native.assert_not_called()
+
+    def test_diagnostics_and_raw_json_load_only_when_selected(self):
+        self.select_native()
+        self.ready(native_records=[dict(protocol='PI30', command='QPIGS', sequence=1,
+            timestamp_ms=1, received_at=time.monotonic(),
+            fields={'pv_power': {'value': 830, 'unit': 'W'}})])
+        monitor = self.monitor
+        with patch('inverter_monitor.json.dumps', wraps=json.dumps) as dumps:
+            monitor.refresh_native()
+            monitor.native_session.snapshot.assert_called_with(include_records=False)
+            self.assertFalse(monitor.native_tree.get_children())
+            dumps.assert_not_called()
+            monitor.notebook.select(monitor.native_frames[2])
+            monitor.native_tab_changed()
+            monitor.native_session.snapshot.assert_called_with(include_records=True)
+            rows = monitor.native_tree.get_children()
+            self.assertEqual(len(rows), 1)
+            monitor.native_tree.selection_set(rows[0])
+            dumps.assert_not_called()
+            monitor.notebook.select(monitor.raw_frame)
+            monitor.native_tab_changed()
+            dumps.assert_called_once()
+            self.assertIn('pv_power', monitor.raw_text.get('1.0', 'end'))
+            monitor.notebook.select(monitor.native_frames[0])
+            monitor.native_tab_changed()
+            monitor.native_session.snapshot.assert_called_with(include_records=False)
+            self.assertEqual(monitor.native_tree.get_children(), rows)
+            self.assertEqual(monitor.native_tree.selection(), (rows[0],))
+            dumps.assert_called_once()
+
+    def test_native_timer_refreshes_once_per_second(self):
+        self.select_native()
+        self.ready()
+        monitor = self.monitor
+        with patch.object(monitor, 'refresh_native') as refresh, \
+                patch.object(monitor.root, 'after'), \
+                patch('inverter_monitor.time.monotonic', side_effect=[100 + n / 10 for n in range(11)]):
+            for _ in range(11):
+                monitor.process_queue()
+        self.assertEqual(refresh.call_count, 2)
 
 
 if __name__ == "__main__":

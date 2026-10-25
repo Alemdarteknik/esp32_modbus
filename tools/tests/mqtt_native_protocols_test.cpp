@@ -31,6 +31,7 @@
 #include "inverter_gateway/app/rgb_debug.hpp"
 #include "inverter_gateway/inverter/register_value.hpp"
 #include "cJSON.h"
+#include "esp_app_desc.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 
@@ -93,6 +94,11 @@ unsigned uxQueueMessagesWaiting(QueueHandle_t queue)
     return queue ? static_cast<unsigned>(static_cast<host::Queue *>(queue)->messages.size()) : 0;
 }
 std::int64_t esp_timer_get_time() { return host::now_us; }
+const esp_app_desc_t *esp_app_get_description()
+{
+    static const esp_app_desc_t description{"9.8.7-host", "esp32_modbus"};
+    return &description;
+}
 int esp_mqtt_client_subscribe(esp_mqtt_client_handle_t, const char *, int) { return 1; }
 int esp_mqtt_client_publish(esp_mqtt_client_handle_t, const char *, const char *, int, int, int) { return 1; }
 int esp_mqtt_client_get_outbox_size(esp_mqtt_client_handle_t client)
@@ -204,8 +210,20 @@ Json parsed(const host::Publication &message)
 const cJSON *item(const cJSON *json, const char *key)
 {
     const cJSON *value = cJSON_GetObjectItemCaseSensitive(json, key);
+    if (!value) std::printf("Missing JSON item: %s\n", key);
     CHECK(value != nullptr);
     return value;
+}
+const cJSON *embedded_record(const cJSON *snapshot, const char *command)
+{
+    const auto *records = item(snapshot, "native_records");
+    CHECK(cJSON_IsArray(records));
+    for (int index = 0; index < cJSON_GetArraySize(records); ++index) {
+        const auto *record = cJSON_GetArrayItem(records, index);
+        if (std::strcmp(item(record, "command")->valuestring, command) == 0) return record;
+    }
+    CHECK(false);
+    return nullptr;
 }
 std::string command(std::uint64_t id, const char *profile, const char *text, const char *extra = "")
 {
@@ -761,6 +779,63 @@ std::size_t publication_count(const Fixture &fixture, const char *topic)
         [topic](const auto &message) { return message.topic == topic; });
 }
 
+void firmware_identity_once_per_session()
+{
+    const char *topic = "test/site1/esp/ESP-AABBCCDDEEFF/firmware";
+    const auto connected_event = [](Fixture &fixture, int event_id) {
+        esp_mqtt_event_t event{};
+        event.event_id = event_id;
+        fixture.bridge.handle_event(&event);
+    };
+    Fixture fixture;
+    std::strcpy(fixture.bridge.hardware_client_id_, "ESP-AABBCCDDEEFF");
+    fixture.bridge.publish_firmware_identity();
+    CHECK(fixture.client.published.empty());
+    connected_event(fixture, MQTT_EVENT_CONNECTED);
+    fixture.bridge.publish_firmware_identity();
+    CHECK(publication_count(fixture, topic) == 1);
+    const auto &first = publication(fixture, topic);
+    CHECK(first.qos == 1 && first.retain == 1);
+    auto identity = parsed(first);
+    CHECK(cJSON_GetArraySize(identity.get()) == 3);
+    CHECK(std::strcmp(item(identity.get(), "device_id")->valuestring, "ESP-AABBCCDDEEFF") == 0);
+    CHECK(std::strcmp(item(identity.get(), "project")->valuestring, esp_app_get_description()->project_name) == 0);
+    CHECK(std::strcmp(item(identity.get(), "version")->valuestring, esp_app_get_description()->version) == 0);
+    // Duplicate connected callbacks and recurring publisher ticks do not send
+    // identity again while the same connection remains active.
+    connected_event(fixture, MQTT_EVENT_CONNECTED);
+    for (unsigned tick = 0; tick < 20; ++tick) {
+        host::now_us += 1000000;
+        fixture.bridge.publish_firmware_identity();
+    }
+    CHECK(publication_count(fixture, topic) == 1);
+    connected_event(fixture, MQTT_EVENT_DISCONNECTED);
+    fixture.bridge.publish_firmware_identity();
+    CHECK(publication_count(fixture, topic) == 1);
+    connected_event(fixture, MQTT_EVENT_CONNECTED);
+    fixture.bridge.publish_firmware_identity();
+    CHECK(publication_count(fixture, topic) == 2);
+    CHECK(publication(fixture, topic).retain == 1);
+
+    // A failed enqueue must remain pending and cannot flood the outbox on
+    // every publisher tick. It gets one new attempt after the retry interval.
+    Fixture retry;
+    std::strcpy(retry.bridge.hardware_client_id_, "ESP-AABBCCDDEEFF");
+    retry.client.enqueue_result = -1;
+    connected_event(retry, MQTT_EVENT_CONNECTED);
+    retry.bridge.publish_firmware_identity();
+    CHECK(retry.client.published.empty());
+    CHECK(retry.bridge.firmware_published_session_ != retry.bridge.firmware_session_);
+    retry.client.enqueue_result = 1;
+    retry.bridge.publish_firmware_identity();
+    CHECK(retry.client.published.empty());
+    host::now_us += 1000000;
+    retry.bridge.publish_firmware_identity();
+    CHECK(publication_count(retry, topic) == 1);
+    retry.bridge.publish_firmware_identity();
+    CHECK(publication_count(retry, topic) == 1);
+}
+
 void status_changes_and_quality()
 {
     host::now_us = 1000000000;
@@ -788,7 +863,7 @@ void status_changes_and_quality()
     CHECK(publication_count(status, "test/site1/inverter/2/live") == 2);
     host::now_us += 60000000;
     deliver(status, chunks(mode, "QMOD", 104, 966000)[0]);
-    CHECK(publication_count(status, "test/site1/inverter/2/protocol/QMOD") == 3); // Unchanged status heartbeat.
+    CHECK(publication_count(status, "test/site1/inverter/2/protocol/QMOD") == 2); // Freshness is carried by /live.
     const auto live_count = publication_count(status, "test/site1/inverter/2/live");
     status.bridge.reconnect_count_ = 1;
     status.bridge.publish_protocol_live_now(2, static_cast<std::uint32_t>(host::now_us / 1000));
@@ -804,9 +879,11 @@ void status_changes_and_quality()
     CHECK(item(item(fresh.get(), "power_summary"), "load_percentage")->valuedouble == 3);
     CHECK(cJSON_GetObjectItemCaseSensitive(item(fresh.get(), "power_summary"), "grid_kw") == nullptr);
     CHECK(std::fabs(item(item(fresh.get(), "power_summary"), "battery_kw")->valuedouble + 0.690) < 1e-12);
-    const auto *grid = item(item(fresh.get(), "sections"), "grid");
-    CHECK(item(cJSON_GetArrayItem(grid, 0), "value")->valuedouble == 0);
-    CHECK(cJSON_IsFalse(item(cJSON_GetArrayItem(grid, 0), "stale")));
+    const auto *fresh_record = embedded_record(fresh.get(), "QPIGS");
+    CHECK(item(item(item(fresh_record, "fields"), "ac_input_voltage"), "value")->valuedouble == 0);
+    CHECK(item(fresh_record, "sample_age_ms")->valuedouble == 0);
+    CHECK(cJSON_IsTrue(item(fresh.get(), "sections_in_native_records")));
+    CHECK(cJSON_GetObjectItemCaseSensitive(fresh.get(), "sections") == nullptr);
     host::now_us += 16000000;
     power.client.outbox_bytes = 0; // Previously enqueued QoS 1 messages were acknowledged.
     power.bridge.publish_protocol_live_now(2, static_cast<std::uint32_t>(host::now_us / 1000));
@@ -819,14 +896,15 @@ void status_changes_and_quality()
     const auto *quality = item(item(stale.get(), "power_quality"), "pv_kw");
     CHECK(cJSON_IsFalse(item(quality, "valid")) && cJSON_IsTrue(item(quality, "stale")));
     CHECK(item(quality, "age_ms")->valuedouble == 16000);
-    CHECK(cJSON_IsTrue(item(cJSON_GetArrayItem(item(item(stale.get(), "sections"), "grid"), 0), "stale")));
+    CHECK(item(embedded_record(stale.get(), "QPIGS"), "sample_age_ms")->valuedouble == 16000);
 
     Fixture identity;
     protocol::EnergyResponse serial; CHECK(serial.add_text("serial_number", "", "92832207100756"));
     deliver(identity, chunks(serial, "QID", 100, 900000)[0]);
     auto identity_live = parsed(publication(identity, "test/site1/inverter/2/live"));
     CHECK(cJSON_IsFalse(item(identity_live.get(), "core_status_fresh")));
-    CHECK(cJSON_IsArray(item(item(identity_live.get(), "sections"), "identity")));
+    CHECK(std::strcmp(item(item(item(embedded_record(identity_live.get(), "QID"), "fields"),
+        "serial_number"), "value")->valuestring, "92832207100756") == 0);
 
     Fixture failure;
     failure.client.enqueue_result = -1;
@@ -840,6 +918,140 @@ void status_changes_and_quality()
     host::now_us += 1000000;
     failure.bridge.publish_protocol_live_now(2, static_cast<std::uint32_t>(host::now_us / 1000));
     CHECK(failure.client.published.size() == 2 && cache.records()[0].published && cache.live_published);
+}
+
+void change_only_live_queries_and_manual_results()
+{
+    host::now_us += 10000000;
+    Fixture fixture;
+    auto response = pi30_reference_reading();
+    for (const auto &message : chunks(response)) deliver(fixture, message);
+    const auto initial_bytes = publication(fixture, "test/site1/inverter/2/protocol/QPIGS").payload.size();
+    for (unsigned index = 1; index < 30; ++index) {
+        host::now_us += 2000000;
+        fixture.client.outbox_bytes = 0;
+        for (const auto &message : chunks(response, "QPIGS", 100 + index, 900000 + index * 2000))
+            deliver(fixture, message);
+    }
+    CHECK(publication_count(fixture, "test/site1/inverter/2/protocol/QPIGS") == 1);
+    CHECK(publication_count(fixture, "test/site1/inverter/2/live") == 10);
+    auto latest = parsed(publication(fixture, "test/site1/inverter/2/live"));
+    CHECK(cJSON_IsTrue(item(latest.get(), "core_status_fresh")));
+    CHECK(item(embedded_record(latest.get(), "QPIGS"), "sequence")->valueint == 127);
+    CHECK(item(embedded_record(latest.get(), "QPIGS"), "sample_age_ms")->valueint == 0);
+    CHECK(fixture.bridge.native_cache_[2]->latest_sequence() == 129);
+
+    // The explicit command result is immediate even if the unchanged read's
+    // full observation will next arrive in the complete five-second /live.
+    network::ProtocolCommandResult result{};
+    result.command_id = 123;
+    result.source_member_id = 2;
+    result.protocol = protocol::EnergyProtocol::pi30;
+    result.outcome = network::ProtocolCommandOutcome::completed;
+    std::strcpy(result.command, "QPIGS");
+    fixture.client.outbox_bytes = 0;
+    fixture.bridge.publish_protocol_command_result_now(result);
+    fixture.bridge.publish_protocol_command_result_now(result);
+    CHECK(publication_count(fixture, "test/site1/inverter/2/result") == 2);
+    CHECK(publication_count(fixture, "test/site1/inverter/2/protocol/QPIGS") == 1);
+
+    response.fields[0].value += 0.1;
+    for (const auto &message : chunks(response, "QPIGS", 130, 960000)) deliver(fixture, message);
+    CHECK(publication_count(fixture, "test/site1/inverter/2/protocol/QPIGS") == 2);
+    std::printf("Stable PI30 at 2s sampling: 30 query publications reduced to 1 (%zu payload bytes avoided); 10 complete live publications retained.\n",
+        29 * initial_bytes);
+}
+
+void aohai_snapshot_and_alert_changes()
+{
+    Fixture fixture;
+    network::TelemetryMessage message{};
+    message.source_member_id = 2;
+    message.first_register = 182;
+    message.register_count = 1;
+    message.timestamp_ms = 1000;
+    message.sequence = 1;
+    message.registers[0] = 1;
+    const char *topic = "test/site1/inverter/2/snapshot/SYSTEM/SourcePriority/Energy_Priority";
+    fixture.bridge.publish_snapshot(message);
+    CHECK(publication_count(fixture, topic) == 1);
+    CHECK(publication(fixture, topic).retain == 1);
+    message.timestamp_ms += 1000; ++message.sequence;
+    fixture.bridge.publish_snapshot(message);
+    CHECK(publication_count(fixture, topic) == 1);
+    message.registers[0] = 2;
+    fixture.client.enqueue_result = -1;
+    fixture.bridge.publish_snapshot(message);
+    CHECK(publication_count(fixture, topic) == 1);
+    fixture.client.enqueue_result = 1;
+    fixture.bridge.publish_snapshot(message);
+    CHECK(publication_count(fixture, topic) == 2);
+    CHECK(item(parsed(publication(fixture, topic)).get(), "value")->valueint == 2);
+    CHECK(fixture.bridge.live_cache_[2].source_priority == 2);
+    fixture.bridge.publish_snapshot(message);
+    CHECK(publication_count(fixture, topic) == 2);
+
+    ++fixture.bridge.reconnect_count_;
+    fixture.bridge.publish_snapshot(message);
+    CHECK(publication_count(fixture, topic) == 3);
+    message.timestamp_ms = 100; // New inverter/ESP session reannounces state.
+    fixture.bridge.publish_snapshot(message);
+    CHECK(publication_count(fixture, topic) == 4);
+
+    network::RoutedCommandResult write{};
+    write.source_member_id = 2;
+    write.kind = network::RemoteCommandKind::write_registers;
+    write.register_result.outcome = inverter::RegisterCommandOutcome::confirmed;
+    write.register_result.named_request = true;
+    write.register_result.result_values_valid = true;
+    write.register_result.first_register = 182;
+    write.register_result.register_count = 1;
+    write.register_result.result_values[0] = 1;
+    fixture.bridge.publish_setting_snapshot(write);
+    CHECK(publication_count(fixture, topic) == 5);
+    message.registers[0] = 1;
+    fixture.bridge.publish_snapshot(message);
+    CHECK(publication_count(fixture, topic) == 5); // Successful command snapshot is already current.
+    fixture.bridge.publish_setting_snapshot(write);
+    CHECK(publication_count(fixture, topic) == 6); // Explicit write snapshot/result is never suppressed.
+
+    message.first_register = 5;
+    message.register_count = 8;
+    for (unsigned index = 0; index < 8; ++index) message.registers[index] = 0x3130 + index;
+    const char *serial_topic = "test/site1/inverter/2/snapshot/identity/SerialNumber/Inverter_serial_number";
+    fixture.bridge.publish_snapshot(message);
+    fixture.bridge.publish_snapshot(message);
+    CHECK(publication_count(fixture, serial_topic) == 1);
+    ++message.registers[7]; // Every serial word participates in comparison.
+    fixture.bridge.publish_snapshot(message);
+    CHECK(publication_count(fixture, serial_topic) == 2);
+    fixture.client.enqueue_result = -1;
+    ++message.registers[0];
+    fixture.bridge.publish_snapshot(message);
+    fixture.client.enqueue_result = 1;
+    fixture.bridge.publish_snapshot(message);
+    CHECK(publication_count(fixture, serial_topic) == 3);
+
+    message.register_space = 1;
+    message.first_register = 23;
+    message.register_count = 1;
+    message.registers[0] = 0;
+    const char *alert_topic = "test/site1/inverter/2/alert/HistoryEventCnt";
+    fixture.bridge.publish_alert_changes(message);
+    fixture.bridge.publish_alert_changes(message);
+    CHECK(publication_count(fixture, alert_topic) == 1);
+    ++message.registers[0];
+    fixture.bridge.publish_alert_changes(message);
+    CHECK(publication_count(fixture, alert_topic) == 2);
+    ++message.registers[0];
+    fixture.client.enqueue_result = -1;
+    fixture.bridge.publish_alert_changes(message);
+    fixture.client.enqueue_result = 1;
+    fixture.bridge.publish_alert_changes(message);
+    CHECK(publication_count(fixture, alert_topic) == 3);
+    const auto catalog = inverter::holding_register_catalog();
+    for (std::size_t index = 0; index < catalog.size; ++index)
+        CHECK(catalog.data[index].address < network::MqttBridge::holding_point_count);
 }
 
 void compact_bms_command_labels()
@@ -871,10 +1083,9 @@ void compact_bms_command_labels()
     auto live = parsed(publication(settings, "test/site1/inverter/2/live"));
     CHECK(std::strcmp(item(live.get(), "protocol")->valuestring, "JKPB") == 0);
     CHECK(cJSON_IsFalse(item(live.get(), "core_status_fresh")));
-    const auto *fields = item(item(live.get(), "sections"), "settings");
-    CHECK(cJSON_IsArray(fields) && cJSON_GetArraySize(fields) == 1);
-    CHECK(std::strcmp(item(cJSON_GetArrayItem(fields, 0), "name")->valuestring, "cell_voltage_high_limit") == 0);
-    CHECK(item(cJSON_GetArrayItem(fields, 0), "value")->valuedouble == 3.6);
+    const auto *fields = item(embedded_record(live.get(), "getAdditionalIn"), "fields");
+    CHECK(cJSON_IsObject(fields) && cJSON_GetArraySize(fields) == 1);
+    CHECK(item(item(fields, "cell_voltage_high_limit"), "value")->valuedouble == 3.6);
     CHECK(publication_count(settings, "test/site1/inverter/2/protocol/getAdditionalIn") == 1);
     ++setting.sequence; setting.timestamp_ms += 2000; host::now_us += 2000000;
     deliver(settings, setting);
@@ -890,14 +1101,15 @@ void compact_bms_command_labels()
     auto primary = parsed(publication(daly, "test/site1/inverter/2/live"));
     CHECK(std::strcmp(item(primary.get(), "protocol")->valuestring, "DALY") == 0);
     CHECK(cJSON_IsTrue(item(primary.get(), "core_status_fresh")));
-    CHECK(item(cJSON_GetArrayItem(item(item(primary.get(), "sections"), "battery"), 0), "value")->valuedouble == 52.4);
+    CHECK(item(item(item(embedded_record(primary.get(), "SOC"), "fields"), "battery_voltage"), "value")->valuedouble == 52.4);
     protocol::EnergyResponse fault; CHECK(fault.add_number("battery_failure_bits", "bool", 0));
     auto warning = chunks(fault, "batteryFailureS", 101, 905000)[0]; warning.protocol = protocol::EnergyProtocol::daly;
     host::now_us += 5000000; deliver(daly, warning);
     auto status = parsed(publication(daly, "test/site1/inverter/2/live"));
-    const auto *warnings = item(item(status.get(), "sections"), "status");
-    CHECK(cJSON_IsArray(warnings) && cJSON_GetArraySize(warnings) == 1);
-    CHECK(item(cJSON_GetArrayItem(warnings, 0), "value")->valuedouble == 0);
+    const auto *warnings = item(embedded_record(status.get(), "batteryFailureS"), "fields");
+    CHECK(cJSON_IsObject(warnings) && cJSON_GetArraySize(warnings) == 1);
+    CHECK(item(item(warnings, "battery_failure_bits"), "value")->valuedouble == 0);
+    CHECK(item(item(status.get(), "operating_status"), "battery_failure_bits")->valuedouble == 0);
     CHECK(cJSON_GetArraySize(item(status.get(), "native_records")) == 2);
     CHECK(publication_count(daly, "test/site1/inverter/2/protocol/batteryFailureS") == 1);
     ++warning.sequence; warning.timestamp_ms += 2000; host::now_us += 2000000; deliver(daly, warning);
@@ -1012,6 +1224,152 @@ std::vector<std::uint8_t> constructed_pi_frame(protocol::EnergyProtocol profile,
     };
     frame.push_back(escape(sum >> 8)); frame.push_back(escape(sum & 255)); frame.push_back(13);
     return frame;
+}
+
+void pi30_second_tracker_publication()
+{
+    using Id = protocol::EnergyProtocol;
+    const auto second_tracker = [](const char *text) {
+        const auto frame = constructed_pi_frame(Id::pi30, text);
+        protocol::EnergyResponse response;
+        std::size_t frame_size = 0;
+        CHECK(protocol::energy_frame_state(Id::pi30, "QPIGS2", frame.data(), frame.size(), frame_size) ==
+              protocol::FrameState::complete);
+        CHECK(frame_size == frame.size());
+        CHECK(protocol::energy_decode_response(Id::pi30, "QPIGS2", 1, frame.data(), frame.size(), response) ==
+              protocol::CodecStatus::ok);
+        CHECK(response.count == 3);
+        return response;
+    };
+    const auto pv1 = pi30_reference_reading();
+    const auto pv2 = second_tracker("03.1 327.3 01049");
+    const auto zero = second_tracker("00.0 000.0 00000");
+    const auto deliver_all = [](Fixture &fixture, const protocol::EnergyResponse &response,
+                                const char *command, std::uint32_t sequence, std::int64_t timestamp) {
+        fixture.client.outbox_bytes = 0;
+        for (const auto &message : chunks(response, command, sequence, timestamp)) deliver(fixture, message);
+    };
+    const auto publish_live = [](Fixture &fixture) {
+        host::now_us += 6000000;
+        fixture.client.outbox_bytes = 0;
+        fixture.bridge.publish_protocol_live_now(2, static_cast<std::uint32_t>(host::now_us / 1000));
+        return parsed(publication(fixture, "test/site1/inverter/2/live"));
+    };
+    const auto pv_power = [](const cJSON *live) {
+        return cJSON_GetObjectItemCaseSensitive(item(live, "power_summary"), "pv_kw");
+    };
+
+    host::now_us += 20000000;
+    Fixture local;
+    local.config.profile.device_role = app::DeviceRole::standalone_combined;
+    local.config.profile.logical_member_id = 2;
+    local.config.profile.connected_pv_inputs = 2;
+    local.config.inverter_link.protocol = Id::pi30;
+    deliver_all(local, pv1, "QPIGS", 100, 900000);
+    auto missing = parsed(publication(local, "test/site1/inverter/2/live"));
+    CHECK(item(missing.get(), "connected_pv_inputs")->valuedouble == 2);
+    CHECK(!cJSON_IsNumber(pv_power(missing.get()))); // One tracker is not the configured total.
+    auto atomic_pv1 = parsed(publication(local, "test/site1/inverter/2/protocol/QPIGS"));
+    CHECK(item(atomic_pv1.get(), "connected_pv_inputs")->valuedouble == 2);
+    CHECK(item(item(item(atomic_pv1.get(), "fields"), "pv_input_power"), "value")->valuedouble == 856);
+
+    const auto fragments = chunks(pv2, "QPIGS2", 101, 901000);
+    CHECK(fragments.size() == 2);
+    deliver(local, fragments.front());
+    CHECK(publication_count(local, "test/site1/inverter/2/protocol/QPIGS2") == 0);
+    CHECK(!cJSON_IsNumber(pv_power(missing.get())));
+    local.client.outbox_bytes = 0;
+    deliver(local, fragments.back());
+    auto second = parsed(publication(local, "test/site1/inverter/2/protocol/QPIGS2"));
+    CHECK(item(second.get(), "connected_pv_inputs")->valuedouble == 2);
+    CHECK(cJSON_IsTrue(item(second.get(), "record_complete")));
+    CHECK(cJSON_GetArraySize(item(second.get(), "fields")) == 3);
+    CHECK(item(item(item(second.get(), "fields"), "pv2_input_current"), "value")->valuedouble == 3.1);
+    CHECK(item(item(item(second.get(), "fields"), "pv2_input_voltage"), "value")->valuedouble == 327.3);
+    CHECK(item(item(item(second.get(), "fields"), "pv2_charging_power"), "value")->valuedouble == 1049);
+    auto combined = publish_live(local);
+    CHECK(std::fabs(pv_power(combined.get())->valuedouble - 1.905) < 1e-12);
+    CHECK(cJSON_GetArraySize(item(combined.get(), "native_records")) == 2);
+    const auto *pv_record = embedded_record(combined.get(), "QPIGS2");
+    const auto *pv_fields = item(pv_record, "fields");
+    for (const char *key : {"pv2_input_current", "pv2_input_voltage", "pv2_charging_power"}) {
+        CHECK(cJSON_IsNumber(item(item(pv_fields, key), "value")));
+    }
+    CHECK(item(pv_record, "sample_age_ms")->valuedouble <= 15000);
+
+    // Primary readings remain fresh while a failed second-tracker read ages.
+    host::now_us += 16000000;
+    deliver_all(local, pv1, "QPIGS", 102, 922000);
+    auto stale = parsed(publication(local, "test/site1/inverter/2/live"));
+    CHECK(cJSON_IsTrue(item(stale.get(), "core_status_fresh")));
+    CHECK(!cJSON_IsNumber(pv_power(stale.get())));
+    CHECK(cJSON_IsTrue(item(item(item(stale.get(), "power_quality"), "pv_kw"), "stale")));
+    deliver_all(local, zero, "QPIGS2", 103, 923000);
+    auto zero_live = publish_live(local);
+    CHECK(std::fabs(pv_power(zero_live.get())->valuedouble - 0.856) < 1e-12);
+    CHECK(cJSON_IsTrue(item(item(item(zero_live.get(), "power_quality"), "pv_kw"), "valid")));
+    deliver_all(local, pv2, "QPIGS2", 101, 901000); // A late old record cannot replace real zero.
+    auto late = publish_live(local);
+    CHECK(std::fabs(pv_power(late.get())->valuedouble - 0.856) < 1e-12);
+
+    // The gateway's own setup is unrelated to remote inverter channel counts.
+    for (const std::uint8_t gateway_pv_count : {0, 1, 2, 16}) {
+        host::now_us += 20000000;
+        Fixture remote;
+        remote.config.profile.device_role = app::DeviceRole::internet_gateway;
+        remote.config.profile.logical_member_id = 2;
+        remote.config.profile.connected_pv_inputs = gateway_pv_count;
+        remote.config.inverter_link.protocol = Id::pi30;
+        deliver_all(remote, pv1, "QPIGS", 100, 900000);
+        auto single = parsed(publication(remote, "test/site1/inverter/2/live"));
+        CHECK(cJSON_GetObjectItemCaseSensitive(single.get(), "connected_pv_inputs") == nullptr);
+        CHECK(std::fabs(pv_power(single.get())->valuedouble - 0.856) < 1e-12);
+        deliver_all(remote, pv2, "QPIGS2", 101, 901000);
+        auto remote_atomic = parsed(publication(remote, "test/site1/inverter/2/protocol/QPIGS2"));
+        CHECK(cJSON_GetObjectItemCaseSensitive(remote_atomic.get(), "connected_pv_inputs") == nullptr);
+        auto both = publish_live(remote);
+        CHECK(cJSON_GetObjectItemCaseSensitive(both.get(), "connected_pv_inputs") == nullptr);
+        CHECK(std::fabs(pv_power(both.get())->valuedouble - 1.905) < 1e-12);
+    }
+
+    // A mismatched locally configured protocol must not attach its PV count.
+    host::now_us += 20000000;
+    Fixture mismatched;
+    mismatched.config.profile.device_role = app::DeviceRole::standalone_combined;
+    mismatched.config.profile.logical_member_id = 2;
+    mismatched.config.profile.connected_pv_inputs = 0;
+    mismatched.config.inverter_link.protocol = Id::pi18;
+    deliver_all(mismatched, pv1, "QPIGS", 100, 900000);
+    auto different_profile = parsed(publication(mismatched, "test/site1/inverter/2/live"));
+    CHECK(cJSON_GetObjectItemCaseSensitive(different_profile.get(), "connected_pv_inputs") == nullptr);
+    CHECK(std::fabs(pv_power(different_profile.get())->valuedouble - 0.856) < 1e-12);
+
+    // Twelve-token SCC2/SCC3 firmware reports a measured overall PV power.
+    // Deliberately choose a total different from the sampled channel sum:
+    // sequential readings must not add the total to individual channels.
+    const auto scc_frame = constructed_pi_frame(Id::pi30,
+        "03.1 327.3 52.40 01049 10000000 0010 00520 02.0 310.2 52.30 00620 03000");
+    protocol::EnergyResponse scc;
+    CHECK(protocol::energy_decode_response(Id::pi30, "QPIGS2", 1, scc_frame.data(), scc_frame.size(), scc) ==
+          protocol::CodecStatus::ok);
+    for (const std::uint8_t configured_count : {1, 2, 3, 4}) {
+        host::now_us += 20000000;
+        Fixture all_scc;
+        all_scc.config.profile.device_role = app::DeviceRole::standalone_combined;
+        all_scc.config.profile.logical_member_id = 2;
+        all_scc.config.profile.connected_pv_inputs = configured_count;
+        all_scc.config.inverter_link.protocol = Id::pi30;
+        deliver_all(all_scc, pv1, "QPIGS", 100, 900000);
+        deliver_all(all_scc, scc, "QPIGS2", 101, 901000);
+        auto reported = publish_live(all_scc);
+        const auto *power = pv_power(reported.get());
+        if (configured_count == 1) CHECK(cJSON_IsNumber(power) && std::fabs(power->valuedouble - 0.856) < 1e-12);
+        else if (configured_count <= 3) {
+            CHECK(cJSON_IsNumber(power) && std::fabs(power->valuedouble - 3.0) < 1e-12);
+            CHECK(std::strcmp(item(item(item(reported.get(), "power_quality"), "pv_kw"), "source_field")->valuestring,
+                              "pv_total_charging_power") == 0);
+        } else CHECK(!cJSON_IsNumber(power));
+    }
 }
 
 std::vector<std::uint8_t> constructed_jk_info()
@@ -1142,7 +1500,8 @@ void all_profile_telemetry(const char *export_path, const char *reference_path)
         CHECK(std::strcmp(item(live.get(), "protocol")->valuestring, profile_name) == 0);
         CHECK(cJSON_IsTrue(item(live.get(), "core_status_fresh")));
         const auto *records = item(live.get(), "native_records");
-        const auto *sections = item(live.get(), "sections");
+        CHECK(cJSON_GetObjectItemCaseSensitive(live.get(), "sections") == nullptr);
+        CHECK(cJSON_IsTrue(item(live.get(), "sections_in_native_records")));
         CHECK(static_cast<std::size_t>(cJSON_GetArraySize(records)) == observations.size());
         network::NativePowerSummary expected_power(profile);
         Json expected_fields(cJSON_CreateObject(), cJSON_Delete); CHECK(expected_fields != nullptr);
@@ -1166,19 +1525,8 @@ void all_profile_telemetry(const char *export_path, const char *reference_path)
                 if (field.numeric) CHECK(std::fabs(item(actual, "value")->valuedouble - field.value) <=
                                          std::max(1.0, std::fabs(field.value)) * 1e-12);
                 else CHECK(std::strcmp(item(actual, "value")->valuestring, field.text) == 0);
-                const auto *section_name = network::protocol_live_section(profile, command_label, field.key, field.unit);
-                const auto *section = cJSON_GetObjectItemCaseSensitive(sections, section_name);
-                if (section != nullptr) {
-                    bool found = false;
-                    for (int i = 0; i < cJSON_GetArraySize(section); ++i)
-                        if (std::strcmp(item(cJSON_GetArrayItem(section, i), "name")->valuestring, field.key) == 0) found = true;
-                    CHECK(found);
-                } else {
-                    const auto *metadata_only = cJSON_GetObjectItemCaseSensitive(live.get(), "metadata_in_native_records");
-                    const auto *all_compacted = cJSON_GetObjectItemCaseSensitive(live.get(), "sections_in_native_records");
-                    CHECK(cJSON_IsTrue(all_compacted) || (cJSON_IsTrue(metadata_only) &&
-                          (!std::strcmp(section_name, "identity") || !std::strcmp(section_name, "settings") || !std::strcmp(section_name, "energy"))));
-                }
+                const auto *record_section = network::protocol_record_section(info.poll_class);
+                const auto *section_name = record_section ? record_section : network::native_field_section(profile, field.key, field.unit);
                 cJSON *expected = cJSON_AddObjectToObject(expected_command, field.key); CHECK(expected != nullptr);
                 CHECK(cJSON_AddStringToObject(expected, "unit", field.unit) != nullptr);
                 CHECK(cJSON_AddStringToObject(expected, "group", section_name) != nullptr);
@@ -1210,7 +1558,7 @@ void all_profile_telemetry(const char *export_path, const char *reference_path)
         else if (profile == Id::pi18 || profile == Id::pi18lvx || profile == Id::pi18sv)
             fixed_expected = {{"pv_kw", 1}, {"load_kw", 0.9}, {"load_apparent_kva", 1}, {"load_percentage", 18}, {"battery_kw", -0.054}};
         else if (profile == Id::pi30)
-            fixed_expected = {{"pv_kw", 0.856}, {"load_kw", 0.119}, {"load_apparent_kva", 0.161}, {"load_percentage", 3}, {"battery_kw", -0.690}};
+            fixed_expected = {{"pv_kw", 1.882}, {"load_kw", 0.119}, {"load_apparent_kva", 0.161}, {"load_percentage", 3}, {"battery_kw", -0.690}}; // Captured 856 W PV1 + 1026 W PV2.
         else if (profile == Id::pi30max || profile == Id::pi30m044 || profile == Id::pi30m045)
             fixed_expected = {{"pv_kw", 1.905}, {"load_kw", 0.751}, {"load_apparent_kva", 0.829}, {"load_percentage", 10}, {"battery_kw", -1.090}};
         else if (profile == Id::pi30mst)
@@ -1245,6 +1593,29 @@ void all_profile_telemetry(const char *export_path, const char *reference_path)
                 output << encoded << '\n'; cJSON_free(encoded);
             }
         }
+        const auto raw_count = [&fixture]() {
+            return std::count_if(fixture.client.published.begin(), fixture.client.published.end(),
+                [](const auto &message) { return message.topic.find("/protocol/") != std::string::npos; });
+        };
+        const auto published_before_repeat = raw_count();
+        host::now_us += 6000000;
+        for (const auto &observation : observations) {
+            fixture.client.outbox_bytes = 0;
+            const auto repeated_sequence = sequence++;
+            for (auto message : chunks(observation.response, observation.command.c_str(), repeated_sequence,
+                                       950000 + repeated_sequence * 100)) {
+                message.protocol = profile;
+                deliver(fixture, message);
+            }
+        }
+        CHECK(raw_count() == published_before_repeat); // Every profile suppresses unchanged detailed copies.
+        ++fixture.bridge.reconnect_count_;
+        for (std::size_t index = 0; index < (observations.size() + 1) / 2; ++index) {
+            fixture.client.outbox_bytes = 0;
+            host::now_us += 5000000;
+            fixture.bridge.publish_protocol_live_now(2, static_cast<std::uint32_t>(host::now_us / 1000));
+        }
+        CHECK(static_cast<std::size_t>(raw_count() - published_before_repeat) == observations.size());
         ++tested_profiles;
     }
     CHECK(tested_profiles == 25);
@@ -1620,6 +1991,103 @@ void native_battery_direction_and_protocol_signs()
     CHECK(measured_ved.reading(Power::battery).present && measured_ved.reading(Power::battery).value == 0.120);
 }
 
+void setting_result_verification()
+{
+    Fixture f;
+    network::ProtocolCommandResult native{};
+    native.command_id = 4001;
+    native.source_member_id = 1;
+    native.protocol = protocol::EnergyProtocol::pi30;
+    native.write_sent = true;
+    std::strcpy(native.command, "POP02");
+    native.outcome = network::ProtocolCommandOutcome::completed;
+    std::strcpy(native.detail, "Setting verified by QPIRI");
+    f.bridge.publish_protocol_command_result_now(native);
+    auto verified = parsed(f.client.published.back());
+    CHECK(cJSON_IsTrue(item(verified.get(), "setting_verified")));
+    native.outcome = network::ProtocolCommandOutcome::acknowledged;
+    std::strcpy(native.detail, "Readback mismatch; setting not verified");
+    f.bridge.publish_protocol_command_result_now(native);
+    auto mismatch = parsed(f.client.published.back());
+    CHECK(cJSON_IsFalse(item(mismatch.get(), "setting_verified")));
+    std::strcpy(native.detail, "Acknowledged; readback failed: invalid_frame");
+    f.bridge.publish_protocol_command_result_now(native);
+    auto missing = parsed(f.client.published.back());
+    CHECK(cJSON_IsNull(item(missing.get(), "setting_verified")));
+    native.outcome = network::ProtocolCommandOutcome::completed;
+    native.write_sent = false;
+    std::strcpy(native.command, "QPIGS");
+    f.bridge.publish_protocol_command_result_now(native);
+    auto query = parsed(f.client.published.back());
+    CHECK(cJSON_GetObjectItemCaseSensitive(query.get(), "setting_verified") == nullptr);
+
+    network::RoutedCommandResult control{};
+    control.source_member_id = 1;
+    control.kind = network::RemoteCommandKind::write_registers;
+    auto &result = control.register_result;
+    result.command_id = 4002;
+    result.named_request = true;
+    result.first_register = 0;
+    result.register_count = 1;
+    result.result_values_valid = true;
+    result.result_values[0] = 1; // Nonstored latch may reset even after Off.
+    result.modbus_write.status = protocol::ModbusWriteStatus::success;
+    for (auto outcome : {inverter::RegisterCommandOutcome::completed,
+                         inverter::RegisterCommandOutcome::transition_pending,
+                         inverter::RegisterCommandOutcome::confirmed}) {
+        result.outcome = outcome;
+        const auto count = f.client.published.size();
+        f.bridge.publish_command_result_now(control);
+        CHECK(f.client.published.size() == count + 1); // Never retain H0 as operating state.
+        auto response = parsed(f.client.published.back());
+        CHECK(std::strcmp(item(response.get(), "name")->valuestring, "OnOffSet") == 0);
+        CHECK(std::strcmp(item(response.get(), "operation")->valuestring, "set") == 0);
+        CHECK(cJSON_IsTrue(item(response.get(), "write_sent")));
+        CHECK(cJSON_IsTrue(item(response.get(), "operating_state_confirmed")) ==
+              (outcome == inverter::RegisterCommandOutcome::completed));
+        CHECK(item(response.get(), "value")->valuedouble == 1);
+    }
+    result.outcome = inverter::RegisterCommandOutcome::communication_error;
+    result.modbus_write.status = protocol::ModbusWriteStatus::routing_uncertain;
+    f.bridge.publish_command_result_now(control);
+    auto routed = parsed(f.client.published.back());
+    CHECK(cJSON_IsNull(item(routed.get(), "write_sent")));
+    CHECK(cJSON_IsFalse(item(routed.get(), "operating_state_confirmed")));
+
+    // Retained setting values use the same exact engineering units as /result.
+    const inverter::RegisterDescriptor *watts = nullptr, *precision = nullptr, *mixed = nullptr;
+    const auto catalog = inverter::holding_register_catalog();
+    for (std::size_t i = 0; i < catalog.size; ++i) {
+        const auto &entry = catalog.data[i];
+        if (!entry.stored || entry.access != inverter::RegisterAccess::read_write) continue;
+        if (!std::strcmp(entry.unit, "10W")) watts = &entry;
+        if (entry.scale == 0.01 && entry.data_type == inverter::RegisterDataType::uint16) precision = &entry;
+        if (entry.data_type == inverter::RegisterDataType::ascii_or_uint16) mixed = &entry;
+    }
+    CHECK(watts && precision && mixed);
+    for (const auto *descriptor : {watts, precision, mixed}) {
+        result.first_register = descriptor->address;
+        result.outcome = inverter::RegisterCommandOutcome::confirmed;
+        result.modbus_write.status = protocol::ModbusWriteStatus::success;
+        result.result_values[0] = descriptor == mixed ? 0x4a45 : 1234;
+        const double expected = descriptor == mixed ? 19013.0 : descriptor == watts ? 12340.0 : 12.34;
+        const auto count = f.client.published.size();
+        f.bridge.publish_command_result_now(control);
+        CHECK(f.client.published.size() == count + 2);
+        auto current = parsed(f.client.published[count]);
+        auto snapshot = parsed(f.client.published.back());
+        CHECK(std::fabs(item(current.get(), "value")->valuedouble - expected) < 1e-12);
+        CHECK(std::fabs(item(snapshot.get(), "value")->valuedouble - expected) < 1e-12);
+        CHECK(f.client.published.back().retain == 1);
+    }
+    control.kind = network::RemoteCommandKind::read_registers;
+    result.first_register = 21;
+    result.result_values[0] = 26;
+    f.bridge.publish_command_result_now(control);
+    auto year = parsed(f.client.published.back());
+    CHECK(item(year.get(), "value")->valuedouble == 2026);
+}
+
 void result_serialization_and_ota()
 {
     Fixture f;
@@ -1706,9 +2174,13 @@ int main(int argc, char **argv)
     telemetry_serialization();
     complete_pi30_live_telemetry(argc > 1 ? argv[1] : nullptr);
     status_changes_and_quality();
+    change_only_live_queries_and_manual_results();
+    aohai_snapshot_and_alert_changes();
+    firmware_identity_once_per_session();
     compact_bms_command_labels();
     native_memory_admission();
     native_normalization_guards();
+    pi30_second_tracker_publication();
     native_signed_battery_power();
     native_grid_active_and_apparent_power();
     native_battery_direction_and_protocol_signs();
@@ -1716,5 +2188,6 @@ int main(int argc, char **argv)
     all_profile_telemetry(argc > 1 && argv[1][0] ? argv[1] : nullptr,
                           argc > 2 ? argv[2] : "tools/tests/pi_reference_vectors.generated.json");
     result_serialization_and_ota();
+    setting_result_verification();
     std::printf("%u native MQTT checks passed using actual production methods and real cJSON/codecs.\n", host::checks);
 }

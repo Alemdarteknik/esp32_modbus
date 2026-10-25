@@ -1,8 +1,9 @@
 """Live normalization and realistic PI30 streaming tests; no device I/O."""
 import unittest
 
-from native_live import normalize_native_live
-from native_protocols import NativeTelemetryCollector
+from native_live import (normalize_native_live, native_measurement_received_at,
+                         _command_kind, _kind)
+from native_protocols import NativeTelemetryCollector, PROFILES
 from test_native_protocols import chunk
 
 
@@ -138,6 +139,29 @@ class NativeLiveTests(unittest.TestCase):
         self.assertTrue(live['groups']['settings']['fresh'])
         self.assertEqual(live['received_at'], 100)
 
+    def test_factory_defaults_cannot_replace_current_settings(self):
+        for protocol, current, defaults in (('PI30', 'QPIRI', 'QDI'), ('PI18LVX', 'PIRI', 'DI')):
+            with self.subTest(protocol=protocol):
+                collector = self.collect(atomic(protocol=protocol, command=current, fields={
+                    'battery_type': {'unit': '', 'value': 'User'}}))
+                collector.receive(atomic(protocol=protocol, command=defaults, sequence=2,
+                    timestamp_ms=2000, fields={
+                        'battery_type': {'unit': '', 'value': 'AGM'},
+                        'battery_voltage': {'unit': 'V', 'value': 48}}), 101)
+                live = normalize_native_live(collector.records(), protocol, 0, 101)
+                self.assertEqual(live['groups']['settings']['fields']['battery_type']['value'], 'User')
+                self.assertNotIn('battery_voltage', live['groups']['settings']['fields'])
+                self.assertFalse(live['telemetry_available'])
+                self.assertEqual(len(collector.records()), 2)
+
+    def test_defaults_only_remain_diagnostic_without_current_telemetry(self):
+        collector = self.collect(atomic(command='QDI', fields={
+            'battery_voltage': {'unit': 'V', 'value': 48}}))
+        live = self.normalize(collector)
+        self.assertFalse(live['telemetry_available'])
+        self.assertEqual(live['groups']['settings']['fields'], {})
+        self.assertEqual(len(collector.records()), 1)
+
     def test_zero_and_stale_values_preserved_missing_not_inferred(self):
         collector = self.collect(atomic(fields={'pv_input_power': {'unit': 'W', 'value': 0}}))
         live = self.normalize(collector, 100)
@@ -186,6 +210,64 @@ class NativeLiveTests(unittest.TestCase):
         first = self.normalize(collector)
         first['groups']['pv']['fields']['pv_input_power']['value'] = 99
         self.assertEqual(self.normalize(collector)['power_summary']['pv_kw'], 1.862)
+
+    def test_readonly_records_match_copied_records_at_freshness_boundaries(self):
+        collector = self.collect()
+        collector.receive(atomic(command='QPIGS2', sequence=2, timestamp_ms=2000,
+            sample_age_ms=2000, fields={'pv2_charging_power': {'unit': 'W', 'value': 0}}), 101)
+        for now in (101, 114, 115, 116, 401):
+            with self.subTest(now=now):
+                copied = normalize_native_live(collector.records(), 'PI30', 0, now,
+                                               connected_pv_inputs=2)
+                viewed = normalize_native_live(collector.records_view(), 'PI30', 0, now,
+                                               connected_pv_inputs=2)
+                self.assertEqual(viewed, copied)
+                self.assertEqual(native_measurement_received_at(collector.records_view(), 'PI30', 0),
+                                 viewed['received_at'])
+                viewed['groups']['pv']['fields']['pv_input_power']['value'] = 99
+                self.assertEqual(collector.records_view()[0]['fields']['pv_input_power']['value'], 1862)
+
+    def test_catalog_kind_index_preserves_alias_and_pattern_precedence(self):
+        for protocol, profile in PROFILES.items():
+            commands = {'unknown'}
+            for definition in profile['queries']:
+                commands.update((definition['key'][:15], definition['example'][:15],
+                                 definition['example']))
+            for command in commands:
+                resolved, matched = command, None
+                for definition in profile['queries']:
+                    if (definition['key'][:15] == command or
+                            (definition.get('pattern') is not None and
+                             command.startswith(definition['key'][:15]))):
+                        resolved, matched = definition['key'], definition
+                        break
+                with self.subTest(protocol=protocol, command=command):
+                    self.assertEqual(_kind({'protocol': protocol, 'command': command}),
+                                     _command_kind(protocol, resolved, matched))
+
+    def test_measurement_receipt_uses_selected_fields_not_message_order(self):
+        record = self.collect().records()[0]
+        later_sensor = dict(record, command='QPIGS2', sequence=2, timestamp_ms=2000,
+                            received_at=101, fields={
+                                'pv_input_power': {'unit': 'W', 'value': 0}})
+        old_delayed = dict(record, command='QPIGSx', sequence=0, timestamp_ms=900, received_at=120)
+        settings = dict(record, command='QPIRI', sequence=10, timestamp_ms=10000,
+                        received_at=125)
+        defaults = dict(settings, command='QDI', received_at=126)
+        records = [settings, later_sensor, defaults, old_delayed, record]
+        for selected in (records, list(reversed(records))):
+            normalized = normalize_native_live(selected, 'PI30', 0, 126)
+            self.assertEqual(native_measurement_received_at(selected, 'PI30', 0),
+                             normalized['received_at'])
+            self.assertEqual(normalized['received_at'], 101)
+        # A newer text value for the same sensor makes that field ineligible;
+        # an older numeric value must not keep its receipt alive.
+        missing = dict(later_sensor, sequence=3, timestamp_ms=3000, received_at=130,
+                       fields={'pv_input_power': {'unit': 'W', 'value': 'Unavailable'}})
+        selected = [later_sensor, missing]
+        self.assertIsNone(native_measurement_received_at(selected, 'PI30', 0))
+        self.assertIsNone(normalize_native_live(selected, 'PI30', 0, 130)['received_at'])
+        self.assertIsNone(native_measurement_received_at(records, 'PI30', 1))
 
     def test_missing_chunk_diagnostic_explains_no_live_numeric_record(self):
         collector = NativeTelemetryCollector()

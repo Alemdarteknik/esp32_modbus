@@ -4,6 +4,8 @@ import time
 import tkinter as tk
 from tkinter import ttk
 from settings_selection import setting_member_matches
+from settings_results import begin_write, finish_write, write_problem, failure_details
+from settings_polling import SettingsReadPolicy, CONTROL_REFRESH_SECONDS
 
 
 class BuzzerSettings:
@@ -22,6 +24,7 @@ class BuzzerSettings:
         self.current = None
         self.target = None
         self.pending = None
+        self.read_policy = SettingsReadPolicy(refresh_seconds=CONTROL_REFRESH_SECONDS)
         self.frame = parent if parent is not None else ttk.Frame(monitor.notebook, padding=15)
         if parent is None:
             monitor.notebook.add(self.frame, text="Settings")
@@ -57,9 +60,10 @@ class BuzzerSettings:
     def refresh_tick(self):
         if not self.monitor.running:
             return
-        # Some firmware only broadcasts snapshots at startup or after an MQTT
-        # setter. Read automatically to also detect local/front-panel changes.
-        if self.ready and not self.monitor.disconnecting and self.pending is None:
+        # Changed snapshots are the main source. Older firmware still gets a
+        # bounded fallback read to detect front-panel changes.
+        if (self.ready and not self.monitor.disconnecting and self.pending is None
+                and self.read_policy.due(self.NAME, time.monotonic())):
             self.request("get", background=True)
         self.monitor.root.after(5000, self.refresh_tick)
 
@@ -72,13 +76,16 @@ class BuzzerSettings:
         writing = self.pending is not None and self.pending[1] == 'set'
         ready = self.ready and not self.monitor.disconnecting and not writing
         self.combo.configure(state="readonly" if ready and self.current is not None else "disabled")
-        self.button.configure(state="normal" if ready and self.target is not None else "disabled")
+        self.button.configure(state="normal" if ready and self.target is not None and not write_problem(self.monitor, self) else "disabled")
 
     def reset(self):
+        if self.pending and self.pending[1] == 'set':
+            finish_write(self.monitor, self, uncertain=True)
         self.ready = False
         self.pending = None
         self.target = None
         self.current = None
+        self.read_policy.reset()
         self.value.set("Unknown")
         self.status.configure(text=f"Connect to read the {self.TITLE.lower()} setting.")
         self.controls()
@@ -107,22 +114,33 @@ class BuzzerSettings:
         if operation == "get":
             payload["category"] = "configuration"
         else:
+            problem = write_problem(self.monitor, self)
+            if problem:
+                self.status.configure(text=problem)
+                return
             if self.label(value) is None:
                 self.status.configure(text="Invalid setting choice.")
                 return
             payload.update(value=value, confirmed=True)
             if self.GUARDED:
                 payload['guarded_interlock'] = True
+            begin_write(self.monitor, self)
         self.pending = (command_id, operation, value)
+        if operation == 'get':
+            self.read_policy.attempted(self.NAME, time.monotonic())
         self.controls()
         try:
             result = self.monitor.mqtt_client.publish(
                 self.monitor.mqtt_topic.rsplit("/", 1)[0] + "/command",
-                json.dumps(payload), qos=1, retain=False)
+                json.dumps(payload), qos=0 if operation == 'set' else 1, retain=False)
             if result.rc != 0:
                 raise RuntimeError(f"Publish failed ({result.rc})")
         except Exception as error:
+            if operation == 'set':
+                finish_write(self.monitor, self)
             self.pending = None
+            if operation == 'get':
+                self.read_policy.failed(self.NAME, time.monotonic())
             self.status.configure(text=str(error))
             self.controls()
             return
@@ -132,6 +150,10 @@ class BuzzerSettings:
 
     def timeout(self, command_id):
         if self.pending and self.pending[0] == command_id:
+            if self.pending[1] == 'set':
+                finish_write(self.monitor, self, uncertain=True)
+            else:
+                self.read_policy.failed(self.NAME, time.monotonic())
             self.pending = None
             self.target = None
             self.current = None
@@ -139,15 +161,19 @@ class BuzzerSettings:
             self.status.configure(text="No matching result received. Not confirmed. Waiting for a setting update; no write was retried.")
             self.controls()
 
-    def receive(self, topic, data):
+    def receive(self, topic, data, retained=False):
         if not setting_member_matches(self.monitor, data) or data.get("name") != self.NAME:
             return
         base = self.monitor.mqtt_topic.rsplit("/", 1)[0]
         label = self.label(data.get("value"))
         if topic.startswith(base + "/snapshot/"):
+            if retained and self.NAME in self.read_policy.fresh_at:
+                return
             if label:
                 changed = self.current != data["value"]
                 self.current = data["value"]
+                if not retained:
+                    self.read_policy.received(self.NAME, time.monotonic())
                 # Actual changes take precedence over an unsubmitted choice.
                 # A snapshot is still not a correlated write confirmation.
                 if changed or (self.target is None and self.pending is None):
@@ -160,15 +186,19 @@ class BuzzerSettings:
                     self.status.configure(text=f"Current: {label}. Selected: {self.label(self.target)}. Press Set to apply.")
                 self.controls()
             return
-        if topic != base + "/result":
+        if topic != base + "/result" or retained:
             return
         pending = self.pending
         if not pending or str(data.get("command_id")) != pending[0] or data.get("operation") != pending[1]:
             return
         self.pending = None
+        if pending[1] == 'set':
+            finish_write(self.monitor, self, uncertain=data.get('outcome') in (
+                'communication_error', 'invalid_response', 'uncertain', 'sent_unverifiable', 'transition_pending'))
         if data.get("outcome") == "confirmed" and label:
             changed = self.current != data["value"]
             self.current = data["value"]
+            self.read_policy.received(self.NAME, time.monotonic())
             if pending[1] == "get" and not changed and self.target is not None:
                 # Unchanged background reads must not cancel a fresh selection.
                 self.controls()
@@ -178,7 +208,9 @@ class BuzzerSettings:
             matched = pending[1] == "get" or data["value"] == pending[2]
             self.status.configure(text=f"Confirmed: {label}" if matched else f"Read-back mismatch: inverter reports {label}")
         else:
+            if pending[1] == 'get':
+                self.read_policy.failed(self.NAME, time.monotonic())
             self.target = None
             self.value.set(self.label(self.current) or "Unknown")
-            self.status.configure(text=f"Not confirmed: {data.get('outcome', 'invalid result')}. {data.get('message', '')}")
+            self.status.configure(text=f"Not confirmed: {data.get('outcome', 'invalid result')}. {failure_details(data)}")
         self.controls()

@@ -218,24 +218,14 @@ LocalCommandResult CommandService::execute_inverter_enabled(
     }
 
     std::uint16_t previous = 0;
-    if (!read_holding(aohai::holding_inverter_on_off, previous)) {
-        result.outcome = CommandOutcome::communication_error;
-        return result;
-    }
+    const bool previous_valid = read_holding(aohai::holding_inverter_on_off, previous);
     const std::uint16_t requested = static_cast<std::uint16_t>(request.value);
-    if (previous == requested) {
-        result.previous_value = previous;
-        result.previous_value_valid = true;
-        result.requested_register_value = requested;
-        result.readback_value = previous;
-        result.readback_value_valid = true;
-        result.outcome = CommandOutcome::confirmed;
-    } else {
-        result = write_and_verify(request, WriteGuard::runtime_command,
-                                  aohai::holding_inverter_on_off, requested,
-                                  true, previous);
-    }
-    if (result.outcome != CommandOutcome::confirmed) {
+    // H0 is a nonstored runtime command, not the actual operating state.
+    // Send each newly admitted request once even when H0 already reads 0/1.
+    result = write_and_verify(request, WriteGuard::runtime_command,
+                              aohai::holding_inverter_on_off, requested,
+                              previous_valid, previous);
+    if (!result.modbus_write.ok()) {
         return result;
     }
 

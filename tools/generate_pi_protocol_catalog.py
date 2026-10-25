@@ -38,7 +38,7 @@ POLL = {
     "pi18": ["GS", "MOD", "PIRI", "FLAG", "PI", "ID"],
     "pi18lvx": ["GS", "MOD", "FWS", "PIRI", "FLAG", "PI", "ID"],
     "pi18sv": ["GS", "MOD", "FWS", "PIRI", "FLAG", "PI", "ID"],
-    "pi30": ["QPIGS", "QMOD", "QPIWS", "QPIRI", "QFLAG", "QPI", "QID"],
+    "pi30": ["QPIGS", "QPIGS2", "QMOD", "QPIWS", "QPIRI", "QFLAG", "QPI", "QID"],
     "pi30max": ["QPIGS", "QPIGS2", "QMOD", "QPIWS", "QPIRI", "QFLAG", "QPI", "QSID"],
     "pi30revo": ["QPIGS", "QALL", "QMOD", "QPIRI", "PQSE", "QPI"],
     "pi41": ["QPIGS", "QPIGS2", "QMOD", "QPIWS", "QPIRI", "QFLAG", "QPI", "QID"],
@@ -142,6 +142,42 @@ def normalized_pattern(profile: str, key: str, command: dict) -> str | None:
     # PI16's QEH/QEM/QEY patterns erroneously use QED as their command prefix.
     if profile == "pi16" and key in {"QEH", "QEM", "QEY"}:
         pattern = key + pattern[3:]
+    # Resolve contradictions between permissive upstream regexes and the
+    # command's documented wire fields. Keep model-dependent voltage/current
+    # limits on the inverter; only enforce limits explicitly given here.
+    if profile.startswith("pi17"):
+        if key == "LST":
+            pattern = r"LST(00|01|02|10|20)$"
+        elif key == "ACCT":
+            time = r"(2[0-3]|[01][0-9])[0-5][0-9]"
+            count = 4 if profile == "pi17infini" else 2
+            separator = "," if count == 4 else "-"
+            pattern = "ACCT(" + separator.join([time] * count) + ")$"
+        elif key == "ACCB":
+            pattern = r"ACCB([01],(0[45][0-9][0-9]|0600))$"
+    if profile == "pi18" and key == "MCHGV":
+        voltage = r"(4[8-9][0-9]|5[0-7][0-9]|58[0-4])"
+        pattern = "MCHGV(" + voltage + "," + voltage + ")$"
+    if profile in {"pi18lvx", "pi18sv"}:
+        if key == "POP":
+            pattern = r"POP([01])$"
+        elif key == "BUCD":
+            pattern = r"BUCD((4[4-9][0-9]|50[0-9]|510),(000|4[8-9][0-9]|5[0-7][0-9]|580))$"
+    if profile.startswith("pi30") or profile == "pi41":
+        if key == "PBATMAXDISC":
+            pattern = r"PBATMAXDISC(000|0[3-9][0-9]|1[0-4][0-9]|150)$"
+        elif key == "PLEDC":
+            channel = r"(0[0-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])"
+            pattern = "PLEDC([1-3]" + channel * 3 + ")$"
+    if profile == "pi30revo" and key in {"PSET", "_PSET"}:
+        # Flags, four voltages, two currents, calendar/minute fields, and
+        # configuration flags. The final recovery voltage is optional in
+        # reference firmware. Never accept trailing arbitrary commands/text.
+        voltage = r"[0-9]{1,3}[.][0-9]"
+        pattern = (key + r"([01][0-4][01][0-2][01][0-3] "
+                   + (voltage + " ") * 4
+                   + r"[0-9]{3} [0-9]{3} [0-9]{4} [0-9]{2} [0-9]{2} "
+                     r"[0-9]{2} [0-9]{2} [0-9]{2,5}( [0-9]{1,3}([.][0-9])?)?)$")
     return pattern
 
 
@@ -165,19 +201,25 @@ def clean_unit(unit: str) -> tuple[str, float]:
 
 def readback(profile: str, key: str, commands: dict) -> str | None:
     if profile.startswith("pi17"):
-        if key in {"PA", "PB", "PC", "PD", "PE", "PEA", "PDA"}:
+        if key in {"PA", "PB", "PC", "PD", "PE", "PF", "PEA", "PDA"}:
             query = "FLAG"
         elif key == "DAT":
             query = "T"
         elif key == "GPMP0":
             query = "GPMP"
-        elif key in {"BT", "MCHGV", "MCHGC", "MUCHGC", "SEP", "BDCM", "BATDV", "BCA", "ACCB"}:
+        elif key == "SEP" or key in {"EDA", "EDB", "EDC", "EDD", "EDE", "EDF", "EDG"}:
+            query = "HECS"
+        elif key in {"LST", "ACCT"}:
+            query = "DI"
+        elif key in {"BT", "MCHGV", "MCHGC", "MUCHGC", "BDCM", "BATDV", "BCA", "ACCB"}:
             query = "BATS"
         elif key == "LON":
             query = "PS"
         else:
             return None
     elif profile.startswith("pi18"):
+        if key in {"PCP", "MCHGC", "MUCHGC"}:
+            return "PRI0" if "PRI" in commands else None
         if key.startswith(("PE", "PD")) and key not in {"PEI", "PDI"}:
             query = "FLAG"
         elif key == "DAT":
@@ -189,19 +231,69 @@ def readback(profile: str, key: str, commands: dict) -> str | None:
     elif profile == "pi30revo":
         query = "PQSE"
     else:
+        if key in {"MCHGC", "MNCHGC", "MUCHGC", "POPM", "PPCP"}:
+            return "QPGS0" if "QPGS" in commands else None
         if key in {"PE", "PD"}:
             query = "QFLAG"
         elif key.startswith("PLED"):
             query = "QLED"
         elif key == "DAT":
             query = "QT"
-        elif key == "PBATCD":
+        elif key in {"PBATCD", "PBATMAXDISC"}:
             query = "QBMS"
-        elif key in {"BTA", "PSAVE"}:
+        elif key == "BTA":
+            query = "QPIGS"
+        elif key == "PSAVE":
             return None
         else:
             query = "QPIRI"
     return query if query in commands and commands[query]["type"] != "SETTER" else None
+
+
+def setter_example(profile: str, key: str, command: dict) -> str:
+    """A concrete syntax example, never a suggested installation setting."""
+    if not command.get("regex"):
+        return key
+    common = {
+        "GPMP0": "00500", "LON": "1", "PA": "1", "PB": "1", "PC": "1",
+        "PF": "1", "LST": "00", "EDA": "1", "EDB": "1", "EDC": "1",
+        "EDD": "1", "EDE": "1", "EDF": "1", "EDG": "1", "BT": "1",
+        "ACCB": "1,0450", "SEP": "01", "BDCM": "0100",
+        "BATDV": "0420,0440,0430,0450", "BCA": "0000,060,0530",
+        "F": "50", "MNCHGC": "0120", "PBCV": "44.0", "PBDV": "48.0",
+        "PBFT": "54.0", "PCVV": "56.0", "POPLG": "00", "POPM": "01",
+        "PPCP": "001", "PPVOKC": "0", "PSPB": "0", "PBATCD": "000",
+        "PBATMAXDISC": "100", "BTA": "+01", "PGR": "00", "PSP": "0",
+        "BUCD": "440,480", "PLEDE": "1", "PLEDS": "1", "PLEDM": "2",
+        "PLEDB": "5", "PLEDT": "2", "PLEDC": "1000255255",
+    }
+    if key in {"PSET", "_PSET"}:
+        value = "120103 56.3 54.6 43.8 42.6 040 020 2026 10 14 12 34 00"
+    elif key == "DAT":
+        value = "261014123400" if profile.startswith(("pi17", "pi18")) or profile == "pi30m045" else "20261014123400"
+    elif key == "ACCT":
+        value = "2200,2259,2300,2359" if profile == "pi17infini" else "2200-0259"
+    elif key in {"PE", "PD"}:
+        # Infini has exact PEA/PDA definitions as well as the PE/PD patterns.
+        # Exercise the pattern itself rather than its shared-prefix exact form.
+        value = "B" if profile.startswith("pi17") else "a"
+    elif key in {"PBT", "PCP", "POP"}:
+        value = "1" if profile.startswith("pi18") and key != "PCP" else "01"
+        if profile.startswith("pi18") and key == "PCP":
+            value = "0,1"
+    elif key == "MCHGV":
+        value = "0576,0540" if profile.startswith("pi17") else "552,540"
+    elif key == "PSDV":
+        value = "450" if profile.startswith("pi18") else "40.0"
+    elif key in {"MCHGC", "MUCHGC"}:
+        value = ("1200" if profile.startswith("pi17") else "0,030" if profile.startswith("pi18")
+                 else "0030" if key == "MUCHGC" and profile == "pi30m045" else "030")
+    else:
+        value = common[key]
+    example = key + value
+    if not re.fullmatch(normalized_pattern(profile, key, command), example, flags=re.ASCII):
+        raise ValueError(f"Invalid setter example: {profile} {example}")
+    return example
 
 
 class Catalog:
@@ -348,7 +440,7 @@ class Catalog:
         return self.commands[identity]
 
 
-def build(source: Path, output: Path, fixtures: Path):
+def build(source: Path, output: Path, fixtures: Path, setter_fixtures: Path | None = None):
     upstream = source / "mppsolar" / "protocols"
     constants = {name: literal_constants(upstream / f"{name}.py") for name in PROFILES}
     resolved = {}
@@ -363,6 +455,13 @@ def build(source: Path, output: Path, fixtures: Path):
             commands.update(module.get(group, {}))
         for key in module.get("COMMANDS_TO_REMOVE", []):
             commands.pop(key, None)
+        if name == "pi30":
+            # The PI30 manufacturer protocol (2015-09-24, section 2.10)
+            # documents this optional read for SCC2/SCC3. Upstream currently
+            # exposes its twelve-token layout only under PI30MST. The portable
+            # decoder also accepts the documented three-token MAX response;
+            # selecting two PV inputs enables this query, and NAK stays absent.
+            commands["QPIGS2"] = constants["pi30mst"]["QUERY_COMMANDS"]["QPIGS2"]
         resolved[name] = commands
         return commands
 
@@ -374,6 +473,7 @@ def build(source: Path, output: Path, fixtures: Path):
     catalog.emit("// See third_party/mpp-solar/LICENSE for the upstream permission notice.")
     profile_lines = []
     test_vectors = []
+    setting_vectors = []
     for name in PROFILES:
         commands = resolve(name)
         refs = [catalog.command(name, key, cmd, commands) for key, cmd in commands.items()]
@@ -392,6 +492,10 @@ def build(source: Path, output: Path, fixtures: Path):
                   else "pi18" if name.startswith("pi18") else "revo" if name == "pi30revo" else "pi30")
         profile_lines.append(f"    {{EnergyProtocol::{name}, WireFamily::{family}, {'true' if name == 'pi18lvx' else 'false'}, {name}_commands, {len(refs)}, {name}_poll, {len(poll)}}},")
         for key, cmd in commands.items():
+            if cmd["type"] == "SETTER":
+                example = setter_example(name, key, cmd)
+                setting_vectors.append((name, key, example, readback(name, key, commands),
+                                        cmd.get("prefix"), cmd.get("nocrc")))
             for response in cmd.get("test_responses", []):
                 if isinstance(response, bytes) and response:
                     test_vectors.append({"protocol": name, "command": key,
@@ -403,6 +507,15 @@ def build(source: Path, output: Path, fixtures: Path):
     catalog.emit("};")
     output.write_text("\n".join(catalog.lines) + "\n", encoding="utf-8")
     fixtures.write_text(json.dumps({"source_revision": revision, "vectors": test_vectors}, indent=2) + "\n", encoding="utf-8")
+    if setter_fixtures:
+        lines = ["// Generated concrete syntax cases; never send these to hardware.",
+                 "static const SetterVector setter_vectors[] = {"]
+        for name, key, example, back, prefix, nocrc in setting_vectors:
+            lines.append("    {EnergyProtocol::" + name + ", " + ", ".join(
+                "nullptr" if x is None else quote(x) for x in (key, example, back, prefix))
+                + ", " + ("true" if nocrc is True or name == "pi18lvx" else "false") + "},")
+        lines.append("};")
+        setter_fixtures.write_text("\n".join(lines) + "\n", encoding="utf-8")
     print(f"Generated {len(PROFILES)} PI profiles, {len(catalog.commands)} distinct command definitions, {len(catalog.regexes)} patterns, {len(test_vectors)} reference vectors.")
 
 
@@ -411,8 +524,9 @@ def main():
     parser.add_argument("--source", type=Path, default=ROOT / "build/protocol_reference/mpp-solar")
     parser.add_argument("--output", type=Path, default=ROOT / "main/src/protocol/pi_protocol_catalog.generated.inc")
     parser.add_argument("--fixtures", type=Path, default=ROOT / "tools/tests/pi_reference_vectors.generated.json")
+    parser.add_argument("--setter-fixtures", type=Path, default=ROOT / "tools/tests/pi_setter_vectors.generated.inc")
     args = parser.parse_args()
-    build(args.source, args.output, args.fixtures)
+    build(args.source, args.output, args.fixtures, args.setter_fixtures)
 
 
 if __name__ == "__main__":

@@ -59,6 +59,21 @@ test('missing older status is unavailable', () => {
     render({});
     assert.equal(displayed('firmware-failure-memory'), 'Unavailable');
     assert.equal(displayed('firmware-error'), 'Unavailable');
+    assert.equal(displayed('firmware-next-check'), 'Unavailable');
+});
+
+test('scheduled check shows countdown and due time', () => {
+    render({firmware_next_check_in_ms: 90000});
+    assert.equal(displayed('firmware-next-check'), 'in 1 min 30 s');
+    render({firmware_next_check_in_ms: 0});
+    assert.equal(displayed('firmware-next-check'), 'Due now');
+});
+
+test('invalid schedule values never imply an imminent check', () => {
+    for (const value of [undefined, null, '0', -1, NaN, Infinity]) {
+        render({firmware_next_check_in_ms: value});
+        assert.equal(displayed('firmware-next-check'), 'Unavailable');
+    }
 });
 
 test('older failure fields retain stage without inventing memory', () => {

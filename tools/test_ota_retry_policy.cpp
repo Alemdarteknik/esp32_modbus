@@ -18,14 +18,14 @@ int main()
         const auto local = delay(OtaRetryKind::local_deferred, 100, random);
         assert(local >= 300000U && local < 600000U);
     }
-    const std::array<std::uint32_t, 6> bases{300000U, 600000U, 1200000U, 2400000U, hour, hour};
+    const std::array<std::uint32_t, 6> bases{300000U, 600000U, 1200000U, hour / 2U, hour / 2U, hour / 2U};
     for (unsigned failure = 1; failure <= bases.size(); ++failure) {
         assert(delay(OtaRetryKind::transient_failure, failure, 0) == bases[failure - 1]);
         const auto high = delay(OtaRetryKind::transient_failure, failure, bases[failure - 1] - 1);
         assert(high == 2U * bases[failure - 1] - 1);
     }
     assert(delay(OtaRetryKind::transient_failure, 0, 0) == 300000U);
-    assert(delay(OtaRetryKind::transient_failure, std::numeric_limits<unsigned>::max(), 0) == hour);
+    assert(delay(OtaRetryKind::transient_failure, std::numeric_limits<unsigned>::max(), 0) == hour / 2U);
     assert(ota_retry_delay_ms(OtaRetryKind::normal_check, 0, 123, 1000, 0) == 1000);
     // Synthetic reproducible fleet sample tests range/distribution, not capacity.
     std::array<unsigned, 10> buckets{};

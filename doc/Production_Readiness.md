@@ -1,5 +1,16 @@
 # Production readiness and release gates
 
+## OTA admission and retries: 1.0.9
+
+Connection admission retains 64,000 free internal bytes and lowers the largest
+block requirement to 24,576 bytes. TLS uses ESP-IDF's PSRAM-aware default allocator;
+HTTP buffers are smaller and download scratch prefers PSRAM. Streaming reserves,
+certificate/image verification and activation protection remain enforced. Startup
+checks run after 30–120 seconds; transient failures retry with bounded 5–60 minute
+backoff. The local status page shows the next scheduled check. Old devices that
+cannot pass their installed guard need a one-time USB baseline. Host verification
+does not replace concurrent MQTT/OTA, rollback and power-cut tests on hardware.
+
 ## OTA memory admission: 1.0.8
 
 The connection guard remains 64,000 free internal bytes and a 32,768-byte largest

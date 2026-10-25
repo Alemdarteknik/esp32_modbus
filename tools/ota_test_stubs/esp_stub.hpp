@@ -67,7 +67,7 @@ using esp_http_client_handle_t = void *;
 struct esp_http_client_config_t {
     const char *url = nullptr;
     esp_err_t (*crt_bundle_attach)(void *) = nullptr;
-    int timeout_ms = 0, buffer_size = 0;
+    int timeout_ms = 0, buffer_size = 0, buffer_size_tx = 0;
     bool disable_auto_redirect = false;
 };
 using esp_timer_handle_t = void *;

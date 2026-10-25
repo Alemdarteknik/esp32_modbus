@@ -9,9 +9,16 @@ from __future__ import annotations
 
 import copy
 import math
+from functools import lru_cache
+from types import MappingProxyType
+
+from native_protocols import PROFILES
 
 GROUPS = ('pv', 'grid', 'battery', 'output', 'load', 'status',
           'identity', 'settings', 'energy', 'other')
+_MEASUREMENT_GROUPS = frozenset(('pv', 'grid', 'battery', 'output', 'load'))
+_MEASUREMENT_UNITS = frozenset(('V', 'A', 'W', 'kW', 'VA', 'kVA', '%', 'Hz',
+                              'Ah', 'C', 'Deg_C'))
 _IDENTITY = {'QPI', 'PI', 'QID', 'QSID', 'ID', 'getInfo', 'QVFW', 'QVFW2',
              'QVFW3', 'VERFW', 'VFW', 'VFW2', 'QGMN', 'QMN', 'MD', 'QBOOT',
              'getDeviceInfo', 'getVersion', 'getModel'}
@@ -64,21 +71,10 @@ _PRIMARY_NAMES = {
 }
 
 
-def _kind(record):
-    command = record.get('command', '')
-    # MQTT command aliases are bounded to fifteen bytes. Resolve fixed and
-    # parameterized query names before applying the firmware polling classes.
-    from native_protocols import PROFILES
-    definition = None
-    for candidate in PROFILES.get(record.get('protocol'), {}).get('queries', []):
-        if (candidate['key'][:15] == command or (candidate.get('pattern') is not None
-                                                and command.startswith(candidate['key'][:15]))):
-            definition = candidate
-            command = candidate['key']
-            break
+def _command_kind(protocol, command, definition=None):
     if command in _IDENTITY or command.startswith('QVFW'):
         return 'identity'
-    if record.get('protocol') == 'JKPB' and command == 'getBalancerData':
+    if protocol == 'JKPB' and command == 'getBalancerData':
         return 'identity'
     if command in _SETTINGS:
         return 'settings'
@@ -98,10 +94,48 @@ def _kind(record):
     return None
 
 
-def _group(name, field, protocol, kind):
+# Calculate catalog labels once rather than scanning and case-folding them for
+# each record on every dashboard refresh. Keep original query order when an
+# exact wire alias overlaps a parameterized prefix.
+_QUERY_KINDS = {}
+for _protocol, _profile in PROFILES.items():
+    _exact, _patterns = {}, []
+    for _index, _definition in enumerate(_profile['queries']):
+        _alias = _definition['key'][:15]
+        _kind_value = _command_kind(_protocol, _definition['key'], _definition)
+        _exact.setdefault(_alias, (_index, _kind_value))
+        if _definition.get('pattern') is not None:
+            _patterns.append((_index, _alias, _kind_value))
+    _QUERY_KINDS[_protocol] = (MappingProxyType(_exact), tuple(_patterns))
+_QUERY_KINDS = MappingProxyType(_QUERY_KINDS)
+
+
+def _kind(record):
+    protocol, command = record.get('protocol'), record.get('command', '')
+    indices = _QUERY_KINDS.get(protocol)
+    if indices:
+        exact, patterns = indices
+        match = exact.get(command)
+        for index, prefix, kind in patterns:
+            if match is not None and index >= match[0]:
+                break
+            if command.startswith(prefix):
+                return kind
+        if match is not None:
+            return match[1]
+    return _command_kind(protocol, command)
+
+
+def _copy_value(value):
+    # Collector values are validated immutable scalars. Keep the normalizer's
+    # existing defensive behavior for callers that supply structured values.
+    return value if type(value) in (int, float, str, bool, type(None)) else copy.deepcopy(value)
+
+
+@lru_cache(maxsize=8192)
+def _group(name, unit, protocol, kind):
     if kind:
         return kind
-    unit = field.get('unit', '')
     if name in _SETTING_FIELDS:
         return 'settings'
     if name in _IDENTITY_FIELDS:
@@ -178,22 +212,58 @@ def _battery_metrics(fields):
         fresh = [pair for pair in available if pair[1]['fresh']]
         if fresh or available:
             name, item = (fresh or available)[0]
-            metrics[metric] = dict(name=name, **copy.deepcopy(item))
+            metrics[metric] = dict(item, name=name)
     return metrics
 
 
 def _reading(value, unit, record, now, limit):
     age = max(0.0, now - record['received_at'])
-    return {'value': copy.deepcopy(value), 'unit': unit,
+    return {'value': _copy_value(value), 'unit': unit,
             'received_at': record['received_at'], 'age_seconds': age,
             'fresh': age <= limit, 'stale': age > limit,
             'source_command': record['command'], 'sequence': record['sequence'],
             'timestamp_ms': record['timestamp_ms']}
 
 
+def native_measurement_received_at(records, protocol, member_id):
+    """Latest selected sensor receipt, without building a complete live view.
+
+    This follows the same observation ordering and sensor eligibility as the
+    normalizer. It lets an MQTT callback update connection freshness without
+    allocating a dashboard snapshot that the next UI refresh would rebuild.
+    Records must already have passed ``NativeTelemetryCollector`` validation.
+    """
+    selected = {}
+    for record in records:
+        if (record.get('protocol') != protocol or record.get('member_id') != member_id
+                or record.get('command') in ('QDI', 'DI')):
+            continue
+        kind = _kind(record)
+        order = (record['timestamp_ms'], record['sequence'])
+        for name, field in record.get('fields', {}).items():
+            group = _group(name, field.get('unit', ''), protocol, kind)
+            if group not in _MEASUREMENT_GROUPS:
+                continue
+            key = (group, name)
+            previous = selected.get(key)
+            if previous is not None and order <= previous[0]:
+                continue
+            receipt = (record['received_at'] if type(field['value']) in (int, float)
+                       and field['unit'] in _MEASUREMENT_UNITS else None)
+            selected[key] = (order, receipt)
+    return max((receipt for _, receipt in selected.values() if receipt is not None), default=None)
+
+
 def _coherent(*items):
     return bool(items) and len({(item['source_command'], item['sequence'], item['timestamp_ms'],
                                  item['received_at']) for item in items}) == 1
+
+
+def _pi30_pv_inputs(fields, connected_pv_inputs):
+    if connected_pv_inputs is not None:
+        return connected_pv_inputs
+    return (3 if any(name.startswith('pv3_') for name in fields) else
+            2 if 'pv_total_charging_power' in fields or any(name.startswith('pv2_') for name in fields) else 1)
 
 
 def _calculated_power(groups, protocol):
@@ -258,7 +328,7 @@ def _calculated_power(groups, protocol):
     return calculated
 
 
-def _power_summary(groups, protocol):
+def _power_summary(groups, protocol, connected_pv_inputs=None):
     # These are reported totals or explicitly documented independent channels.
     # AC volts times amps can establish apparent power only. DC current sign
     # is normalized per protocol and components must share one observation.
@@ -288,6 +358,17 @@ def _power_summary(groups, protocol):
     calculated = _calculated_power(groups, protocol)
     for key, group_name, total_names, aliases, units, channels in specifications:
         fields = groups[group_name]['fields']
+        if key == 'pv_kw' and protocol == 'PI30':
+            count = _pi30_pv_inputs(fields, connected_pv_inputs)
+            if count == 0 or count > 3:
+                continue
+            if count == 1:
+                total_names = ()
+            else:
+                # Base PI30 QPIGS reports the first tracker. Other trackers
+                # are measured by QPIGS2; none is an assumed zero.
+                channels = ('pv_input_power',) + tuple(f'pv{index}_charging_power' for index in range(2, count + 1))
+                aliases = ()
         def candidates(names):
             return [(name, fields[name]) for name in names if name in fields
                     and fields[name]['unit'] in units
@@ -318,8 +399,8 @@ def _power_summary(groups, protocol):
             # Oldest component determines the aggregate's freshness.
             oldest = min((item for _, item in channel_fields), key=lambda item: item['received_at'])
             aggregate = (channels, dict(oldest,
-                value=sum(item['value'] / 1000.0 if item['unit'] in ('W', 'VA') else item['value']
-                          for _, item in channel_fields),
+                value=sum(item['value'] if item['unit'] in ('W', 'VA') else item['value'] * 1000.0
+                          for _, item in channel_fields) / 1000.0,
                 unit='kVA' if 'VA' in units else 'kW',
                 fresh=all(item['fresh'] for _, item in channel_fields),
                 stale=any(item['stale'] for _, item in channel_fields),
@@ -352,7 +433,8 @@ def _power_summary(groups, protocol):
     return summary, quality
 
 
-def normalize_native_live(records, protocol, member_id, now, live_limit_seconds=15.0):
+def normalize_native_live(records, protocol, member_id, now, live_limit_seconds=15.0,
+                          connected_pv_inputs=None):
     """Return a copied live snapshot; ``now`` and receipts use monotonic seconds.
 
     Group fields retain stable firmware names.  Power summaries only convert
@@ -362,6 +444,9 @@ def normalize_native_live(records, protocol, member_id, now, live_limit_seconds=
     """
     if type(now) not in (int, float) or not math.isfinite(now):
         raise ValueError('now must be a finite monotonic time.')
+    if connected_pv_inputs is not None and (type(connected_pv_inputs) is not int
+                                           or not 0 <= connected_pv_inputs <= 16):
+        raise ValueError('connected_pv_inputs must be an integer from 0 to 16.')
     groups = {name: {'fields': {}, 'received_at': None, 'age_seconds': None,
                      'fresh': False, 'stale': False, 'supported': None, 'primary': None}
               for name in GROUPS}
@@ -371,9 +456,13 @@ def normalize_native_live(records, protocol, member_id, now, live_limit_seconds=
     for record in records:
         if record.get('protocol') != protocol or record.get('member_id') != member_id:
             continue
+        # Manufacturer defaults are reference values, not the active settings.
+        # Manual replies remain in the collector for advanced diagnostics.
+        if record.get('command') in ('QDI', 'DI'):
+            continue
         kind = _kind(record)
         for name, field in record.get('fields', {}).items():
-            group_name = _group(name, field, protocol, kind)
+            group_name = _group(name, field.get('unit', ''), protocol, kind)
             group = groups[group_name]
             limit = 300.0 if group_name in ('identity', 'settings') else (
                 120.0 if group_name == 'energy' else live_limit_seconds)
@@ -385,10 +474,9 @@ def normalize_native_live(records, protocol, member_id, now, live_limit_seconds=
             group['fields'][name] = item
             group['supported'] = True
     numeric_receipts = [item['received_at'] for name, group in groups.items()
-                        if name in ('pv', 'grid', 'battery', 'output', 'load')
+                        if name in _MEASUREMENT_GROUPS
                         for item in group['fields'].values()
-                        if type(item['value']) in (int, float) and item['unit'] in (
-                            'V', 'A', 'W', 'kW', 'VA', 'kVA', '%', 'Hz', 'Ah', 'C', 'Deg_C')]
+                        if type(item['value']) in (int, float) and item['unit'] in _MEASUREMENT_UNITS]
     for name, group in groups.items():
         if not group['fields']:
             continue
@@ -408,14 +496,17 @@ def normalize_native_live(records, protocol, member_id, now, live_limit_seconds=
             preferred = next((key for key, item in group['fields'].items()
                               if type(item['value']) in (int, float) and item['unit'] in ('V', '%', 'A')), None)
         if preferred is not None:
-            group['primary'] = dict(name=preferred, **copy.deepcopy(group['fields'][preferred]))
-    summary, quality = _power_summary(groups, protocol)
+            group['primary'] = dict(group['fields'][preferred], name=preferred)
+    summary, quality = _power_summary(groups, protocol, connected_pv_inputs)
+    multiple_pv_inputs = protocol == 'PI30' and _pi30_pv_inputs(groups['pv']['fields'], connected_pv_inputs) != 1
     received_at = max(numeric_receipts) if numeric_receipts else None
     return {'protocol': protocol, 'member_id': member_id, 'groups': groups,
             'device_type': 'bms' if protocol in _BMS else 'inverter',
             'battery_metrics': _battery_metrics(groups['battery']['fields']),
             'received_at': received_at,
             'telemetry_available': received_at is not None and now - received_at <= live_limit_seconds,
+            'connected_pv_inputs': connected_pv_inputs,
+            'pv_total_requires_channels': multiple_pv_inputs,
             'power_summary': summary, 'power_quality': quality,
-            'operating_status': {name: copy.deepcopy(item['value'])
+            'operating_status': {name: _copy_value(item['value'])
                                  for name, item in groups['status']['fields'].items()}}

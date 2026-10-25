@@ -5,16 +5,43 @@
 Command request formats and MQTT `live` payloads are unchanged. Version 1.0.6
 adds local USB/Modbus health counters and explicit coordinator-routing failure
 metadata. See [1.0.6 release notes](Firmware_Reliability_1.0.6.md).
-The proposed broader OTA retry rewrite remains unintegrated: initial checks remain
-1-61 minutes, local deferrals 5-10 minutes, and attempts including network failures
-6-7 hours apart. `tools/ota_retry_policy.hpp` is an offline proposal, not firmware.
+Version 1.0.9 changes OTA admission and retry scheduling as described below.
 
 ## ESP firmware OTA
+
+Version 1.0.9 uses a PSRAM-aware TLS allocator and a 24 KiB contiguous internal
+block guard while retaining the 64,000-byte total-free guard and streaming
+reserves. Initial checks occur after 30–120 seconds; local blockers retry in
+5–10 minutes, and transient failures back off from 5–10 to 30–60 minutes.
+Completed checks and permanent rejections retain the 6–7 hour interval.
+`firmware_next_check_in_ms` in local HTTP status supplies the webpage countdown.
+An old installed updater that never passes admission needs one USB installation
+of the new baseline; uploading a new server binary cannot change its running guard.
+
+The ESP also publishes its running firmware identity once per MQTT connection:
+
+- Topic: `<prefix>/<device-id>/esp/ESP-<station-MAC>/firmware`.
+- QoS 1, retained; refreshed after reconnect, with failed enqueue retried.
+- Payload: `{"device_id":"ESP-44B176CF20EC","project":"esp32_modbus","version":"1.0.9"}`.
+
+This reports the Internet-facing ESP's application version, separately from
+inverter firmware fields. It is not an update command. Native live snapshots use
+the existing `sections_in_native_records:true` compact form to avoid duplicated
+measurements; complete observations, power summaries, age and settings remain.
+
+Monitoring reads current native settings every 120 seconds and after writes;
+immutable charging-current choices are read once per connection. Factory-default
+`QDI`/`DI` queries remain manual diagnostics. Core electrical readings, PV2 and
+fault/status checks retain their cadence. Complete `/live` snapshots remain every
+five seconds; detailed `/protocol/COMMAND` records publish initially, on changes,
+and after reconnect. Unchanged manual reads still receive their result immediately
+and update the next live snapshot. AOHAI retained setting snapshots are also
+change-only, while explicit command results and write confirmations remain immediate.
 
 Version 1.0.8 separates connection and streaming memory reserves and adds four
 local HTTP failure-memory fields. MQTT command/live formats, retry timing, write
 protection and polling remain unchanged. A device whose installed updater keeps
-failing the memory guard needs a physical 1.0.8 baseline; publishing a newer
+failing the memory guard needs a physical current baseline; publishing a newer
 binary alone does not fix that installed updater.
 
 Version 1.0.7 fixes bounded HTTP chunked firmware downloads and adds local
@@ -874,7 +901,10 @@ Do not use sample values as an installation prescription. Parallel, battery/BMS,
 
 | Outcome | Meaning |
 |---|---|
-| `confirmed` | Read completed, write was already at the requested value, or write read-back matched. |
+| `confirmed` | Read completed, a persistent setting already matched, or setting read-back matched. Legacy OnOffSet register-only confirmation does not verify operating state. |
+| `completed` | OnOffSet write was accepted and actual operating state was verified; `operating_state_confirmed:true`. |
+| `transition_pending` | OnOffSet write was accepted, but its requested operating state is not yet verified. |
+| `readback_mismatch` | An actual setting readback differs from the requested value. |
 | `sent_unverifiable` | A write-only service action received a valid Modbus response but cannot be read back. Never retry automatically. |
 | `not_documented` | The requested name is absent from the catalog. |
 | `not_readable` | The requested name identifies a write-only command. |
@@ -2295,7 +2325,7 @@ MEMBER=0
 BASE="inverter/$DEVICE/inverter/$MEMBER"
 ```
 
-Start the confirmation subscription in terminal 1 BEFORE publishing from terminal 2. Keep it running for subsequent setters. The subscription only listens; it never writes to the inverter. Match the returned `command_id` with the printed request ID. `confirmed:true` in the request is your authorization, not a success result. Only a returned `outcome:"confirmed"` indicates successful read-back. A write-only action can return `sent_unverifiable`; verify its actual effect separately. Errors such as `state_not_allowed`, `communication_error` or an interlock requirement are not success. Malformed or duplicate requests may only be logged by firmware and produce no result.
+Start the confirmation subscription in terminal 1 BEFORE publishing from terminal 2. Match the returned `command_id` with the request. `confirmed:true` authorizes the request. Ordinary settings require `outcome:"confirmed"` and a matching readback. OnOffSet requires `outcome:"completed"` with `operating_state_confirmed:true`; its H0 command latch alone does not prove operating state. `transition_pending` means the write was accepted but the requested state is not verified. `readback_mismatch` means the observed setting differs. `sent_unverifiable` remains an action without verified readback. Missing or uncertain results must not trigger an automatic write retry. Malformed or duplicate requests may only be logged by firmware and produce no result.
 
 Illustrative confirmed result (additional fields may be present):
 

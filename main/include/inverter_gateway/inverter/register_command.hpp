@@ -27,6 +27,9 @@ enum class RegisterCommandOutcome : std::uint8_t {
     communication_error,
     confirmed,
     sent_unverifiable,
+    completed,
+    transition_pending,
+    readback_mismatch,
 };
 
 struct RegisterCommandRequest {

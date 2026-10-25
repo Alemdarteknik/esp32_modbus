@@ -2,6 +2,7 @@
 
 #include <algorithm>
 
+#include "inverter_gateway/inverter/command_service.hpp"
 #include "inverter_gateway/inverter/register_value.hpp"
 
 namespace inverter_gateway::inverter {
@@ -222,6 +223,45 @@ RegisterCommandResult RegisterCommandService::execute_write(
         return result;
     }
 
+    if (request.first_register == 0 && request.register_count == 1) {
+        if (!request.named_request && !request.expected_values_present) {
+            result.outcome = RegisterCommandOutcome::expected_values_required;
+            return result;
+        }
+        if (request.expected_values_present) {
+            std::uint16_t previous = 0;
+            if (!client_.read_holding(0, 1, &previous, 1)) {
+                result.outcome = RegisterCommandOutcome::communication_error;
+                return result;
+            }
+            if (previous != request.expected_values[0]) {
+                result.previous_values_valid = true;
+                result.previous_values[0] = previous;
+                result.outcome = RegisterCommandOutcome::expected_value_mismatch;
+                return result;
+            }
+        }
+        LocalCommandRequest control{};
+        control.command_id = request.command_id;
+        control.operation = LocalOperation::set_inverter_enabled;
+        control.value = request.values[0];
+        const auto actual = CommandService(client_).execute(control, state);
+        result.modbus_write = actual.modbus_write;
+        result.previous_values_valid = actual.previous_value_valid;
+        result.previous_values[0] = actual.previous_value;
+        result.result_values_valid = actual.readback_value_valid;
+        result.result_values[0] = actual.readback_value;
+        switch (actual.outcome) {
+        case CommandOutcome::completed: result.outcome = RegisterCommandOutcome::completed; break;
+        case CommandOutcome::transition_pending: result.outcome = RegisterCommandOutcome::transition_pending; break;
+        case CommandOutcome::state_unavailable: result.outcome = RegisterCommandOutcome::state_unavailable; break;
+        case CommandOutcome::state_not_allowed: result.outcome = RegisterCommandOutcome::state_not_allowed; break;
+        case CommandOutcome::invalid_request: result.outcome = RegisterCommandOutcome::invalid_request; break;
+        default: result.outcome = RegisterCommandOutcome::communication_error; break;
+        }
+        return result;
+    }
+
     if (!has_write_only) {
         if (!request.named_request && !request.expected_values_present) {
             result.outcome = RegisterCommandOutcome::expected_values_required;
@@ -241,7 +281,8 @@ RegisterCommandResult RegisterCommandService::execute_write(
             result.outcome = RegisterCommandOutcome::expected_value_mismatch;
             return result;
         }
-        if (std::equal(result.previous_values.begin(),
+        if (result.strongest_guard != RegisterWriteGuard::runtime_command &&
+            std::equal(result.previous_values.begin(),
                        result.previous_values.begin() + request.register_count,
                        request.values.begin())) {
             std::copy_n(result.previous_values.begin(), request.register_count,
@@ -277,7 +318,7 @@ RegisterCommandResult RegisterCommandService::execute_write(
                                 result.result_values.begin() + request.register_count,
                                 request.values.begin())
                          ? RegisterCommandOutcome::confirmed
-                         : RegisterCommandOutcome::communication_error;
+                         : RegisterCommandOutcome::readback_mismatch;
     return result;
 }
 

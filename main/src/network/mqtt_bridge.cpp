@@ -15,6 +15,7 @@
 #include <sys/socket.h>
 
 #include "cJSON.h"
+#include "esp_app_desc.h"
 #include "esp_crt_bundle.h"
 #include "esp_log.h"
 #include "esp_netif.h"
@@ -279,6 +280,10 @@ bool encode_named_value(
          descriptor.data_type == inverter::RegisterDataType::ascii_or_uint16)) {
         const std::size_t length = std::strlen(item->valuestring);
         if (length == 0 || length > 2) return false;
+        for (std::size_t index = 0; index < length; ++index) {
+            const auto character = static_cast<unsigned char>(item->valuestring[index]);
+            if (character < 0x20 || character > 0x7e) return false;
+        }
         destination[0] = static_cast<std::uint16_t>(
             static_cast<std::uint8_t>(item->valuestring[0]) << 8U);
         if (length == 2) {
@@ -376,6 +381,16 @@ void add_named_value(cJSON *root, const char *key,
         text_value[0] = static_cast<char>(values[0] >> 8U);
         text_value[1] = static_cast<char>(values[0] & 0xffU);
         cJSON_AddStringToObject(root, key, text_value);
+        return;
+    }
+    // This mixed field cannot reveal whether its packed word originated as
+    // text or a number. Publish the word consistently for exact comparison.
+    if (descriptor.data_type == inverter::RegisterDataType::ascii_or_uint16) {
+        cJSON_AddNumberToObject(root, key, values[0]);
+        return;
+    }
+    if (descriptor.space == inverter::RegisterSpace::holding && descriptor.address == 21 && values[0] <= 99) {
+        cJSON_AddNumberToObject(root, key, 2000 + values[0]);
         return;
     }
     const auto decoded = inverter::decode_numeric_value(
@@ -558,7 +573,7 @@ void MqttBridge::handle_event(esp_mqtt_event_handle_t event)
 {
     switch (event->event_id) {
     case MQTT_EVENT_CONNECTED: {
-        connected_ = true;
+        if (!connected_.exchange(true)) ++firmware_session_;
         char topic[192]{};
         std::snprintf(topic, sizeof(topic), "%s/%s/inverter/+/command",
                       config_.mqtt_topic_prefix, config_.site_id);
@@ -1672,6 +1687,21 @@ void MqttBridge::publish_live(const TelemetryMessage &message)
 
 void MqttBridge::publish_snapshot(const TelemetryMessage &message)
 {
+    if (message.source_member_id >= maximum_members) return;
+    auto &owned_cache = snapshot_cache_[message.source_member_id];
+    if (!owned_cache) owned_cache.reset(new (std::nothrow) SnapshotCache);
+    // A missing deduplication cache must not prevent settings being published.
+    auto *published = owned_cache.get();
+    if (published) {
+        const auto generation = reconnect_count_.load();
+        if (message.timestamp_ms < published->timestamp_ms ||
+            generation != published->reconnect_generation) {
+            published->widths.fill(0);
+            published->serial_published = false;
+        }
+        published->timestamp_ms = message.timestamp_ms;
+        published->reconnect_generation = generation;
+    }
     const std::uint16_t count = std::min<std::uint16_t>(
         message.register_count,
         static_cast<std::uint16_t>(message.registers.size()));
@@ -1702,7 +1732,10 @@ void MqttBridge::publish_snapshot(const TelemetryMessage &message)
             }
         }
     }
-    if (message.first_register <= 5 && end >= 13) {
+    const auto *serial_words = message.first_register <= 5 && end >= 13
+        ? message.registers.data() + 5U - message.first_register : nullptr;
+    if (serial_words && (!published || !published->serial_published ||
+        !std::equal(published->serial.begin(), published->serial.end(), serial_words))) {
         char serial_number[17]{};
         std::size_t used = 0;
         for (std::uint16_t address = 5; address <= 12 && used + 1 < sizeof(serial_number);
@@ -1732,7 +1765,10 @@ void MqttBridge::publish_snapshot(const TelemetryMessage &message)
                    "snapshot/identity/SerialNumber/Inverter_serial_number");
         char *json = cJSON_PrintUnformatted(identity);
         if (json != nullptr) {
-            enqueue_payload(client_, topic, json, 1, 1);
+            if (enqueue_payload(client_, topic, json, 1, 1) >= 0 && published) {
+                std::copy_n(serial_words, published->serial.size(), published->serial.begin());
+                published->serial_published = true;
+            }
             cJSON_free(json);
         }
         cJSON_Delete(identity);
@@ -1746,6 +1782,13 @@ void MqttBridge::publish_snapshot(const TelemetryMessage &message)
             descriptor->access == inverter::RegisterAccess::write_only ||
             !descriptor_is_enabled(*descriptor, message.enabled_features,
                                    message.connected_pv_inputs)) continue;
+
+        const auto width = static_cast<std::uint8_t>(
+            inverter::descriptor_starts_multiword_value(*descriptor) && index + 1 < count ? 2 : 1);
+        const auto value = static_cast<std::uint32_t>(message.registers[index]) |
+            (width == 2 ? static_cast<std::uint32_t>(message.registers[index + 1]) << 16U : 0U);
+        if (published && address < holding_point_count && published->widths[address] == width &&
+            published->values[address] == value) continue;
 
         cJSON *root = cJSON_CreateObject();
         cJSON_AddNumberToObject(root, "member_id", message.source_member_id);
@@ -1777,7 +1820,10 @@ void MqttBridge::publish_snapshot(const TelemetryMessage &message)
         make_topic(topic, sizeof(topic), message.source_member_id, suffix);
         char *json = cJSON_PrintUnformatted(root);
         if (json != nullptr) {
-            enqueue_payload(client_, topic, json, 1, 1);
+            if (enqueue_payload(client_, topic, json, 1, 1) >= 0 && published && address < holding_point_count) {
+                published->values[address] = value;
+                published->widths[address] = width;
+            }
             cJSON_free(json);
         }
         cJSON_Delete(root);
@@ -1907,9 +1953,20 @@ bool protocol_poll_info(protocol::EnergyProtocol profile, const char *command,
     return found;
 }
 
+std::uint8_t native_connected_pv_inputs(const app::SystemConfig &config,
+                                       protocol::EnergyProtocol profile, std::uint8_t member)
+{
+    const auto role = config.profile.device_role;
+    const bool local = role == app::DeviceRole::standalone_combined ||
+        role == app::DeviceRole::parallel_coordinator || role == app::DeviceRole::parallel_member ||
+        role == app::DeviceRole::coordinator_gateway_combined;
+    return local && member == config.profile.logical_member_id && config.inverter_link.protocol == profile &&
+        config.profile.connected_pv_inputs <= 16 ? config.profile.connected_pv_inputs : 0xff;
+}
+
 cJSON *protocol_record_json(const ProtocolTelemetryCache::Record &record,
                            protocol::EnergyProtocol profile, std::uint8_t member,
-                           std::uint32_t now)
+                           std::uint32_t now, std::uint8_t connected_pv_inputs = 0xff)
 {
     cJSON *root = cJSON_CreateObject();
     if (root == nullptr) return nullptr;
@@ -1920,6 +1977,8 @@ cJSON *protocol_record_json(const ProtocolTelemetryCache::Record &record,
     valid = cJSON_AddNumberToObject(root, "timestamp_ms", static_cast<double>(record.timestamp_ms)) != nullptr && valid;
     valid = cJSON_AddNumberToObject(root, "sample_age_ms", now - record.received_ms) != nullptr && valid;
     valid = cJSON_AddBoolToObject(root, "record_complete", true) != nullptr && valid;
+    if (connected_pv_inputs != 0xff)
+        valid = cJSON_AddNumberToObject(root, "connected_pv_inputs", connected_pv_inputs) != nullptr && valid;
     cJSON *fields = cJSON_AddObjectToObject(root, "fields");
     valid = fields != nullptr && valid;
     for (std::size_t i = 0; i < record.response.count && valid; ++i) {
@@ -1934,16 +1993,13 @@ cJSON *protocol_record_json(const ProtocolTelemetryCache::Record &record,
     return root;
 }
 
-const char *protocol_live_section(protocol::EnergyProtocol profile, const char *command, const char *key, const char *unit)
+const char *protocol_record_section(protocol::EnergyPollClass category)
 {
-    protocol::EnergyPollInfo info{};
-    if (protocol_poll_info(profile, command, info)) {
-        if (info.poll_class == protocol::EnergyPollClass::identity) return "identity";
-        if (info.poll_class == protocol::EnergyPollClass::configuration) return "settings";
-        if (info.poll_class == protocol::EnergyPollClass::energy) return "energy";
-        if (info.poll_class == protocol::EnergyPollClass::status) return "status";
-    }
-    return native_field_section(profile, key, unit);
+    if (category == protocol::EnergyPollClass::identity) return "identity";
+    if (category == protocol::EnergyPollClass::configuration) return "settings";
+    if (category == protocol::EnergyPollClass::energy) return "energy";
+    if (category == protocol::EnergyPollClass::status) return "status";
+    return nullptr;
 }
 } // namespace
 
@@ -1951,17 +2007,20 @@ void MqttBridge::publish_protocol_record_now(std::uint8_t member,
                                             ProtocolTelemetryCache::Record &record, std::uint32_t now)
 {
     auto &cache = *native_cache_[member];
-    protocol::EnergyPollInfo info{};
-    const bool classified = protocol_poll_info(cache.profile(), record.command, info);
     const auto hash = ProtocolTelemetryCache::fingerprint(record);
-    if (classified && info.publish_on_change && record.published && record.published_hash == hash &&
-        now - record.published_ms < 60000) return;
+    const auto generation = reconnect_count_.load();
+    // /live carries fresh observations every five seconds, including all
+    // sample ages. Detailed query topics only need initial/changed values and
+    // one announcement per MQTT session, rather than duplicate heartbeats.
+    if (record.published && record.published_hash == hash &&
+        record.published_generation == generation) return;
     app::MemoryWorkGuard memory_work;
     if (!memory_work || esp_mqtt_client_get_outbox_size(client_) > 8192) {
         ++live_publish_deferrals;
         return;
     }
-    cJSON *root = protocol_record_json(record, cache.profile(), member, now);
+    cJSON *root = protocol_record_json(record, cache.profile(), member, now,
+        native_connected_pv_inputs(config_, cache.profile(), member));
     if (root != nullptr && live_json_buffer_ != nullptr &&
         cJSON_PrintPreallocated(root, live_json_buffer_, static_cast<int>(live_json_capacity_), false)) {
         char suffix[40]{"protocol"};
@@ -1973,6 +2032,7 @@ void MqttBridge::publish_protocol_record_now(std::uint8_t member,
         // One acknowledged MQTT message contains the whole observation.
         if (enqueue_payload(client_, topic, live_json_buffer_, 1, 0) >= 0) {
             record.published = true; record.published_hash = hash; record.published_ms = now;
+            record.published_generation = generation;
             last_live_enqueued_ms_.store(now);
         }
     } else ++live_json_failures;
@@ -1994,7 +2054,8 @@ void MqttBridge::publish_protocol_live_now(std::uint8_t member, std::uint32_t no
     unsigned retries = 0;
     for (auto &record : cache.records()) {
         if (!record.response.count ||
-            (record.published && record.published_hash == ProtocolTelemetryCache::fingerprint(record))) continue;
+            (record.published && record.published_generation == generation &&
+             record.published_hash == ProtocolTelemetryCache::fingerprint(record))) continue;
         publish_protocol_record_now(member, record, now);
         if (++retries == 2) break;
     }
@@ -2010,13 +2071,19 @@ void MqttBridge::publish_protocol_live_now(std::uint8_t member, std::uint32_t no
     valid = cJSON_AddNumberToObject(root, "sequence", cache.latest_sequence()) != nullptr && valid;
     valid = cJSON_AddNumberToObject(root, "timestamp_ms", static_cast<double>(cache.latest_timestamp())) != nullptr && valid;
     cJSON *records = cJSON_AddArrayToObject(root, "native_records");
-    cJSON *sections = cJSON_AddObjectToObject(root, "sections");
     cJSON *operating = cJSON_AddObjectToObject(root, "operating_status");
     cJSON *power = cJSON_AddObjectToObject(root, "power_summary");
     cJSON *quality = cJSON_AddObjectToObject(root, "power_quality");
-    valid = records && sections && operating && power && quality && valid;
+    valid = records && operating && power && quality && valid;
+    // Complete typed records already contain every measurement and its age.
+    // Use the established compact snapshot form instead of allocating and
+    // transmitting a second grouped copy of every field on each live tick.
+    valid = cJSON_AddBoolToObject(root, "sections_in_native_records", true) != nullptr && valid;
     bool core_fresh = false;
-    NativePowerSummary summary(cache.profile());
+    const auto pv_inputs = native_connected_pv_inputs(config_, cache.profile(), member);
+    if (pv_inputs != 0xff)
+        valid = cJSON_AddNumberToObject(root, "connected_pv_inputs", pv_inputs) != nullptr && valid;
+    NativePowerSummary summary(cache.profile(), pv_inputs);
     for (const auto &record : cache.records()) {
         if (!record.response.count || !valid) continue;
         protocol::EnergyPollInfo info{};
@@ -2030,24 +2097,17 @@ void MqttBridge::publish_protocol_live_now(std::uint8_t member, std::uint32_t no
                 if (record.response.fields[i].numeric && std::strcmp(record.response.fields[i].unit, "bool") != 0)
                     core_fresh = true;
         }
-        cJSON *complete = protocol_record_json(record, cache.profile(), member, now);
+        cJSON *complete = protocol_record_json(record, cache.profile(), member, now, pv_inputs);
         if (!complete || !cJSON_AddItemToArray(records, complete)) {
             cJSON_Delete(complete); valid = false; break;
         }
+        // The record is already classified. Avoid scanning the command
+        // catalog again for each of its (up to 96) fields.
+        const char *record_section = protocol_record_section(info.poll_class);
         for (std::size_t i = 0; i < record.response.count && valid; ++i) {
             const auto &field = record.response.fields[i];
-            const char *section_name = protocol_live_section(cache.profile(), record.command, field.key, field.unit);
-            cJSON *section = cJSON_GetObjectItemCaseSensitive(sections, section_name);
-            if (!section) section = cJSON_AddArrayToObject(sections, section_name);
-            cJSON *entry = cJSON_CreateObject();
-            if (!section || !entry) { cJSON_Delete(entry); valid = false; break; }
-            valid = cJSON_AddStringToObject(entry, "name", field.key) != nullptr && valid;
-            valid = cJSON_AddStringToObject(entry, "unit", field.unit) != nullptr && valid;
-            valid = cJSON_AddNumberToObject(entry, "age_ms", age) != nullptr && valid;
-            valid = cJSON_AddBoolToObject(entry, "stale", stale) != nullptr && valid;
-            valid = (field.numeric ? cJSON_AddNumberToObject(entry, "value", field.value) :
-                                    cJSON_AddStringToObject(entry, "value", field.text)) != nullptr && valid;
-            if (!cJSON_AddItemToArray(section, entry)) { cJSON_Delete(entry); valid = false; break; }
+            const char *section_name = record_section ? record_section :
+                native_field_section(cache.profile(), field.key, field.unit);
             if (!std::strcmp(section_name, "status") && !cJSON_GetObjectItemCaseSensitive(operating, field.key)) {
                 valid = (field.numeric ? cJSON_AddNumberToObject(operating, field.key, field.value) :
                                         cJSON_AddStringToObject(operating, field.key, field.text)) != nullptr && valid;
@@ -2072,28 +2132,8 @@ void MqttBridge::publish_protocol_live_now(std::uint8_t member, std::uint32_t no
     }
     valid = cJSON_AddBoolToObject(root, "core_status_fresh", core_fresh) != nullptr && valid;
     valid = cJSON_AddStringToObject(power, "sampling", "sequential_cached_readings") != nullptr && valid;
-    const auto render = [&]() {
-        return valid && live_json_buffer_ &&
-            cJSON_PrintPreallocated(root, live_json_buffer_, static_cast<int>(live_json_capacity_), false);
-    };
-    bool rendered = render();
-    if (!rendered && valid && live_json_buffer_) {
-        // Large variant catalogs can exceed the internal-RAM output buffer.
-        // These sections duplicate complete records; keep every observation
-        // so monitors can reconstruct the same identity, settings and totals.
-        cJSON_DeleteItemFromObjectCaseSensitive(sections, "identity");
-        cJSON_DeleteItemFromObjectCaseSensitive(sections, "settings");
-        cJSON_DeleteItemFromObjectCaseSensitive(sections, "energy");
-        valid = cJSON_AddBoolToObject(root, "metadata_in_native_records", true) != nullptr && valid;
-        rendered = render();
-    }
-    if (!rendered && valid && live_json_buffer_) {
-        // Complete typed observations remain the authoritative snapshot even
-        // when the second, grouped representation cannot fit alongside them.
-        cJSON_DeleteItemFromObjectCaseSensitive(root, "sections");
-        valid = cJSON_AddBoolToObject(root, "sections_in_native_records", true) != nullptr && valid;
-        rendered = render();
-    }
+    const bool rendered = valid && live_json_buffer_ &&
+        cJSON_PrintPreallocated(root, live_json_buffer_, static_cast<int>(live_json_capacity_), false);
     if (rendered) {
         char topic[224]{};
         make_topic(topic, sizeof(topic), member, "live");
@@ -2133,6 +2173,15 @@ void MqttBridge::publish_protocol_command_result_now(const ProtocolCommandResult
     valid = cJSON_AddStringToObject(root, "detail", message.detail) != nullptr && valid;
     valid = (message.write_sent_known ? cJSON_AddBoolToObject(root, "write_sent", message.write_sent)
                                      : cJSON_AddNullToObject(root, "write_sent")) != nullptr && valid;
+    protocol::EnergyCommandInfo definition{};
+    if (protocol::energy_command_info(message.protocol, message.command, definition) && definition.setter) {
+        if (message.outcome == ProtocolCommandOutcome::completed && message.write_sent_known && message.write_sent)
+            valid = cJSON_AddBoolToObject(root, "setting_verified", true) != nullptr && valid;
+        else if (message.outcome == ProtocolCommandOutcome::acknowledged &&
+                 std::strncmp(message.detail, "Readback mismatch;", 18) == 0)
+            valid = cJSON_AddBoolToObject(root, "setting_verified", false) != nullptr && valid;
+        else valid = cJSON_AddNullToObject(root, "setting_verified") != nullptr && valid;
+    }
     if (valid && live_json_buffer_ != nullptr &&
         cJSON_PrintPreallocated(root, live_json_buffer_, static_cast<int>(live_json_capacity_), false)) {
         char topic[192]{};
@@ -2162,6 +2211,14 @@ void MqttBridge::publish_command_result_now(const RoutedCommandResult &message)
     if (message.kind == RemoteCommandKind::semantic) {
         cJSON_AddStringToObject(root, "operation", inverter::operation_name(message.result.operation));
         cJSON_AddStringToObject(root, "outcome", inverter::command_outcome_name(message.result.outcome));
+        if (message.result.operation == inverter::LocalOperation::set_inverter_enabled) {
+            cJSON_AddBoolToObject(root, "operating_state_confirmed",
+                message.result.outcome == inverter::CommandOutcome::completed);
+            if (message.result.readback_value_valid)
+                cJSON_AddNumberToObject(root, "value", message.result.readback_value);
+            if (message.result.related_status_valid)
+                cJSON_AddNumberToObject(root, "related_status_raw", message.result.related_status_raw);
+        }
         // Forwarding failure cannot establish whether the remote inverter wrote.
         if (route_uncertain) cJSON_AddNullToObject(root, "write_sent");
         else cJSON_AddBoolToObject(root, "write_sent", message.result.write_was_sent);
@@ -2175,6 +2232,24 @@ void MqttBridge::publish_command_result_now(const RoutedCommandResult &message)
                                            ? "read_registers" : "write_registers"));
         cJSON_AddStringToObject(root, "outcome",
                                 inverter::register_command_outcome_name(result.outcome));
+        if (message.kind == RemoteCommandKind::write_registers) {
+            if (route_uncertain) cJSON_AddNullToObject(root, "write_sent");
+            else cJSON_AddBoolToObject(root, "write_sent", !route_not_sent &&
+                result.modbus_write.status != protocol::ModbusWriteStatus::invalid_argument &&
+                result.modbus_write.status != protocol::ModbusWriteStatus::receive_busy);
+            if (result.first_register == 0 && result.register_count == 1) {
+                cJSON_AddBoolToObject(root, "operating_state_confirmed",
+                    result.outcome == inverter::RegisterCommandOutcome::completed);
+                if (result.outcome == inverter::RegisterCommandOutcome::completed)
+                    cJSON_AddStringToObject(root, "detail", "On/off operating state verified");
+                else if (result.outcome == inverter::RegisterCommandOutcome::transition_pending)
+                    cJSON_AddStringToObject(root, "detail", "Write accepted; on/off operating state not yet confirmed");
+                else if (result.outcome == inverter::RegisterCommandOutcome::confirmed)
+                    cJSON_AddStringToObject(root, "detail", "Command register readback only; operating state unverified");
+            }
+            if (result.outcome == inverter::RegisterCommandOutcome::readback_mismatch)
+                cJSON_AddStringToObject(root, "detail", "Device readback differs from the requested setting");
+        }
         // The remote write policy was never evaluated for a routing failure.
         if (route_uncertain || route_not_sent) cJSON_AddNullToObject(root, "write_guard");
         else cJSON_AddStringToObject(root, "write_guard",
@@ -2245,10 +2320,13 @@ void MqttBridge::publish_setting_snapshot(const RoutedCommandResult &message)
     if (message.kind != RemoteCommandKind::write_registers) return;
     const auto &result = message.register_result;
     if (!result.named_request ||
-        result.outcome != inverter::RegisterCommandOutcome::confirmed ||
+        (result.outcome != inverter::RegisterCommandOutcome::confirmed &&
+         result.outcome != inverter::RegisterCommandOutcome::completed) ||
         !result.result_values_valid) return;
     const auto *descriptor = inverter::find_register(result.space, result.first_register);
     if (!is_public_descriptor(descriptor)) return;
+    // Runtime command latches are not durable operating-state settings.
+    if (!descriptor->stored && descriptor->write_guard == inverter::RegisterWriteGuard::runtime_command) return;
 
     cJSON *root = cJSON_CreateObject();
     cJSON_AddNumberToObject(root, "member_id", message.source_member_id);
@@ -2261,8 +2339,8 @@ void MqttBridge::publish_setting_snapshot(const RoutedCommandResult &message)
     cJSON_AddStringToObject(root, "domain",
                             inverter::register_domain_name(descriptor->domain));
     cJSON_AddStringToObject(root, "unit", descriptor->unit);
-    add_application_value(root, "value", *descriptor,
-                          result.result_values.data(), result.register_count);
+    add_named_value(root, "value", *descriptor,
+                    result.result_values.data(), result.register_count);
 
     char domain[32]{};
     char name[64]{};
@@ -2279,9 +2357,56 @@ void MqttBridge::publish_setting_snapshot(const RoutedCommandResult &message)
     make_topic(topic, sizeof(topic), message.source_member_id, suffix);
     char *json = cJSON_PrintUnformatted(root);
     if (json != nullptr) {
-        enqueue_payload(client_, topic, json, 1, 1);
+        if (enqueue_payload(client_, topic, json, 1, 1) >= 0 &&
+            message.source_member_id < maximum_members &&
+            result.space == inverter::RegisterSpace::holding &&
+            result.first_register < holding_point_count && result.register_count != 0) {
+            auto &owned_cache = snapshot_cache_[message.source_member_id];
+            if (!owned_cache) owned_cache.reset(new (std::nothrow) SnapshotCache);
+            if (owned_cache) {
+                auto &published = *owned_cache;
+                const auto generation = reconnect_count_.load();
+                if (published.reconnect_generation != generation) {
+                    published.widths.fill(0);
+                    published.serial_published = false;
+                    published.reconnect_generation = generation;
+                }
+                const auto width = static_cast<std::uint8_t>(
+                    inverter::descriptor_starts_multiword_value(*descriptor) && result.register_count > 1 ? 2 : 1);
+                published.values[result.first_register] = static_cast<std::uint32_t>(result.result_values[0]) |
+                    (width == 2 ? static_cast<std::uint32_t>(result.result_values[1]) << 16U : 0U);
+                published.widths[result.first_register] = width;
+            }
+        }
         cJSON_free(json);
     }
+    cJSON_Delete(root);
+}
+
+void MqttBridge::publish_firmware_identity()
+{
+    if (!connected_) return;
+    const auto session = firmware_session_.load();
+    if (!session || session == firmware_published_session_) return;
+    const auto now = static_cast<std::uint32_t>(esp_timer_get_time() / 1000);
+    if (firmware_attempted_session_ == session && now - firmware_last_attempt_ms_ < 1000) return;
+    firmware_attempted_session_ = session;
+    firmware_last_attempt_ms_ = now;
+    app::MemoryWorkGuard memory_work;
+    if (!memory_work) return;
+    const auto *description = esp_app_get_description();
+    cJSON *root = cJSON_CreateObject();
+    if (!root) return;
+    const bool valid = cJSON_AddStringToObject(root, "device_id", hardware_client_id_) &&
+        cJSON_AddStringToObject(root, "project", description->project_name) &&
+        cJSON_AddStringToObject(root, "version", description->version);
+    char payload[768]{};
+    char topic[224]{};
+    std::snprintf(topic, sizeof(topic), "%s/%s/esp/%s/firmware",
+        config_.mqtt_topic_prefix, config_.site_id, hardware_client_id_);
+    if (valid && cJSON_PrintPreallocated(root, payload, sizeof(payload), false) &&
+        enqueue_payload(client_, topic, payload, 1, 1) >= 0)
+        firmware_published_session_ = session;
     cJSON_Delete(root);
 }
 
@@ -2362,6 +2487,7 @@ void MqttBridge::publisher_task(void *argument)
     while (self != nullptr) {
         const auto now = static_cast<std::uint32_t>(esp_timer_get_time() / 1000);
         self->publisher_heartbeat_ms_.store(now);
+        self->publish_firmware_identity();
         if (self->connected_ && (last_health == 0 || now - last_health >= app::health_publish_interval_ms)) {
             self->publish_health();
             last_health = now;

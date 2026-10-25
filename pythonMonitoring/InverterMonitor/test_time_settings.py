@@ -1,7 +1,8 @@
 import json
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 from time_settings import TimeSettings
+from settings_polling import SettingsReadPolicy, CONTROL_REFRESH_SECONDS
 
 
 class TimeTests(unittest.TestCase):
@@ -18,6 +19,7 @@ class TimeTests(unittest.TestCase):
         s.dialog = None
         s.values = {}
         s.read_values = {}
+        s.read_policy = SettingsReadPolicy(refresh_seconds=CONTROL_REFRESH_SECONDS)
         s.value = MagicMock()
         s.status = MagicMock()
         self.values = dict(zip(s.FIELDS, (2026, 9, 6, 21, 30, 45)))
@@ -53,6 +55,16 @@ class TimeTests(unittest.TestCase):
         s.apply()
         s.monitor.mqtt_client.publish.assert_not_called()
 
+    def test_legacy_two_digit_year_readback_completes_the_calendar_write(self):
+        s = self.s
+        s.edit_values = {k: MagicMock(get=MagicMock(return_value=str(v))) for k, v in self.values.items()}
+        s.apply()
+        for name in s.FIELDS:
+            self.reply(26 if name == 'Year' else self.values[name])
+        for name in s.FIELDS:
+            self.reply(26 if name == 'Year' else self.values[name])
+        s.value.set.assert_called_with('2026-09-06 21:30:45')
+
     def test_failure_stops_sequence(self):
         s = self.s
         s.writing = True
@@ -63,6 +75,22 @@ class TimeTests(unittest.TestCase):
         self.assertIsNone(s.pending)
         self.assertIn('some fields may have been written', s.status.configure.call_args.kwargs['text'])
         self.assertEqual(s.monitor.mqtt_client.publish.call_count, 1)
+
+    def test_periodic_calendar_reads_wait_two_minutes_after_success(self):
+        s = self.s
+        with patch('time_settings.time.monotonic', return_value=100):
+            s.request('get')
+            for name in s.FIELDS:
+                self.reply(self.values[name])
+        self.assertEqual(s.monitor.mqtt_client.publish.call_count, 6)
+        with patch('time_settings.time.monotonic', return_value=219):
+            s.refresh()
+        self.assertIsNone(s.pending)
+        self.assertEqual(s.monitor.mqtt_client.publish.call_count, 6)
+        with patch('time_settings.time.monotonic', return_value=220):
+            s.refresh()
+        self.assertEqual(s.pending[1], 'get')
+        self.assertEqual(s.monitor.mqtt_client.publish.call_count, 7)
 
 
 if __name__ == '__main__':

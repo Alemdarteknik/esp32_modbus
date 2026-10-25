@@ -67,11 +67,13 @@ enum class EnergyPollClass : std::uint8_t {
 struct EnergyPollInfo {
     const char *command = nullptr;
     EnergyPollClass poll_class = EnergyPollClass::live;
+    // Zero means once per transport session (identity or static capabilities).
     std::uint32_t interval_ms = 2000;
     bool publish_on_change = false;
     bool primary = false;
     // JK Bluetooth requires getInfo to enable notifications before live reads.
     bool prerequisite = false;
+    std::uint8_t minimum_pv_inputs = 0;
 };
 
 const EnergyProtocolInfo &energy_protocol_info(EnergyProtocol id);

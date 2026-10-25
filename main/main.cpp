@@ -38,6 +38,7 @@
 #include "inverter_gateway/transport/usb_serial_protocol.hpp"
 #include "inverter_gateway/transport/ble_inverter.hpp"
 #include "inverter_gateway/protocol/bms_protocols.hpp"
+#include "inverter_gateway/protocol/pi_protocols.hpp"
 #include "inverter_gateway/protocol/energy_poll_schedule.hpp"
 #include "nvs_flash.h"
 
@@ -603,7 +604,9 @@ std::uint16_t enabled_features(const inverter_gateway::app::SystemConfig &config
                         ? routed_result.result.write_was_sent
                         : command.kind == inverter_gateway::network::RemoteCommandKind::write_registers &&
                           routed_result.register_result.modbus_write.status !=
-                              inverter_gateway::protocol::ModbusWriteStatus::invalid_argument;
+                              inverter_gateway::protocol::ModbusWriteStatus::invalid_argument &&
+                          routed_result.register_result.modbus_write.status !=
+                              inverter_gateway::protocol::ModbusWriteStatus::receive_busy;
                 if (write_attempted) poller->invalidate_state_after_write();
                 runtime.on_command_result(routed_result);
                 runtime.complete_command(command);
@@ -698,7 +701,8 @@ inverter_gateway::transport::FrameDecision inspect_protocol_frame(
     protocol::EnergyPollScheduler scheduler;
     std::uint32_t sequence = 0;
     std::uint32_t connection_session = link_transport->session_id();
-    scheduler.reset(link.protocol, connection_session, esp_timer_get_time() / 1000);
+    scheduler.reset(link.protocol, connection_session, esp_timer_get_time() / 1000,
+                    config.profile.connected_pv_inputs);
     unsigned cell_count = 0, temperature_count = 0;
     std::int64_t next_request_us = 0;
     auto transact = [&](const char *command, bool &sent) -> protocol::CodecStatus {
@@ -799,7 +803,8 @@ inverter_gateway::transport::FrameDecision inspect_protocol_frame(
             runtime.new_protocol_connection_session();
             connection_session = current_session;
             cell_count = temperature_count = 0;
-            scheduler.reset(link.protocol, connection_session, esp_timer_get_time() / 1000);
+            scheduler.reset(link.protocol, connection_session, esp_timer_get_time() / 1000,
+                            config.profile.connected_pv_inputs);
         }
         runtime.set_transport_ready(true);
         // Run due background work before admitting the next queued command.
@@ -811,7 +816,11 @@ inverter_gateway::transport::FrameDecision inspect_protocol_frame(
                 const auto status = transact(poll->command, sent);
                 scheduler.record(status == protocol::CodecStatus::ok,
                     esp_timer_get_time() / 1000, status);
-                if (status != protocol::CodecStatus::ok)
+                if (status != protocol::CodecStatus::ok && poll->minimum_pv_inputs)
+                    ESP_LOGW(tag, "%s additional PV query %s: %s; PV2/PV3 readings remain unavailable",
+                        protocol::energy_protocol_info(link.protocol).name, poll->command,
+                        protocol::codec_status_name(status));
+                else if (status != protocol::CodecStatus::ok)
                     ESP_LOGD(tag, "%s %s: %s", protocol::energy_protocol_info(link.protocol).name,
                         poll->command, protocol::codec_status_name(status));
             }
@@ -835,7 +844,9 @@ inverter_gateway::transport::FrameDecision inspect_protocol_frame(
                 : command.write && sent ? network::ProtocolCommandOutcome::uncertain
                 : sent ? network::ProtocolCommandOutcome::invalid_response : network::ProtocolCommandOutcome::not_sent;
             std::snprintf(result.command, sizeof(result.command), "%s", command.command);
-            std::snprintf(result.detail, sizeof(result.detail), "%s", protocol::codec_status_name(status));
+            std::snprintf(result.detail, sizeof(result.detail), "%s",
+                command.write && status == protocol::CodecStatus::ok ?
+                    "Acknowledged; no setting verification available" : protocol::codec_status_name(status));
             if (command.write && sent) {
                 // Invalidate earlier measurements and queued commands after a
                 // write, including an uncertain write. Reads may refresh state;
@@ -852,7 +863,20 @@ inverter_gateway::transport::FrameDecision inspect_protocol_frame(
                     const auto observed = transact(info.readback_command, read_sent);
                     scheduler.observe(info.readback_command, observed == protocol::CodecStatus::ok,
                                       esp_timer_get_time() / 1000, observed);
-                    std::snprintf(result.detail, sizeof(result.detail), "acknowledged; readback %s",
+                    if (observed == protocol::CodecStatus::ok) {
+                        bool matches = false;
+                        const bool verified = protocol::pi_setting_readback(link.protocol, command.command,
+                            info.readback_command, *response, matches) ||
+                            protocol::bms_setting_readback(link.protocol, command.command,
+                                info.readback_command, *response, matches);
+                        if (verified && matches) {
+                            result.outcome = network::ProtocolCommandOutcome::completed;
+                            std::snprintf(result.detail, sizeof(result.detail), "Setting verified by %s",
+                                info.readback_command);
+                        } else std::snprintf(result.detail, sizeof(result.detail), "%s",
+                            verified ? "Readback mismatch; setting not verified" :
+                                       "Acknowledged; readback does not verify this setting");
+                    } else std::snprintf(result.detail, sizeof(result.detail), "Acknowledged; readback failed: %s",
                         protocol::codec_status_name(observed));
                 }
             }

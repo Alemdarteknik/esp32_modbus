@@ -1,7 +1,7 @@
 """Normal live telemetry across every native profile; no network/device I/O."""
 import unittest
 
-from native_live import normalize_native_live
+from native_live import normalize_native_live, native_measurement_received_at
 from native_protocols import NativeTelemetryCollector, PROTOCOL_IDS
 
 
@@ -96,6 +96,8 @@ class AllNativeProfileTests(unittest.TestCase):
                     wire.update(record_complete=True, sample_age_ms=0)
                     self.assertIsNotNone(collector.receive(wire, 100))
                 live = normalize_native_live(collector.records(), profile, 0, 100)
+                self.assertEqual(native_measurement_received_at(collector.records_view(), profile, 0),
+                                 live['received_at'])
                 self.assertTrue(live['telemetry_available'])
                 self.assertEqual(collector.dropped_count, 0)
                 self.assertEqual(sum(len(group['fields']) for group in live['groups'].values()),

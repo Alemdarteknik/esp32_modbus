@@ -6,6 +6,37 @@ from mqtt_backend import MonitorSession
 
 
 class AppTests(unittest.TestCase):
+    def test_diagnostic_tab_labels_reset_when_disconnected_protocol_changes(self):
+        session = MonitorSession()
+        session.active = True
+        app = AppTest.from_file(str(Path(__file__).with_name('app.py')))
+        app.session_state['monitor'] = session
+        app.run(timeout=20)
+        app.session_state['monitor_tab'] = 'Raw JSON'
+        app.run()
+        self.assertFalse(app.exception)
+        self.assertEqual(app.tabs[-1].label, 'Raw JSON')
+        session.active = False
+        app.run()
+        next(widget for widget in app.selectbox if widget.label == 'Protocol').select('PI30').run()
+        session.active = True
+        app.run()
+        self.assertFalse(app.exception)
+        self.assertEqual([tab.label for tab in app.tabs],
+                         ['Live data', 'Gateway health', 'Manual settings', 'Raw JSON', 'Advanced diagnostics'])
+        app.session_state['monitor_tab'] = 'Advanced diagnostics'
+        app.session_state['native_diagnostics_open'] = True
+        app.run()
+        self.assertFalse(app.exception)
+        session.active = False
+        app.run()
+        next(widget for widget in app.selectbox if widget.label == 'Protocol').select('AOHAI_MODBUS_RTU').run()
+        session.active = True
+        app.run()
+        self.assertFalse(app.exception)
+        self.assertEqual([tab.label for tab in app.tabs],
+                         ['Live data', 'Gateway health', 'All settings', 'Raw JSON'])
+
     def test_startup_unavailable_then_readings_arrive(self):
         session = MonitorSession()
         session.active = True

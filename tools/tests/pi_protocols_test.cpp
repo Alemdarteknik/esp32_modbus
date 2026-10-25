@@ -88,6 +88,7 @@ void decode(EnergyProtocol id, const char *command, const std::vector<std::uint8
     check(size == bytes.size());
     check(pi_decode_response(id, command, 1, bytes.data(), bytes.size(), response) == CodecStatus::ok);
 }
+#include "pi_setting_tests.inc"
 }
 
 int main()
@@ -184,11 +185,55 @@ int main()
         decode(id, "GS", framed(id, pi18_status), response);
         check(value(response, "battery_voltage") == 54);
     }
-    for (auto id : {EnergyProtocol::pi30max, EnergyProtocol::pi30mst, EnergyProtocol::pi30m044, EnergyProtocol::pi30m045}) {
+    for (auto id : {EnergyProtocol::pi30, EnergyProtocol::pi30max, EnergyProtocol::pi30mst, EnergyProtocol::pi30m044, EnergyProtocol::pi30m045}) {
         decode(id, "QPIGS", framed(id, pi30_status), response);
         check(value(response, "battery_voltage") == 57.5);
         decode(id, "QPIGS2", framed(id, "03.1 327.3 01026 "), response);
-        check(response.count >= 3);
+        check(response.count == 3);
+        check(std::abs(value(response, "pv2_input_current") - 3.1) < 0.0001);
+        check(std::abs(value(response, "pv2_input_voltage") - 327.3) < 0.0001);
+        check(value(response, "pv2_charging_power") == 1026);
+        check(!std::strcmp(field(response, "pv2_charging_power")->unit, "W"));
+        check(field(response, "pv3_charging_power") == nullptr);
+        check(field(response, "pv_total_charging_power") == nullptr);
+    }
+    check(pi_command_info(EnergyProtocol::pi30, "QPIGS2", info) && !info.setter);
+    for (auto id : {EnergyProtocol::pi30, EnergyProtocol::pi30mst}) {
+        decode(id, "QPIGS2", framed(id,
+            "03.1 327.3 52.40 01049 10000000 0010 00520 02.0 310.2 52.30 00620 02525"), response);
+        check(response.count == 12);
+        check(std::abs(value(response, "pv2_input_current") - 3.1) < 0.0001);
+        check(std::abs(value(response, "pv2_input_voltage") - 327.3) < 0.0001);
+        check(value(response, "pv2_charging_power") == 1049);
+        check(std::abs(value(response, "battery_voltage_from_scc_2") - 52.4) < 0.0001);
+        check(value(response, "pv3_input_current") == 2);
+        check(std::abs(value(response, "pv3_input_voltage") - 310.2) < 0.0001);
+        check(value(response, "pv3_charging_power") == 620);
+        check(value(response, "pv_total_charging_power") == 2525);
+        check(!std::strcmp(field(response, "pv_total_charging_power")->unit, "W"));
+        decode(id, "QPIGS2", framed(id, "00.0 000.0 00000"), response);
+        check(response.count == 3 && value(response, "pv2_charging_power") == 0);
+        const auto missing = framed(id, "--.- ---.- -----");
+        check(pi_decode_response(id, "QPIGS2", 1, missing.data(), missing.size(), response)
+            == CodecStatus::invalid_frame && response.count == 0);
+        decode(id, "QPIGS2", framed(id,
+            "03.1 327.3 52.40 ----- 10000000 0010 00520 02.0 310.2 52.30 00620 02525"), response);
+        check(field(response, "pv2_charging_power") == nullptr);
+        check(value(response, "pv3_charging_power") == 620);
+        for (const auto *short_reply : {"03.1", "03.1 327.3", "03.1 327.3 52.40 01049",
+                "03.1 327.3 52.40 01049 10000000 0010 00520 02.0 310.2 52.30 00620",
+                "03.1 327.3 52.40 01049 10000000 0010 00520 02.0 310.2 52.30 00620 02525 999"}) {
+            const auto invalid = framed(id, short_reply);
+            check(pi_decode_response(id, "QPIGS2", 1, invalid.data(), invalid.size(), response)
+                == CodecStatus::invalid_frame && response.count == 0);
+        }
+        const auto rejected = framed(id, "NAK");
+        check(pi_decode_response(id, "QPIGS2", 1, rejected.data(), rejected.size(), response)
+            == CodecStatus::rejected && response.count == 0 && response.rejected);
+        auto bad_crc = framed(id, "03.1 327.3 01049");
+        bad_crc[1] ^= 1;
+        check(pi_decode_response(id, "QPIGS2", 1, bad_crc.data(), bad_crc.size(), response)
+            == CodecStatus::checksum_error && response.count == 0);
     }
     decode(EnergyProtocol::pi41, "QPIGS", framed(EnergyProtocol::pi41, pi30_status), response);
     check(value(response, "battery_voltage") == 57.5);
@@ -248,6 +293,7 @@ int main()
         check(pi_decode_response(id, command, 1, caret_ack, sizeof(caret_ack), response) == CodecStatus::ok && response.acknowledged);
         check(pi_decode_response(id, command, 1, caret_nak, sizeof(caret_nak), response) == CodecStatus::rejected && response.rejected);
     }
+    setting_tests();
     std::puts("PI protocol tests passed");
     std::printf("%d checks across all 14 PI profiles\n", checks);
 }
